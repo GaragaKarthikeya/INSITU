@@ -18,6 +18,15 @@ position-dependent transform into the offline `W_o` fold is not possible.
 There is deliberately NO RoPE between the attention output and the output
 projection. The value path carries no position, so `W_o'` sees only `R^-1`.
 
+FREQUENCY SCALING
+-----------------
+Llama 3 rescales `inv_freq` by wavelength before the table is built (
+`RopeScaling`, below). It is a change to the table and nothing else: the
+`apply` path, the trace it records and the cycles the hardware model replays
+are identical either way. That is the only reason it belongs here rather than
+in the pipeline -- a position-dependent transform that cost cycles could not be
+folded into a precomputed table.
+
 FIXED POINT
 -----------
 The sin/cos table is computed once in float64 and stored in Q(centroid_frac).
@@ -36,6 +45,75 @@ from ..trace import Op, Trace, record
 
 
 @dataclass(frozen=True)
+class RopeScaling:
+    """Llama 3's wavelength-piecewise rescaling of `inv_freq`.
+
+    Three regimes, split by how a channel's wavelength compares to the context
+    the model was originally trained on:
+
+      * **short** (`wavelen < ctx / high_freq_factor`) -- untouched. These
+        channels turn over many times inside the old context, so stretching
+        them would destroy local position information.
+      * **long** (`wavelen > ctx / low_freq_factor`) -- divided by `factor`.
+        These never complete a turn, so slowing them is what buys the longer
+        context.
+      * **between** -- linearly interpolated between the two, which is the
+        whole point of the scheme: a hard switch would put a discontinuity in
+        the middle of the frequency band.
+
+    It is NOT a position-dependent transform. Every channel's frequency is
+    fixed once, so this is a change to the table alone -- see the module
+    docstring.
+
+    Matches `transformers.modeling_rope_utils._compute_llama3_parameters`; the
+    `attention_factor` that function also returns is 1.0 for every llama3
+    config, and is not applied here.
+    """
+
+    factor: float
+    low_freq_factor: float
+    high_freq_factor: float
+    original_max_position: int
+
+    def __post_init__(self) -> None:
+        if self.high_freq_factor <= self.low_freq_factor:
+            raise ValueError(
+                f"high_freq_factor={self.high_freq_factor} must exceed "
+                f"low_freq_factor={self.low_freq_factor}; the interpolation "
+                f"between them divides by the difference"
+            )
+        if self.factor <= 0:
+            raise ValueError(f"factor={self.factor} must be positive")
+
+    @classmethod
+    def from_hf(cls, params: dict) -> "RopeScaling":
+        """Build from a transformers `rope_parameters` / `rope_scaling` dict."""
+        return cls(
+            factor=float(params["factor"]),
+            low_freq_factor=float(params["low_freq_factor"]),
+            high_freq_factor=float(params["high_freq_factor"]),
+            original_max_position=int(params["original_max_position_embeddings"]),
+        )
+
+    def apply(self, inv_freq: np.ndarray) -> np.ndarray:
+        f = np.asarray(inv_freq, dtype=np.float64)
+        ctx = float(self.original_max_position)
+        wavelen = 2.0 * np.pi / f
+
+        low_wavelen = ctx / self.low_freq_factor
+        high_wavelen = ctx / self.high_freq_factor
+
+        scaled = np.where(wavelen > low_wavelen, f / self.factor, f)
+
+        smooth = ((ctx / wavelen - self.low_freq_factor) /
+                  (self.high_freq_factor - self.low_freq_factor))
+        smoothed = (1.0 - smooth) * scaled / self.factor + smooth * scaled
+
+        between = (wavelen <= low_wavelen) & (wavelen >= high_wavelen)
+        return np.where(between, smoothed, scaled)
+
+
+@dataclass(frozen=True)
 class RoPE:
     """Precomputed sin/cos for every position the model can reach.
 
@@ -50,11 +128,14 @@ class RoPE:
     frac: int
 
     @staticmethod
-    def build(d: int, max_position: int, theta: float = 10000.0, frac: int = 15) -> "RoPE":
+    def build(d: int, max_position: int, theta: float = 10000.0, frac: int = 15,
+              scaling: "RopeScaling | None" = None) -> "RoPE":
         if d % 2:
             raise ValueError(f"head_dim={d} must be even: RoPE rotates channel pairs")
         half = d // 2
         inv_freq = 1.0 / (theta ** (np.arange(0, half, dtype=np.float64) * 2.0 / d))
+        if scaling is not None:
+            inv_freq = scaling.apply(inv_freq)
         pos = np.arange(max_position, dtype=np.float64)[:, None]
         ang = pos * inv_freq[None, :]
         q = Q(32, frac)

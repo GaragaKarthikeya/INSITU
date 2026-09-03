@@ -22,6 +22,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, replace
 
+from .ops.rope import RopeScaling
+
 
 # --------------------------------------------------------------------------
 # What the network is
@@ -37,6 +39,7 @@ class ModelConfig:
     head_dim: int | None = None      # None -> hidden_size // num_heads
     rope_theta: float = 10000.0
     max_position: int = 4096
+    rope_scaling: "RopeScaling | None" = None   # None -> plain RoPE
 
     def __post_init__(self) -> None:
         d = self.head_dim if self.head_dim is not None else self.hidden_size // self.num_heads
@@ -90,17 +93,19 @@ class ModelConfig:
                 "`rope_parameters['rope_theta']`; pass ModelConfig directly "
                 "rather than defaulting a value that decides token positions"
             )
-        # Only plain RoPE is modelled. Linear/NTK/YaRN scaling changes the
-        # angle per position, so serving a scaled model on the default table
-        # would misplace every token past the original context -- refuse rather
-        # than produce something that looks fluent and is wrong.
+        # "default" and "llama3" are modelled. Linear/NTK/YaRN are not, and are
+        # refused rather than served on the default table: they change the angle
+        # per position, so every token past the original context would be
+        # misplaced -- fluent nonsense, not an error.
         params = getattr(hf_config, "rope_parameters", None) or {}
-        rope_type = params.get("rope_type")
-        if rope_type is None:
-            scaling = getattr(hf_config, "rope_scaling", None)
-            rope_type = scaling.get("rope_type", scaling.get("type")) \
-                if isinstance(scaling, dict) else "default"
-        if rope_type not in ("default", None):
+        if not params and isinstance(getattr(hf_config, "rope_scaling", None), dict):
+            params = hf_config.rope_scaling
+        rope_type = params.get("rope_type") or params.get("type") or "default"
+        if rope_type == "llama3":
+            scaling = RopeScaling.from_hf(params)
+        elif rope_type == "default":
+            scaling = None
+        else:
             raise NotImplementedError(f"RoPE scaling {rope_type!r} is not modelled")
 
         return cls(
@@ -110,6 +115,7 @@ class ModelConfig:
             head_dim=getattr(hf_config, "head_dim", None),
             rope_theta=float(theta),
             max_position=getattr(hf_config, "max_position_embeddings", 4096),
+            rope_scaling=scaling,
         )
 
     # TinyLlama-1.1B, the shape this project has always been aimed at.

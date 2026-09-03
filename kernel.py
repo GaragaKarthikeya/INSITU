@@ -80,7 +80,7 @@ class AttentionKernel:
         m = config.model
         self.rotation = Rotation.for_quant(config.quant, m.head_dim)
         self.rope = RoPE.build(m.head_dim, m.max_position, m.rope_theta,
-                               config.fmt.centroid_frac)
+                               config.fmt.centroid_frac, m.rope_scaling)
         self.qk_q = Q(config.fmt.qk_width, config.fmt.qk_frac, config.fmt.saturate)
         self.compressed = compressed
 

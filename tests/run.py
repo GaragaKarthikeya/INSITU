@@ -10,6 +10,7 @@ MODULES = [
     "kernel.tests.test_rotation",
     "kernel.tests.test_quantize",
     "kernel.tests.test_attention",
+    "kernel.tests.test_rope_scaling",
     "kernel.tests.test_kernel",
     "kernel.tests.test_hardware",
     "kernel.tests.test_adapter",
