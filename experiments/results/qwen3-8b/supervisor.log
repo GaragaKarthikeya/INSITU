@@ -1,0 +1,6 @@
+[2026-08-31T13:30:20Z] supervisor starting: pid=171059 dir=kernel/experiments/results/qwen3-8b max_restarts=20 args=--model Qwen/Qwen3-8B-Base --context 4096
+[2026-08-31T13:30:20Z] launch attempt 1
+[2026-09-01T06:35:52Z] STOPPED BY ALARM (exit 3) -- not restarting. See kernel/experiments/results/qwen3-8b/events.jsonl
+[2026-09-01T06:35:52Z] supervisor exiting
+[2026-09-01T15:38:50Z] supervisor starting: pid=182404 dir=kernel/experiments/results/qwen3-8b max_restarts=20 args=--model Qwen/Qwen3-8B-Base --context 4096
+[2026-09-01T15:38:50Z] launch attempt 1

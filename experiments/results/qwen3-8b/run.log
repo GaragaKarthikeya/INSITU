@@ -1,0 +1,240 @@
+[transformers] Token indices sequence length is longer than the specified maximum sequence length for this model (299078 > 131072). Running this sequence through the model will result in indexing errors
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights:   0%|          | 1/399 [00:00<01:30,  4.39it/s]Loading weights:  20%|██        | 81/399 [00:00<00:01, 293.49it/s]Loading weights:  32%|███▏      | 126/399 [00:00<00:00, 345.05it/s]Loading weights:  42%|████▏     | 169/399 [00:00<00:00, 288.17it/s]Loading weights:  53%|█████▎    | 211/399 [00:00<00:00, 317.41it/s]Loading weights:  64%|██████▍   | 257/399 [00:00<00:00, 354.31it/s]Loading weights:  75%|███████▌  | 300/399 [00:00<00:00, 373.84it/s]Loading weights:  85%|████████▌ | 341/399 [00:01<00:00, 360.07it/s]Loading weights:  95%|█████████▌| 380/399 [00:01<00:00, 288.76it/s]Loading weights: 100%|██████████| 399/399 [00:01<00:00, 297.39it/s]
+corpus  299,078 tokens -> 73 windows of 4096
+model   Qwen/Qwen3-8B-Base  36L 32H 8KV d128 float32
+
+baseline  w  1/73  ppl   6.2749    98.7s  ETA 11.25 h
+baseline  w  2/73  ppl   7.1792    85.8s  ETA 10.08 h
+dense     w  1/12  ppl   6.2751   952.8s  ETA 40.40 h
+dense     w  2/12  ppl   7.1790   942.5s  ETA 54.63 h
+k4v4      w  1/73  ppl   6.7942  2281.3s  ETA 91.13 h
+k4v4      w  2/73  ppl   7.6877  2017.9s  ETA 110.39 h
+k4v3      w  1/73  ppl   6.7675  1059.8s  ETA 110.21 h
+k4v3      w  2/73  ppl   7.6770  1102.9s  ETA 110.30 h
+k4v2      w  1/73  ppl   6.9095   935.9s  ETA 108.63 h
+k4v2      w  2/73  ppl   7.8364   939.2s  ETA 107.08 h
+k3v2      w  1/73  ppl   7.8340   933.8s  ETA 105.89 h
+k3v2      w  2/73  ppl   8.9303   958.3s  ETA 104.89 h
+
+--- PILOT COMPLETE ---
+config           ppl   vs base  windows  B/tok/layer   hours
+baseline      7.1792   1.0000x        2            -    0.05
+dense         7.1790   1.0000x        2         4096    0.53
+k4v4          7.6877   1.0708x        2         1056    1.19
+k4v3          7.6770   1.0693x        2          928    0.60
+k4v2          7.8364   1.0915x        2          800    0.52
+k3v2          8.9303   1.2439x        2          672    0.53
+
+baseline  w  3/73  ppl   6.2999    89.8s  ETA 97.26 h
+baseline  w  4/73  ppl   5.6542    83.9s  ETA 90.67 h
+baseline  w  5/73  ppl   5.8768    92.5s  ETA 85.01 h
+baseline  w  6/73  ppl   6.0142    96.5s  ETA 80.08 h
+dense     w  3/12  ppl   6.2998   945.9s  ETA 80.84 h
+dense     w  4/12  ppl   5.6543   945.2s  ETA 81.37 h
+dense     w  5/12  ppl   5.8768   945.3s  ETA 81.82 h
+dense     w  6/12  ppl   6.0142   940.0s  ETA 82.17 h
+k4v4      w  3/73  ppl   6.7312  2261.6s  ETA 88.78 h
+k4v4      w  4/73  ppl   5.9912  1887.9s  ETA 92.97 h
+k4v4      w  5/73  ppl   6.2180  1901.9s  ETA 96.81 h
+k4v4      w  6/73  ppl   6.3674  1690.9s  ETA 99.42 h
+k4v3      w  3/73  ppl   6.7383  1024.8s  ETA 99.25 h
+k4v3      w  4/73  ppl   6.0115  1024.6s  ETA 99.01 h
+k4v3      w  5/73  ppl   6.2404  1012.9s  ETA 98.72 h
+k4v3      w  6/73  ppl   6.3926  1027.7s  ETA 98.48 h
+k4v2      w  3/73  ppl   6.8744  1021.3s  ETA 98.28 h
+k4v2      w  4/73  ppl   6.1392   885.2s  ETA 97.57 h
+k4v2      w  5/73  ppl   6.3847   907.6s  ETA 96.97 h
+k4v2      w  6/73  ppl   6.5656   899.8s  ETA 96.36 h
+k3v2      w  3/73  ppl   7.7744   847.4s  ETA 95.68 h
+k3v2      w  4/73  ppl   6.9113   862.4s  ETA 95.02 h
+k3v2      w  5/73  ppl   7.1905   885.9s  ETA 94.44 h
+k3v2      w  6/73  ppl   7.3641   894.8s  ETA 93.90 h
+baseline  w  7/73  ppl   6.1894    87.2s  ETA 91.32 h
+baseline  w  8/73  ppl   6.3297    85.6s  ETA 88.86 h
+baseline  w  9/73  ppl   6.5238    99.0s  ETA 86.57 h
+baseline  w 10/73  ppl   6.3953    99.6s  ETA 84.39 h
+dense     w  7/12  ppl   6.1893   946.7s  ETA 84.28 h
+dense     w  8/12  ppl   6.3296   944.8s  ETA 84.12 h
+dense     w  9/12  ppl   6.5237   942.6s  ETA 83.96 h
+dense     w 10/12  ppl   6.3948   942.8s  ETA 83.78 h
+k4v4      w  7/73  ppl   6.5495  2082.1s  ETA 85.98 h
+k4v4      w  8/73  ppl   6.6939  1884.8s  ETA 87.63 h
+k4v4      w  9/73  ppl   6.9139  1834.3s  ETA 89.08 h
+k4v4      w 10/73  ppl   6.8084  1899.6s  ETA 90.58 h
+k4v3      w  7/73  ppl   6.5805  1006.4s  ETA 90.37 h
+k4v3      w  8/73  ppl   6.7296  1084.6s  ETA 90.26 h
+k4v3      w  9/73  ppl   6.9436  1115.5s  ETA 90.20 h
+k4v3      w 10/73  ppl   6.8385  1073.3s  ETA 90.06 h
+k4v2      w  7/73  ppl   6.7620   882.5s  ETA 89.62 h
+k4v2      w  8/73  ppl   6.9383   931.3s  ETA 89.23 h
+k4v2      w  9/73  ppl   7.1709   926.1s  ETA 88.85 h
+k4v2      w 10/73  ppl   7.0695   925.6s  ETA 88.46 h
+k3v2      w  7/73  ppl   7.5837   903.5s  ETA 88.08 h
+k3v2      w  8/73  ppl   7.8461   923.8s  ETA 87.70 h
+k3v2      w  9/73  ppl   8.0993   926.4s  ETA 87.33 h
+k3v2      w 10/73  ppl   7.9313   925.0s  ETA 86.96 h
+baseline  w 11/73  ppl   6.4591    87.0s  ETA 85.39 h
+baseline  w 12/73  ppl   6.4887    82.5s  ETA 83.87 h
+baseline  w 13/73  ppl   6.5629    94.9s  ETA 82.40 h
+baseline  w 14/73  ppl   6.7457    98.6s  ETA 80.99 h
+dense     w 11/12  ppl   6.4586   948.1s  ETA 80.78 h
+dense     w 12/12  ppl   6.4882   943.8s  ETA 80.54 h
+
+ALARM: [dense_control_mismatch] dense control ppl 6.4882 vs baseline 6.7457 (3.82% > 0.50%) after 12 window(s). The kernel is not reproducing the model; compression numbers would be attributing a plumbing bug to quantisation.
+resuming from results.json: {'baseline': 14, 'dense': 12, 'k4v4': 10, 'k4v3': 10, 'k4v2': 10, 'k3v2': 10}
+[transformers] Token indices sequence length is longer than the specified maximum sequence length for this model (299078 > 131072). Running this sequence through the model will result in indexing errors
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights:   0%|          | 1/399 [00:01<07:38,  1.15s/it]Loading weights:   6%|▌         | 24/399 [00:01<00:14, 25.97it/s]Loading weights:   9%|▉         | 37/399 [00:01<00:09, 38.89it/s]Loading weights:  12%|█▏        | 49/399 [00:02<00:13, 25.66it/s]Loading weights:  15%|█▌        | 60/399 [00:02<00:11, 30.07it/s]Loading weights:  20%|██        | 81/399 [00:02<00:06, 46.58it/s]Loading weights:  23%|██▎       | 92/399 [00:02<00:06, 50.28it/s]Loading weights:  26%|██▌       | 103/399 [00:02<00:05, 54.12it/s]Loading weights:  30%|███       | 120/399 [00:02<00:03, 72.48it/s]Loading weights:  33%|███▎      | 131/399 [00:03<00:04, 66.87it/s]Loading weights:  35%|███▌      | 140/399 [00:03<00:03, 69.38it/s]Loading weights:  37%|███▋      | 149/399 [00:03<00:03, 67.27it/s]Loading weights:  39%|███▉      | 157/399 [00:03<00:03, 69.44it/s]Loading weights:  43%|████▎     | 170/399 [00:03<00:03, 73.54it/s]Loading weights:  45%|████▍     | 179/399 [00:03<00:03, 66.15it/s]Loading weights:  47%|████▋     | 188/399 [00:04<00:03, 64.48it/s]Loading weights:  49%|████▉     | 195/399 [00:04<00:03, 60.90it/s]Loading weights:  51%|█████     | 202/399 [00:04<00:07, 27.39it/s]Loading weights:  64%|██████▎   | 254/399 [00:04<00:01, 83.26it/s]Loading weights:  67%|██████▋   | 269/399 [00:05<00:03, 41.94it/s]Loading weights:  86%|████████▌ | 343/399 [00:06<00:00, 98.71it/s]Loading weights:  92%|█████████▏| 369/399 [00:06<00:00, 109.97it/s]Loading weights:  98%|█████████▊| 392/399 [00:06<00:00, 109.99it/s]Loading weights: 100%|██████████| 399/399 [00:06<00:00, 62.29it/s] 
+corpus  299,078 tokens -> 73 windows of 4096
+model   Qwen/Qwen3-8B-Base  36L 32H 8KV d128 float32
+
+baseline  w 15/73  ppl   6.7463    94.4s  ETA  0.14 h
+baseline  w 16/73  ppl   6.6133    80.0s  ETA  0.24 h
+k4v4      w 11/73  ppl   6.8966  2322.7s  ETA  3.14 h
+k4v4      w 12/73  ppl   6.9455  1745.5s  ETA  5.21 h
+k4v3      w 11/73  ppl   6.9309  1318.5s  ETA  6.72 h
+k4v3      w 12/73  ppl   6.9780  1248.8s  ETA  8.08 h
+k4v2      w 11/73  ppl   7.1850   915.2s  ETA  9.02 h
+k4v2      w 12/73  ppl   7.2421   937.8s  ETA  9.94 h
+k3v2      w 11/73  ppl   8.0165   914.6s  ETA 10.82 h
+k3v2      w 12/73  ppl   8.0659   928.8s  ETA 11.66 h
+
+--- PILOT COMPLETE ---
+config           ppl   vs base  windows  B/tok/layer   hours
+baseline      6.6133   1.0000x       16            -    0.40
+dense         6.4882   0.9811x       12         4096    3.15
+k4v4          6.9455   1.0502x       12         1056    6.61
+k4v3          6.9780   1.0551x       12          928    3.64
+k4v2          7.2421   1.0951x       12          800    3.09
+k3v2          8.0659   1.2196x       12          672    3.03
+
+baseline  w 17/73  ppl   6.4941    82.7s  ETA 11.56 h
+baseline  w 18/73  ppl   6.4365    86.0s  ETA 11.47 h
+baseline  w 19/73  ppl   6.2731    98.0s  ETA 11.39 h
+baseline  w 20/73  ppl   6.1149   104.4s  ETA 11.31 h
+k4v4      w 13/73  ppl   7.0294  2002.4s  ETA 13.19 h
+k4v4      w 14/73  ppl   7.2192  1991.4s  ETA 14.97 h
+k4v4      w 15/73  ppl   7.2224  1814.6s  ETA 16.53 h
+k4v4      w 16/73  ppl   7.0848  1862.0s  ETA 18.08 h
+k4v3      w 13/73  ppl   7.0671  1037.1s  ETA 18.81 h
+k4v3      w 14/73  ppl   7.2570  1043.5s  ETA 19.51 h
+k4v3      w 15/73  ppl   7.2505  1069.8s  ETA 20.21 h
+k4v3      w 16/73  ppl   7.1172  1030.2s  ETA 20.85 h
+k4v2      w 13/73  ppl   7.3409   815.8s  ETA 21.30 h
+k4v2      w 14/73  ppl   7.5369   836.2s  ETA 21.73 h
+k4v2      w 15/73  ppl   7.5380   836.9s  ETA 22.15 h
+k4v2      w 16/73  ppl   7.4011   831.0s  ETA 22.54 h
+k3v2      w 13/73  ppl   8.1653   820.6s  ETA 22.94 h
+k3v2      w 14/73  ppl   8.4069   841.8s  ETA 23.32 h
+k3v2      w 15/73  ppl   8.4001   834.1s  ETA 23.68 h
+k3v2      w 16/73  ppl   8.2392   837.6s  ETA 24.03 h
+baseline  w 21/73  ppl   6.0675    84.1s  ETA 23.76 h
+baseline  w 22/73  ppl   6.2116    92.7s  ETA 23.51 h
+baseline  w 23/73  ppl   6.3084   101.0s  ETA 23.27 h
+baseline  w 24/73  ppl   6.3811   100.4s  ETA 23.03 h
+k4v4      w 17/73  ppl   6.9587  2044.2s  ETA 24.29 h
+k4v4      w 18/73  ppl   6.8905  1825.7s  ETA 25.33 h
+k4v4      w 19/73  ppl   6.7030  1835.5s  ETA 26.35 h
+k4v4      w 20/73  ppl   6.5208  1736.4s  ETA 27.27 h
+k4v3      w 17/73  ppl   6.9913  1083.6s  ETA 27.70 h
+k4v3      w 18/73  ppl   6.9207  1125.7s  ETA 28.14 h
+k4v3      w 19/73  ppl   6.7340  1107.1s  ETA 28.55 h
+k4v3      w 20/73  ppl   6.5502  1117.9s  ETA 28.95 h
+k4v2      w 17/73  ppl   7.2703   914.1s  ETA 29.22 h
+k4v2      w 18/73  ppl   7.1953   918.7s  ETA 29.46 h
+k4v2      w 19/73  ppl   7.0031   932.9s  ETA 29.71 h
+k4v2      w 20/73  ppl   6.8111   921.1s  ETA 29.94 h
+k3v2      w 17/73  ppl   8.0781   901.8s  ETA 30.16 h
+k3v2      w 18/73  ppl   7.9887   945.9s  ETA 30.39 h
+k3v2      w 19/73  ppl   7.7779   935.9s  ETA 30.60 h
+k3v2      w 20/73  ppl   7.5538   930.3s  ETA 30.80 h
+baseline  w 25/73  ppl   6.4184    90.4s  ETA 30.48 h
+baseline  w 26/73  ppl   6.4231    83.2s  ETA 30.16 h
+baseline  w 27/73  ppl   6.3718    96.3s  ETA 29.84 h
+baseline  w 28/73  ppl   6.3040    98.2s  ETA 29.54 h
+k4v4      w 21/73  ppl   6.4600  1964.7s  ETA 30.35 h
+k4v4      w 22/73  ppl   6.6217  1934.4s  ETA 31.11 h
+k4v4      w 23/73  ppl   6.7362  1819.3s  ETA 31.77 h
+k4v4      w 24/73  ppl   6.8216  1851.8s  ETA 32.44 h
+k4v3      w 21/73  ppl   6.4910  1042.8s  ETA 32.65 h
+k4v3      w 22/73  ppl   6.6540  1059.3s  ETA 32.85 h
+k4v3      w 23/73  ppl   6.7699  1101.6s  ETA 33.06 h
+k4v3      w 24/73  ppl   6.8572  1116.9s  ETA 33.28 h
+k4v2      w 21/73  ppl   6.7473   925.9s  ETA 33.39 h
+k4v2      w 22/73  ppl   6.9112   929.8s  ETA 33.49 h
+k4v2      w 23/73  ppl   7.0351   920.6s  ETA 33.58 h
+k4v2      w 24/73  ppl   7.1231   916.3s  ETA 33.67 h
+k3v2      w 21/73  ppl   7.4869   908.7s  ETA 33.75 h
+k3v2      w 22/73  ppl   7.6745   934.9s  ETA 33.83 h
+k3v2      w 23/73  ppl   7.8181   927.2s  ETA 33.90 h
+k3v2      w 24/73  ppl   7.9058   923.4s  ETA 33.97 h
+baseline  w 29/73  ppl   6.2031    87.2s  ETA 33.62 h
+baseline  w 30/73  ppl   6.1751    83.6s  ETA 33.28 h
+baseline  w 31/73  ppl   6.2071    95.2s  ETA 32.95 h
+baseline  w 32/73  ppl   6.2904    91.1s  ETA 32.62 h
+k4v4      w 25/73  ppl   6.8581  1988.3s  ETA 33.19 h
+k4v4      w 26/73  ppl   6.8615  1826.5s  ETA 33.65 h
+k4v4      w 27/73  ppl   6.8052  1875.8s  ETA 34.13 h
+k4v4      w 28/73  ppl   6.7292  1743.2s  ETA 34.53 h
+k4v3      w 25/73  ppl   6.8939  1139.2s  ETA 34.66 h
+k4v3      w 26/73  ppl   6.8996  1134.8s  ETA 34.77 h
+k4v3      w 27/73  ppl   6.8423  1134.2s  ETA 34.88 h
+k4v3      w 28/73  ppl   6.7644  1144.6s  ETA 34.98 h
+k4v2      w 25/73  ppl   7.1577   910.7s  ETA 34.99 h
+k4v2      w 26/73  ppl   7.1674   962.4s  ETA 35.01 h
+k4v2      w 27/73  ppl   7.1073   952.6s  ETA 35.02 h
+k4v2      w 28/73  ppl   7.0261   956.8s  ETA 35.03 h
+k3v2      w 25/73  ppl   7.9452   920.2s  ETA 35.03 h
+k3v2      w 26/73  ppl   7.9578   947.3s  ETA 35.03 h
+k3v2      w 27/73  ppl   7.8834   935.3s  ETA 35.02 h
+k3v2      w 28/73  ppl   7.7900   923.2s  ETA 35.00 h
+baseline  w 33/73  ppl   6.2553    86.9s  ETA 34.65 h
+baseline  w 34/73  ppl   6.2590    89.9s  ETA 34.31 h
+baseline  w 35/73  ppl   6.2426    97.8s  ETA 33.98 h
+baseline  w 36/73  ppl   6.2085    97.9s  ETA 33.65 h
+k4v4      w 29/73  ppl   6.6137  1925.7s  ETA 34.01 h
+k4v4      w 30/73  ppl   6.5794  1842.9s  ETA 34.32 h
+k4v4      w 31/73  ppl   6.6176  1720.5s  ETA 34.58 h
+k4v4      w 32/73  ppl   6.7018  1850.2s  ETA 34.88 h
+k4v3      w 29/73  ppl   6.6482  1052.9s  ETA 34.89 h
+k4v3      w 30/73  ppl   6.6097  1074.8s  ETA 34.89 h
+k4v3      w 31/73  ppl   6.6497  1047.8s  ETA 34.88 h
+k4v3      w 32/73  ppl   6.7343  1066.4s  ETA 34.88 h
+k4v2      w 29/73  ppl   6.9054   885.3s  ETA 34.82 h
+k4v2      w 30/73  ppl   6.8652   898.4s  ETA 34.75 h
+k4v2      w 31/73  ppl   6.9072   906.8s  ETA 34.68 h
+k4v2      w 32/73  ppl   6.9940   901.4s  ETA 34.61 h
+k3v2      w 29/73  ppl   7.6592   907.2s  ETA 34.55 h
+k3v2      w 30/73  ppl   7.6197   968.6s  ETA 34.49 h
+k3v2      w 31/73  ppl   7.6612   953.6s  ETA 34.43 h
+k3v2      w 32/73  ppl   7.7748   942.5s  ETA 34.37 h
+baseline  w 37/73  ppl   6.2567    85.4s  ETA 34.03 h
+baseline  w 38/73  ppl   6.2527    87.0s  ETA 33.70 h
+baseline  w 39/73  ppl   6.2614    96.3s  ETA 33.37 h
+baseline  w 40/73  ppl   6.2787   100.7s  ETA 33.05 h
+k4v4      w 33/73  ppl   6.6640  1973.8s  ETA 33.30 h
+k4v4      w 34/73  ppl   6.6642  1862.3s  ETA 33.50 h
+k4v4      w 35/73  ppl   6.6443  1869.7s  ETA 33.70 h
+k4v4      w 36/73  ppl   6.6087  1766.7s  ETA 33.86 h
+k4v3      w 33/73  ppl   6.6944  1086.7s  ETA 33.82 h
+k4v3      w 34/73  ppl   6.6948  1085.8s  ETA 33.77 h
+k4v3      w 35/73  ppl   6.6741  1091.8s  ETA 33.72 h
+k4v3      w 36/73  ppl   6.6370  1093.1s  ETA 33.67 h
+k4v2      w 33/73  ppl   6.9551   913.2s  ETA 33.57 h
+k4v2      w 34/73  ppl   6.9536   974.8s  ETA 33.49 h
+k4v2      w 35/73  ppl   6.9282   971.6s  ETA 33.39 h
+k4v2      w 36/73  ppl   6.8895   960.0s  ETA 33.30 h
+k3v2      w 33/73  ppl   7.7367   919.5s  ETA 33.20 h
+k3v2      w 34/73  ppl   7.7458   962.4s  ETA 33.10 h
+k3v2      w 35/73  ppl   7.7241   952.0s  ETA 33.00 h
+k3v2      w 36/73  ppl   7.6868   960.3s  ETA 32.89 h
+baseline  w 41/73  ppl   6.2939    85.3s  ETA 32.57 h
+baseline  w 42/73  ppl   6.2516    91.6s  ETA 32.25 h
+baseline  w 43/73  ppl   6.2384    97.6s  ETA 31.93 h
+baseline  w 44/73  ppl   6.2165   101.8s  ETA 31.62 h
+k4v4      w 37/73  ppl   6.6605  1954.3s  ETA 31.76 h
+k4v4      w 38/73  ppl   6.6543  1789.8s  ETA 31.85 h
+k4v4      w 39/73  ppl   6.6572  1753.5s  ETA 31.93 h
+k4v4      w 40/73  ppl   6.6830  1803.5s  ETA 32.02 h
+k4v3      w 37/73  ppl   6.6897  1102.2s  ETA 31.94 h
+k4v3      w 38/73  ppl   6.6849  1108.5s  ETA 31.86 h
+k4v3      w 39/73  ppl   6.6877  1137.2s  ETA 31.78 h

@@ -1,0 +1,8 @@
+[transformers] Token indices sequence length is longer than the specified maximum sequence length for this model (299078 > 131072). Running this sequence through the model will result in indexing errors
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights:   0%|          | 1/399 [00:00<00:56,  7.01it/s]Loading weights:  18%|█▊        | 70/399 [00:00<00:01, 325.06it/s]Loading weights:  29%|██▊       | 114/399 [00:00<00:00, 366.60it/s]Loading weights:  40%|███▉      | 158/399 [00:00<00:00, 381.52it/s]Loading weights:  50%|████▉     | 198/399 [00:00<00:00, 385.97it/s]Loading weights:  60%|█████▉    | 238/399 [00:00<00:00, 388.27it/s]Loading weights:  70%|██████▉   | 279/399 [00:00<00:00, 367.37it/s]Loading weights:  82%|████████▏ | 326/399 [00:00<00:00, 397.52it/s]Loading weights:  94%|█████████▍| 375/399 [00:01<00:00, 410.43it/s]Loading weights: 100%|██████████| 399/399 [00:01<00:00, 317.82it/s]
+corpus  299,078 tokens -> 73 windows of 4096
+model   Qwen/Qwen3-8B-Base  36L 32H 8KV d128 float32
+
+baseline  w  1/73  ppl   6.2749    79.4s  ETA  7.39 h
+/usr/lib/python3.14/multiprocessing/resource_tracker.py:396: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/mp-bc8r2ehr'}
+  warnings.warn(

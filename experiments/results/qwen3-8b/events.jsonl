@@ -1,0 +1,266 @@
+{"t": 1788183022.345249, "elapsed_h": 2.2517310248480902e-08, "kind": "start", "model": "Qwen/Qwen3-8B-Base", "context": 4096, "dtype": "float32", "configs": "baseline,dense,k4v4,k4v3,k4v2,k3v2", "argv": ["--dir", "kernel/experiments/results/qwen3-8b", "--model", "Qwen/Qwen3-8B-Base", "--context", "4096"]}
+{"t": 1788183022.3478613, "elapsed_h": 7.481707466973198e-07, "kind": "preflight_ok", "mem_available_gb": 53.1, "disk_free_gb": 107.8}
+{"t": 1788183031.332784, "elapsed_h": 0.00249655995104048, "kind": "model_loaded", "model": "Qwen/Qwen3-8B-Base", "context": 4096, "dtype": "float32", "corpus": "Salesforce/wikitext:wikitext-2-raw-v1/test", "n_tokens": 299078, "n_windows": 73, "layers": 36, "heads": 32, "kv_heads": 8, "head_dim": 128, "protocol": "non-overlapping windows, cache reset per window"}
+{"t": 1788183130.0280674, "elapsed_h": 0.02991191652086046, "kind": "window", "config": "baseline", "window": 1, "target": 73, "ppl": 6.27495, "seconds": 98.7, "eta_h": 11.25}
+{"t": 1788183215.788632, "elapsed_h": 0.05373429550064934, "kind": "window", "config": "baseline", "window": 2, "target": 73, "ppl": 7.17924, "seconds": 85.8, "eta_h": 10.08}
+{"t": 1788183236.1786113, "elapsed_h": 0.05939817865689596, "kind": "graft", "config": "dense", "seconds": 20.4, "bytes_per_token_per_layer": 4096}
+{"t": 1788184188.942926, "elapsed_h": 0.32405493272675406, "kind": "window", "config": "dense", "window": 1, "target": 12, "ppl": 6.27505, "seconds": 952.8, "eta_h": 40.4}
+{"t": 1788185131.4505258, "elapsed_h": 0.5858625993463729, "kind": "window", "config": "dense", "window": 2, "target": 12, "ppl": 7.179, "seconds": 942.5, "eta_h": 54.63}
+{"t": 1788185131.4561067, "elapsed_h": 0.5858641495969561, "kind": "dense_control_ok", "baseline": 7.17924, "dense": 7.179}
+{"t": 1788185150.3668592, "elapsed_h": 0.5911171364121967, "kind": "graft", "config": "k4v4", "seconds": 18.9, "bytes_per_token_per_layer": 1056}
+{"t": 1788187431.6766572, "elapsed_h": 1.2248143025239309, "kind": "window", "config": "k4v4", "window": 1, "target": 73, "ppl": 6.79425, "seconds": 2281.3, "eta_h": 91.13}
+{"t": 1788189449.552213, "elapsed_h": 1.7853352902332942, "kind": "window", "config": "k4v4", "window": 2, "target": 73, "ppl": 7.68769, "seconds": 2017.9, "eta_h": 110.39}
+{"t": 1788189468.8127143, "elapsed_h": 1.7906854295068317, "kind": "graft", "config": "k4v3", "seconds": 19.3, "bytes_per_token_per_layer": 928}
+{"t": 1788190528.6239634, "elapsed_h": 2.085077443122864, "kind": "window", "config": "k4v3", "window": 1, "target": 73, "ppl": 6.76754, "seconds": 1059.8, "eta_h": 110.21}
+{"t": 1788191631.475209, "elapsed_h": 2.3914250113566715, "kind": "window", "config": "k4v3", "window": 2, "target": 73, "ppl": 7.67702, "seconds": 1102.8, "eta_h": 110.3}
+{"t": 1788191650.589037, "elapsed_h": 2.3967344080077275, "kind": "graft", "config": "k4v2", "seconds": 19.1, "bytes_per_token_per_layer": 800}
+{"t": 1788192586.4645686, "elapsed_h": 2.6566998334725698, "kind": "window", "config": "k4v2", "window": 1, "target": 73, "ppl": 6.90945, "seconds": 935.9, "eta_h": 108.63}
+{"t": 1788193525.6565323, "elapsed_h": 2.91758649011453, "kind": "window", "config": "k4v2", "window": 2, "target": 73, "ppl": 7.83639, "seconds": 939.2, "eta_h": 107.08}
+{"t": 1788193545.0355463, "elapsed_h": 2.9229695494969685, "kind": "graft", "config": "k3v2", "seconds": 19.4, "bytes_per_token_per_layer": 672}
+{"t": 1788194478.8040009, "elapsed_h": 3.182349675761329, "kind": "window", "config": "k3v2", "window": 1, "target": 73, "ppl": 7.83398, "seconds": 933.8, "eta_h": 105.89}
+{"t": 1788195437.1406136, "elapsed_h": 3.4485542904668383, "kind": "window", "config": "k3v2", "window": 2, "target": 73, "ppl": 8.93033, "seconds": 958.3, "eta_h": 104.89}
+{"t": 1788195437.1425314, "elapsed_h": 3.4485548231336804, "kind": "pilot_complete", "table": "config           ppl   vs base  windows  B/tok/layer   hours\nbaseline      7.1792   1.0000x        2            -    0.05\ndense         7.1790   1.0000x        2         4096    0.53\nk4v4          7.6877   1.0708x        2         1056    1.19\nk4v3          7.6770   1.0693x        2          928    0.60\nk4v2          7.8364   1.0915x        2          800    0.52\nk3v2          8.9303   1.2439x        2          672    0.53"}
+{"t": 1788195526.9759464, "elapsed_h": 3.4735085495313007, "kind": "window", "config": "baseline", "window": 3, "target": 73, "ppl": 6.29989, "seconds": 89.8, "eta_h": 97.26}
+{"t": 1788195610.8956065, "elapsed_h": 3.4968195662233565, "kind": "window", "config": "baseline", "window": 4, "target": 73, "ppl": 5.65423, "seconds": 83.9, "eta_h": 90.67}
+{"t": 1788195703.4269986, "elapsed_h": 3.522522730694877, "kind": "window", "config": "baseline", "window": 5, "target": 73, "ppl": 5.87679, "seconds": 92.5, "eta_h": 85.01}
+{"t": 1788195799.9641767, "elapsed_h": 3.549338613483641, "kind": "window", "config": "baseline", "window": 6, "target": 73, "ppl": 6.01419, "seconds": 96.5, "eta_h": 80.08}
+{"t": 1788195818.8360689, "elapsed_h": 3.554580805765258, "kind": "graft", "config": "dense", "seconds": 18.9, "bytes_per_token_per_layer": 4096}
+{"t": 1788196764.7562983, "elapsed_h": 3.8173364250527486, "kind": "window", "config": "dense", "window": 3, "target": 12, "ppl": 6.29984, "seconds": 945.9, "eta_h": 80.84}
+{"t": 1788197709.930203, "elapsed_h": 4.079884731902016, "kind": "window", "config": "dense", "window": 4, "target": 12, "ppl": 5.65432, "seconds": 945.2, "eta_h": 81.37}
+{"t": 1788198655.2273138, "elapsed_h": 4.342467262678676, "kind": "window", "config": "dense", "window": 5, "target": 12, "ppl": 5.87685, "seconds": 945.3, "eta_h": 81.82}
+{"t": 1788199595.1954114, "elapsed_h": 4.6035695120361115, "kind": "window", "config": "dense", "window": 6, "target": 12, "ppl": 6.01419, "seconds": 940.0, "eta_h": 82.17}
+{"t": 1788199595.1976914, "elapsed_h": 4.603570145368576, "kind": "dense_control_ok", "baseline": 6.01419, "dense": 6.01419}
+{"t": 1788199613.76567, "elapsed_h": 4.608727917207612, "kind": "graft", "config": "k4v4", "seconds": 18.6, "bytes_per_token_per_layer": 1056}
+{"t": 1788201875.3297775, "elapsed_h": 5.236940169268184, "kind": "window", "config": "k4v4", "window": 3, "target": 73, "ppl": 6.73117, "seconds": 2261.6, "eta_h": 88.78}
+{"t": 1788203763.257805, "elapsed_h": 5.761364621387588, "kind": "window", "config": "k4v4", "window": 4, "target": 73, "ppl": 5.99116, "seconds": 1887.9, "eta_h": 92.97}
+{"t": 1788205665.1711292, "elapsed_h": 6.289673878086938, "kind": "window", "config": "k4v4", "window": 5, "target": 73, "ppl": 6.21803, "seconds": 1901.9, "eta_h": 96.81}
+{"t": 1788207356.0455277, "elapsed_h": 6.75936121099525, "kind": "window", "config": "k4v4", "window": 6, "target": 73, "ppl": 6.36739, "seconds": 1690.9, "eta_h": 99.42}
+{"t": 1788207375.2435365, "elapsed_h": 6.764693991210725, "kind": "graft", "config": "k4v3", "seconds": 19.2, "bytes_per_token_per_layer": 928}
+{"t": 1788208400.0104752, "elapsed_h": 7.049351474179162, "kind": "window", "config": "k4v3", "window": 3, "target": 73, "ppl": 6.73834, "seconds": 1024.8, "eta_h": 99.25}
+{"t": 1788209424.5698955, "elapsed_h": 7.333951313164499, "kind": "window", "config": "k4v3", "window": 4, "target": 73, "ppl": 6.01151, "seconds": 1024.6, "eta_h": 99.01}
+{"t": 1788210437.5127623, "elapsed_h": 7.615324331786898, "kind": "window", "config": "k4v3", "window": 5, "target": 73, "ppl": 6.24035, "seconds": 1012.9, "eta_h": 98.72}
+{"t": 1788211465.2569695, "elapsed_h": 7.900808833705055, "kind": "window", "config": "k4v3", "window": 6, "target": 73, "ppl": 6.39264, "seconds": 1027.7, "eta_h": 98.48}
+{"t": 1788211484.7126658, "elapsed_h": 7.906213193800714, "kind": "graft", "config": "k4v2", "seconds": 19.5, "bytes_per_token_per_layer": 800}
+{"t": 1788212506.0550065, "elapsed_h": 8.189919399619102, "kind": "window", "config": "k4v2", "window": 3, "target": 73, "ppl": 6.87443, "seconds": 1021.3, "eta_h": 98.28}
+{"t": 1788213391.2086997, "elapsed_h": 8.43579542544153, "kind": "window", "config": "k4v2", "window": 4, "target": 73, "ppl": 6.1392, "seconds": 885.2, "eta_h": 97.57}
+{"t": 1788214298.8292725, "elapsed_h": 8.687912251287036, "kind": "window", "config": "k4v2", "window": 5, "target": 73, "ppl": 6.38469, "seconds": 907.6, "eta_h": 96.97}
+{"t": 1788215198.623558, "elapsed_h": 8.937855108314091, "kind": "window", "config": "k4v2", "window": 6, "target": 73, "ppl": 6.56562, "seconds": 899.8, "eta_h": 96.36}
+{"t": 1788215218.827795, "elapsed_h": 8.943467396365271, "kind": "graft", "config": "k3v2", "seconds": 20.2, "bytes_per_token_per_layer": 672}
+{"t": 1788216066.2358544, "elapsed_h": 9.17885852403111, "kind": "window", "config": "k3v2", "window": 3, "target": 73, "ppl": 7.77443, "seconds": 847.4, "eta_h": 95.68}
+{"t": 1788216928.6164217, "elapsed_h": 9.418408681617843, "kind": "window", "config": "k3v2", "window": 4, "target": 73, "ppl": 6.9113, "seconds": 862.4, "eta_h": 95.02}
+{"t": 1788217814.473117, "elapsed_h": 9.664479985899396, "kind": "window", "config": "k3v2", "window": 5, "target": 73, "ppl": 7.19052, "seconds": 885.9, "eta_h": 94.44}
+{"t": 1788218709.2876217, "elapsed_h": 9.913039570450783, "kind": "window", "config": "k3v2", "window": 6, "target": 73, "ppl": 7.3641, "seconds": 894.8, "eta_h": 93.9}
+{"t": 1788218796.4797692, "elapsed_h": 9.937259611421162, "kind": "window", "config": "baseline", "window": 7, "target": 73, "ppl": 6.18937, "seconds": 87.2, "eta_h": 91.32}
+{"t": 1788218882.0344687, "elapsed_h": 9.961024805704753, "kind": "window", "config": "baseline", "window": 8, "target": 73, "ppl": 6.32966, "seconds": 85.6, "eta_h": 88.86}
+{"t": 1788218980.997767, "elapsed_h": 9.988514610793855, "kind": "window", "config": "baseline", "window": 9, "target": 73, "ppl": 6.52375, "seconds": 99.0, "eta_h": 86.57}
+{"t": 1788219080.642345, "elapsed_h": 10.016193660232755, "kind": "window", "config": "baseline", "window": 10, "target": 73, "ppl": 6.39535, "seconds": 99.6, "eta_h": 84.39}
+{"t": 1788219099.5483432, "elapsed_h": 10.02144532640775, "kind": "graft", "config": "dense", "seconds": 18.9, "bytes_per_token_per_layer": 4096}
+{"t": 1788220046.2978663, "elapsed_h": 10.284431305064095, "kind": "window", "config": "dense", "window": 7, "target": 12, "ppl": 6.18931, "seconds": 946.7, "eta_h": 84.28}
+{"t": 1788220991.1256557, "elapsed_h": 10.546883468760385, "kind": "window", "config": "dense", "window": 8, "target": 12, "ppl": 6.32961, "seconds": 944.8, "eta_h": 84.12}
+{"t": 1788221933.7186217, "elapsed_h": 10.808714848226971, "kind": "window", "config": "dense", "window": 9, "target": 12, "ppl": 6.52366, "seconds": 942.6, "eta_h": 83.96}
+{"t": 1788222876.560312, "elapsed_h": 11.070615317755275, "kind": "window", "config": "dense", "window": 10, "target": 12, "ppl": 6.39477, "seconds": 942.8, "eta_h": 83.78}
+{"t": 1788222876.5624175, "elapsed_h": 11.070615902609296, "kind": "dense_control_ok", "baseline": 6.39535, "dense": 6.39477}
+{"t": 1788222895.4479024, "elapsed_h": 11.075861870646477, "kind": "graft", "config": "k4v4", "seconds": 18.9, "bytes_per_token_per_layer": 1056}
+{"t": 1788224977.514508, "elapsed_h": 11.654213705526457, "kind": "window", "config": "k4v4", "window": 7, "target": 73, "ppl": 6.54953, "seconds": 2082.1, "eta_h": 85.98}
+{"t": 1788226862.29694, "elapsed_h": 12.177764381170272, "kind": "window", "config": "k4v4", "window": 8, "target": 73, "ppl": 6.6939, "seconds": 1884.8, "eta_h": 87.63}
+{"t": 1788228696.5489714, "elapsed_h": 12.687278834382694, "kind": "window", "config": "k4v4", "window": 9, "target": 73, "ppl": 6.91388, "seconds": 1834.3, "eta_h": 89.08}
+{"t": 1788230596.1980643, "elapsed_h": 13.214959137837091, "kind": "window", "config": "k4v4", "window": 10, "target": 73, "ppl": 6.80841, "seconds": 1899.6, "eta_h": 90.58}
+{"t": 1788230616.2230043, "elapsed_h": 13.22052162124051, "kind": "graft", "config": "k4v3", "seconds": 20.0, "bytes_per_token_per_layer": 928}
+{"t": 1788231622.5945954, "elapsed_h": 13.500069285366271, "kind": "window", "config": "k4v3", "window": 7, "target": 73, "ppl": 6.58046, "seconds": 1006.4, "eta_h": 90.37}
+{"t": 1788232707.1892982, "elapsed_h": 13.80134559167756, "kind": "window", "config": "k4v3", "window": 8, "target": 73, "ppl": 6.7296, "seconds": 1084.6, "eta_h": 90.26}
+{"t": 1788233822.6408896, "elapsed_h": 14.11119325598081, "kind": "window", "config": "k4v3", "window": 9, "target": 73, "ppl": 6.94362, "seconds": 1115.5, "eta_h": 90.2}
+{"t": 1788234895.900448, "elapsed_h": 14.409320911102824, "kind": "window", "config": "k4v3", "window": 10, "target": 73, "ppl": 6.8385, "seconds": 1073.3, "eta_h": 90.06}
+{"t": 1788234915.1960661, "elapsed_h": 14.414680805007617, "kind": "graft", "config": "k4v2", "seconds": 19.3, "bytes_per_token_per_layer": 800}
+{"t": 1788235797.6948035, "elapsed_h": 14.659819343156284, "kind": "window", "config": "k4v2", "window": 7, "target": 73, "ppl": 6.76196, "seconds": 882.5, "eta_h": 89.62}
+{"t": 1788236729.022625, "elapsed_h": 14.918521515793271, "kind": "window", "config": "k4v2", "window": 8, "target": 73, "ppl": 6.93831, "seconds": 931.3, "eta_h": 89.23}
+{"t": 1788237655.1593437, "elapsed_h": 15.175781715446048, "kind": "window", "config": "k4v2", "window": 9, "target": 73, "ppl": 7.17095, "seconds": 926.1, "eta_h": 88.85}
+{"t": 1788238580.7641525, "elapsed_h": 15.432894162403212, "kind": "window", "config": "k4v2", "window": 10, "target": 73, "ppl": 7.06953, "seconds": 925.6, "eta_h": 88.46}
+{"t": 1788238598.835574, "elapsed_h": 15.437914001610544, "kind": "graft", "config": "k3v2", "seconds": 18.1, "bytes_per_token_per_layer": 672}
+{"t": 1788239502.360248, "elapsed_h": 15.688893077770869, "kind": "window", "config": "k3v2", "window": 7, "target": 73, "ppl": 7.58373, "seconds": 903.5, "eta_h": 88.08}
+{"t": 1788240426.1703978, "elapsed_h": 15.94550700823466, "kind": "window", "config": "k3v2", "window": 8, "target": 73, "ppl": 7.84605, "seconds": 923.8, "eta_h": 87.7}
+{"t": 1788241352.563268, "elapsed_h": 16.202838361064593, "kind": "window", "config": "k3v2", "window": 9, "target": 73, "ppl": 8.09934, "seconds": 926.4, "eta_h": 87.33}
+{"t": 1788242277.5888503, "elapsed_h": 16.459789911707244, "kind": "window", "config": "k3v2", "window": 10, "target": 73, "ppl": 7.93131, "seconds": 925.0, "eta_h": 86.96}
+{"t": 1788242364.607951, "elapsed_h": 16.48396188411448, "kind": "window", "config": "baseline", "window": 11, "target": 73, "ppl": 6.45913, "seconds": 87.0, "eta_h": 85.39}
+{"t": 1788242447.1203632, "elapsed_h": 16.50688199871116, "kind": "window", "config": "baseline", "window": 12, "target": 73, "ppl": 6.48873, "seconds": 82.5, "eta_h": 83.87}
+{"t": 1788242542.0402565, "elapsed_h": 16.533248635662925, "kind": "window", "config": "baseline", "window": 13, "target": 73, "ppl": 6.56294, "seconds": 94.9, "eta_h": 82.4}
+{"t": 1788242640.6326327, "elapsed_h": 16.56063540690475, "kind": "window", "config": "baseline", "window": 14, "target": 73, "ppl": 6.74569, "seconds": 98.6, "eta_h": 80.99}
+{"t": 1788242658.6616898, "elapsed_h": 16.56564347823461, "kind": "graft", "config": "dense", "seconds": 18.0, "bytes_per_token_per_layer": 4096}
+{"t": 1788243606.8010218, "elapsed_h": 16.82901551498307, "kind": "window", "config": "dense", "window": 11, "target": 12, "ppl": 6.45857, "seconds": 948.1, "eta_h": 80.78}
+{"t": 1788244550.6212585, "elapsed_h": 17.091187802884313, "kind": "window", "config": "dense", "window": 12, "target": 12, "ppl": 6.48819, "seconds": 943.8, "eta_h": 80.54}
+{"t": 1788244550.6228251, "elapsed_h": 17.091188238130677, "kind": "abort", "code": "dense_control_mismatch", "message": "dense control ppl 6.4882 vs baseline 6.7457 (3.82% > 0.50%) after 12 window(s). The kernel is not reproducing the model; compression numbers would be attributing a plumbing bug to quantisation.", "baseline": 6.745688359142154, "dense": 6.48818705027582, "relative": 0.03817272532570426}
+{"t": 1788277132.4211805, "elapsed_h": 5.2518314785427515e-08, "kind": "resume", "source": "results.json", "done": {"baseline": 14, "dense": 12, "k4v4": 10, "k4v3": 10, "k4v2": 10, "k3v2": 10}}
+{"t": 1788277132.4241247, "elapsed_h": 8.703602684868707e-07, "kind": "start", "model": "Qwen/Qwen3-8B-Base", "context": 4096, "dtype": "float32", "configs": "baseline,dense,k4v4,k4v3,k4v2,k3v2", "argv": ["--dir", "kernel/experiments/results/qwen3-8b", "--model", "Qwen/Qwen3-8B-Base", "--context", "4096"]}
+{"t": 1788277132.4260929, "elapsed_h": 1.4170673158433702e-06, "kind": "preflight_ok", "mem_available_gb": 53.6, "disk_free_gb": 107.4}
+{"t": 1788277146.1900835, "elapsed_h": 0.0038247478008270265, "kind": "model_loaded", "model": "Qwen/Qwen3-8B-Base", "context": 4096, "dtype": "float32", "corpus": "Salesforce/wikitext:wikitext-2-raw-v1/test", "n_tokens": 299078, "n_windows": 73, "layers": 36, "heads": 32, "kv_heads": 8, "head_dim": 128, "protocol": "non-overlapping windows, cache reset per window"}
+{"t": 1788277240.5523043, "elapsed_h": 0.0300364758570989, "kind": "window", "config": "baseline", "window": 15, "target": 73, "ppl": 6.74628, "seconds": 94.4, "eta_h": 0.14}
+{"t": 1788277320.5740967, "elapsed_h": 0.05226475139458974, "kind": "window", "config": "baseline", "window": 16, "target": 73, "ppl": 6.6133, "seconds": 80.0, "eta_h": 0.24}
+{"t": 1788277341.6453023, "elapsed_h": 0.05811786413192749, "kind": "graft", "config": "k4v4", "seconds": 21.1, "bytes_per_token_per_layer": 1056}
+{"t": 1788279664.3475168, "elapsed_h": 0.7033129237095515, "kind": "window", "config": "k4v4", "window": 11, "target": 73, "ppl": 6.89655, "seconds": 2322.7, "eta_h": 3.14}
+{"t": 1788281409.8879514, "elapsed_h": 1.1881852665874693, "kind": "window", "config": "k4v4", "window": 12, "target": 73, "ppl": 6.9455, "seconds": 1745.5, "eta_h": 5.21}
+{"t": 1788281429.444976, "elapsed_h": 1.193617773519622, "kind": "graft", "config": "k4v3", "seconds": 19.6, "bytes_per_token_per_layer": 928}
+{"t": 1788282747.9539173, "elapsed_h": 1.559870257112715, "kind": "window", "config": "k4v3", "window": 11, "target": 73, "ppl": 6.93086, "seconds": 1318.5, "eta_h": 6.72}
+{"t": 1788283996.7172244, "elapsed_h": 1.9067489535941018, "kind": "window", "config": "k4v3", "window": 12, "target": 73, "ppl": 6.97798, "seconds": 1248.8, "eta_h": 8.08}
+{"t": 1788284016.415039, "elapsed_h": 1.912220568789376, "kind": "graft", "config": "k4v2", "seconds": 19.7, "bytes_per_token_per_layer": 800}
+{"t": 1788284931.6579564, "elapsed_h": 2.1664547124173907, "kind": "window", "config": "k4v2", "window": 11, "target": 73, "ppl": 7.18499, "seconds": 915.2, "eta_h": 9.02}
+{"t": 1788285869.4360626, "elapsed_h": 2.4269486308760113, "kind": "window", "config": "k4v2", "window": 12, "target": 73, "ppl": 7.24205, "seconds": 937.8, "eta_h": 9.94}
+{"t": 1788285888.3083045, "elapsed_h": 2.4321909203131993, "kind": "graft", "config": "k3v2", "seconds": 18.9, "bytes_per_token_per_layer": 672}
+{"t": 1788286802.8991606, "elapsed_h": 2.686243935889668, "kind": "window", "config": "k3v2", "window": 11, "target": 73, "ppl": 8.01649, "seconds": 914.6, "eta_h": 10.82}
+{"t": 1788287731.6960833, "elapsed_h": 2.9442430810133615, "kind": "window", "config": "k3v2", "window": 12, "target": 73, "ppl": 8.06588, "seconds": 928.8, "eta_h": 11.66}
+{"t": 1788287731.697758, "elapsed_h": 2.9442435461945005, "kind": "pilot_complete", "table": "config           ppl   vs base  windows  B/tok/layer   hours\nbaseline      6.6133   1.0000x       16            -    0.40\ndense         6.4882   0.9811x       12         4096    3.15\nk4v4          6.9455   1.0502x       12         1056    6.61\nk4v3          6.9780   1.0551x       12          928    3.64\nk4v2          7.2421   1.0951x       12          800    3.09\nk3v2          8.0659   1.2196x       12          672    3.03"}
+{"t": 1788287814.4299223, "elapsed_h": 2.967224702967538, "kind": "window", "config": "baseline", "window": 17, "target": 73, "ppl": 6.49412, "seconds": 82.7, "eta_h": 11.56}
+{"t": 1788287900.453503, "elapsed_h": 2.9911201420095233, "kind": "window", "config": "baseline", "window": 18, "target": 73, "ppl": 6.43647, "seconds": 86.0, "eta_h": 11.47}
+{"t": 1788287998.4065382, "elapsed_h": 3.018329318496916, "kind": "window", "config": "baseline", "window": 19, "target": 73, "ppl": 6.27313, "seconds": 98.0, "eta_h": 11.39}
+{"t": 1788288102.8090496, "elapsed_h": 3.047330016096433, "kind": "window", "config": "baseline", "window": 20, "target": 73, "ppl": 6.11494, "seconds": 104.4, "eta_h": 11.31}
+{"t": 1788288121.7569435, "elapsed_h": 3.0525933199458652, "kind": "graft", "config": "k4v4", "seconds": 18.9, "bytes_per_token_per_layer": 1056}
+{"t": 1788290124.1557672, "elapsed_h": 3.6088152154286703, "kind": "window", "config": "k4v4", "window": 13, "target": 73, "ppl": 7.02935, "seconds": 2002.4, "eta_h": 13.19}
+{"t": 1788292115.5915961, "elapsed_h": 4.161991834574276, "kind": "window", "config": "k4v4", "window": 14, "target": 73, "ppl": 7.21924, "seconds": 1991.4, "eta_h": 14.97}
+{"t": 1788293930.1932817, "elapsed_h": 4.666047858330939, "kind": "window", "config": "k4v4", "window": 15, "target": 73, "ppl": 7.22243, "seconds": 1814.6, "eta_h": 16.53}
+{"t": 1788295792.2056704, "elapsed_h": 5.183273521860441, "kind": "window", "config": "k4v4", "window": 16, "target": 73, "ppl": 7.08477, "seconds": 1862.0, "eta_h": 18.08}
+{"t": 1788295812.0492518, "elapsed_h": 5.1887856278816855, "kind": "graft", "config": "k4v3", "seconds": 19.8, "bytes_per_token_per_layer": 928}
+{"t": 1788296849.186573, "elapsed_h": 5.476879328158167, "kind": "window", "config": "k4v3", "window": 13, "target": 73, "ppl": 7.06708, "seconds": 1037.1, "eta_h": 18.81}
+{"t": 1788297892.639468, "elapsed_h": 5.76672735452652, "kind": "window", "config": "k4v3", "window": 14, "target": 73, "ppl": 7.25697, "seconds": 1043.5, "eta_h": 19.51}
+{"t": 1788298962.4073029, "elapsed_h": 6.0638850864436895, "kind": "window", "config": "k4v3", "window": 15, "target": 73, "ppl": 7.25048, "seconds": 1069.8, "eta_h": 20.21}
+{"t": 1788299992.5693371, "elapsed_h": 6.350041207075119, "kind": "window", "config": "k4v3", "window": 16, "target": 73, "ppl": 7.11721, "seconds": 1030.2, "eta_h": 20.85}
+{"t": 1788300011.8460631, "elapsed_h": 6.355395853188303, "kind": "graft", "config": "k4v2", "seconds": 19.3, "bytes_per_token_per_layer": 800}
+{"t": 1788300827.6254947, "elapsed_h": 6.58200125084983, "kind": "window", "config": "k4v2", "window": 13, "target": 73, "ppl": 7.3409, "seconds": 815.8, "eta_h": 21.3}
+{"t": 1788301663.7977602, "elapsed_h": 6.814271324608061, "kind": "window", "config": "k4v2", "window": 14, "target": 73, "ppl": 7.53685, "seconds": 836.2, "eta_h": 21.73}
+{"t": 1788302500.6803408, "elapsed_h": 7.046738708085484, "kind": "window", "config": "k4v2", "window": 15, "target": 73, "ppl": 7.53801, "seconds": 836.9, "eta_h": 22.15}
+{"t": 1788303331.7094095, "elapsed_h": 7.277580116060045, "kind": "window", "config": "k4v2", "window": 16, "target": 73, "ppl": 7.4011, "seconds": 831.0, "eta_h": 22.54}
+{"t": 1788303350.7835362, "elapsed_h": 7.282878484659725, "kind": "graft", "config": "k3v2", "seconds": 19.1, "bytes_per_token_per_layer": 672}
+{"t": 1788304171.3358145, "elapsed_h": 7.5108096730046805, "kind": "window", "config": "k3v2", "window": 13, "target": 73, "ppl": 8.16531, "seconds": 820.6, "eta_h": 22.94}
+{"t": 1788305013.0990372, "elapsed_h": 7.74463279041979, "kind": "window", "config": "k3v2", "window": 14, "target": 73, "ppl": 8.40685, "seconds": 841.8, "eta_h": 23.32}
+{"t": 1788305847.2267904, "elapsed_h": 7.976334944102499, "kind": "window", "config": "k3v2", "window": 15, "target": 73, "ppl": 8.40012, "seconds": 834.1, "eta_h": 23.68}
+{"t": 1788306684.871194, "elapsed_h": 8.209013945062955, "kind": "window", "config": "k3v2", "window": 16, "target": 73, "ppl": 8.23922, "seconds": 837.6, "eta_h": 24.03}
+{"t": 1788306768.9671698, "elapsed_h": 8.232373938361803, "kind": "window", "config": "baseline", "window": 21, "target": 73, "ppl": 6.06749, "seconds": 84.1, "eta_h": 23.76}
+{"t": 1788306861.6355531, "elapsed_h": 8.258115155961779, "kind": "window", "config": "baseline", "window": 22, "target": 73, "ppl": 6.21163, "seconds": 92.7, "eta_h": 23.51}
+{"t": 1788306962.6075928, "elapsed_h": 8.28616294476721, "kind": "window", "config": "baseline", "window": 23, "target": 73, "ppl": 6.3084, "seconds": 101.0, "eta_h": 23.27}
+{"t": 1788307062.9610975, "elapsed_h": 8.314038918349478, "kind": "window", "config": "baseline", "window": 24, "target": 73, "ppl": 6.38111, "seconds": 100.4, "eta_h": 23.03}
+{"t": 1788307083.3893304, "elapsed_h": 8.31971342742443, "kind": "graft", "config": "k4v4", "seconds": 20.4, "bytes_per_token_per_layer": 1056}
+{"t": 1788309127.6064446, "elapsed_h": 8.887551514705022, "kind": "window", "config": "k4v4", "window": 17, "target": 73, "ppl": 6.95866, "seconds": 2044.2, "eta_h": 24.29}
+{"t": 1788310953.2960668, "elapsed_h": 9.394687520861625, "kind": "window", "config": "k4v4", "window": 18, "target": 73, "ppl": 6.89045, "seconds": 1825.7, "eta_h": 25.33}
+{"t": 1788312788.8416874, "elapsed_h": 9.904561304383808, "kind": "window", "config": "k4v4", "window": 19, "target": 73, "ppl": 6.70299, "seconds": 1835.5, "eta_h": 26.35}
+{"t": 1788314525.2412906, "elapsed_h": 10.38689452747504, "kind": "window", "config": "k4v4", "window": 20, "target": 73, "ppl": 6.52081, "seconds": 1736.4, "eta_h": 27.27}
+{"t": 1788314545.0907283, "elapsed_h": 10.392408260239495, "kind": "graft", "config": "k4v3", "seconds": 19.8, "bytes_per_token_per_layer": 928}
+{"t": 1788315628.7230728, "elapsed_h": 10.693417244752249, "kind": "window", "config": "k4v3", "window": 17, "target": 73, "ppl": 6.99133, "seconds": 1083.6, "eta_h": 27.7}
+{"t": 1788316754.4714005, "elapsed_h": 11.006125113566716, "kind": "window", "config": "k4v3", "window": 18, "target": 73, "ppl": 6.92067, "seconds": 1125.7, "eta_h": 28.14}
+{"t": 1788317861.5758698, "elapsed_h": 11.313654132816527, "kind": "window", "config": "k4v3", "window": 19, "target": 73, "ppl": 6.73404, "seconds": 1107.1, "eta_h": 28.55}
+{"t": 1788318979.435131, "elapsed_h": 11.62417059428162, "kind": "window", "config": "k4v3", "window": 20, "target": 73, "ppl": 6.55015, "seconds": 1117.9, "eta_h": 28.95}
+{"t": 1788318998.5663545, "elapsed_h": 11.629484823015002, "kind": "graft", "config": "k4v2", "seconds": 19.1, "bytes_per_token_per_layer": 800}
+{"t": 1788319912.68541, "elapsed_h": 11.88340678287877, "kind": "window", "config": "k4v2", "window": 17, "target": 73, "ppl": 7.27028, "seconds": 914.1, "eta_h": 29.22}
+{"t": 1788320831.4235516, "elapsed_h": 12.138611822194523, "kind": "window", "config": "k4v2", "window": 18, "target": 73, "ppl": 7.19527, "seconds": 918.7, "eta_h": 29.46}
+{"t": 1788321764.3018568, "elapsed_h": 12.39774468474918, "kind": "window", "config": "k4v2", "window": 19, "target": 73, "ppl": 7.00309, "seconds": 932.9, "eta_h": 29.71}
+{"t": 1788322685.4309685, "elapsed_h": 12.653613882462183, "kind": "window", "config": "k4v2", "window": 20, "target": 73, "ppl": 6.8111, "seconds": 921.1, "eta_h": 29.94}
+{"t": 1788322704.5487137, "elapsed_h": 12.658924367229144, "kind": "graft", "config": "k3v2", "seconds": 19.1, "bytes_per_token_per_layer": 672}
+{"t": 1788323606.342886, "elapsed_h": 12.9094227484862, "kind": "window", "config": "k3v2", "window": 17, "target": 73, "ppl": 8.07807, "seconds": 901.8, "eta_h": 30.16}
+{"t": 1788324552.2501478, "elapsed_h": 13.172174765600099, "kind": "window", "config": "k3v2", "window": 18, "target": 73, "ppl": 7.98873, "seconds": 945.9, "eta_h": 30.39}
+{"t": 1788325488.1951818, "elapsed_h": 13.432159497274293, "kind": "window", "config": "k3v2", "window": 19, "target": 73, "ppl": 7.77787, "seconds": 935.9, "eta_h": 30.6}
+{"t": 1788326418.518923, "elapsed_h": 13.690582758718067, "kind": "window", "config": "k3v2", "window": 20, "target": 73, "ppl": 7.55377, "seconds": 930.3, "eta_h": 30.8}
+{"t": 1788326508.9385035, "elapsed_h": 13.715699308845732, "kind": "window", "config": "baseline", "window": 25, "target": 73, "ppl": 6.4184, "seconds": 90.4, "eta_h": 30.48}
+{"t": 1788326592.1253817, "elapsed_h": 13.738806775013606, "kind": "window", "config": "baseline", "window": 26, "target": 73, "ppl": 6.42307, "seconds": 83.2, "eta_h": 30.16}
+{"t": 1788326688.3976927, "elapsed_h": 13.765549083616998, "kind": "window", "config": "baseline", "window": 27, "target": 73, "ppl": 6.37185, "seconds": 96.3, "eta_h": 29.84}
+{"t": 1788326786.6001987, "elapsed_h": 13.792827557590273, "kind": "window", "config": "baseline", "window": 28, "target": 73, "ppl": 6.30403, "seconds": 98.2, "eta_h": 29.54}
+{"t": 1788326807.3074656, "elapsed_h": 13.7985795760817, "kind": "graft", "config": "k4v4", "seconds": 20.7, "bytes_per_token_per_layer": 1056}
+{"t": 1788328772.0552015, "elapsed_h": 14.34434283607536, "kind": "window", "config": "k4v4", "window": 21, "target": 73, "ppl": 6.45999, "seconds": 1964.7, "eta_h": 30.35}
+{"t": 1788330706.4502733, "elapsed_h": 14.881674800448948, "kind": "window", "config": "k4v4", "window": 22, "target": 73, "ppl": 6.6217, "seconds": 1934.4, "eta_h": 31.11}
+{"t": 1788332525.7500813, "elapsed_h": 15.38703585823377, "kind": "window", "config": "k4v4", "window": 23, "target": 73, "ppl": 6.73623, "seconds": 1819.3, "eta_h": 31.77}
+{"t": 1788334377.5077865, "elapsed_h": 15.901412998636564, "kind": "window", "config": "k4v4", "window": 24, "target": 73, "ppl": 6.82161, "seconds": 1851.8, "eta_h": 32.44}
+{"t": 1788334396.8814387, "elapsed_h": 15.906794568631383, "kind": "graft", "config": "k4v3", "seconds": 19.4, "bytes_per_token_per_layer": 928}
+{"t": 1788335439.6564777, "elapsed_h": 16.19645430167516, "kind": "window", "config": "k4v3", "window": 21, "target": 73, "ppl": 6.49099, "seconds": 1042.8, "eta_h": 32.65}
+{"t": 1788336499.0019279, "elapsed_h": 16.490716926720406, "kind": "window", "config": "k4v3", "window": 22, "target": 73, "ppl": 6.65404, "seconds": 1059.3, "eta_h": 32.85}
+{"t": 1788337600.6100147, "elapsed_h": 16.79671917312675, "kind": "window", "config": "k4v3", "window": 23, "target": 73, "ppl": 6.76992, "seconds": 1101.6, "eta_h": 33.06}
+{"t": 1788338717.4945393, "elapsed_h": 17.106964874333805, "kind": "window", "config": "k4v3", "window": 24, "target": 73, "ppl": 6.85724, "seconds": 1116.9, "eta_h": 33.28}
+{"t": 1788338736.584416, "elapsed_h": 17.112267617848186, "kind": "graft", "config": "k4v2", "seconds": 19.1, "bytes_per_token_per_layer": 800}
+{"t": 1788339662.4455087, "elapsed_h": 17.369451254738703, "kind": "window", "config": "k4v2", "window": 21, "target": 73, "ppl": 6.74733, "seconds": 925.9, "eta_h": 33.39}
+{"t": 1788340592.2782164, "elapsed_h": 17.627738118039236, "kind": "window", "config": "k4v2", "window": 22, "target": 73, "ppl": 6.91122, "seconds": 929.8, "eta_h": 33.49}
+{"t": 1788341512.8662028, "elapsed_h": 17.883457003103363, "kind": "window", "config": "k4v2", "window": 23, "target": 73, "ppl": 7.03509, "seconds": 920.6, "eta_h": 33.58}
+{"t": 1788342429.1411018, "elapsed_h": 18.137977808382775, "kind": "window", "config": "k4v2", "window": 24, "target": 73, "ppl": 7.1231, "seconds": 916.3, "eta_h": 33.67}
+{"t": 1788342448.8232667, "elapsed_h": 18.143445076412625, "kind": "graft", "config": "k3v2", "seconds": 19.7, "bytes_per_token_per_layer": 672}
+{"t": 1788343357.5151582, "elapsed_h": 18.395859490699237, "kind": "window", "config": "k3v2", "window": 21, "target": 73, "ppl": 7.48688, "seconds": 908.7, "eta_h": 33.75}
+{"t": 1788344292.4293323, "elapsed_h": 18.655557872454324, "kind": "window", "config": "k3v2", "window": 22, "target": 73, "ppl": 7.67454, "seconds": 934.9, "eta_h": 33.83}
+{"t": 1788345219.59807, "elapsed_h": 18.91310474395752, "kind": "window", "config": "k3v2", "window": 23, "target": 73, "ppl": 7.81815, "seconds": 927.2, "eta_h": 33.9}
+{"t": 1788346142.9499552, "elapsed_h": 19.169591378768285, "kind": "window", "config": "k3v2", "window": 24, "target": 73, "ppl": 7.90578, "seconds": 923.4, "eta_h": 33.97}
+{"t": 1788346230.1626613, "elapsed_h": 19.193817130459678, "kind": "window", "config": "baseline", "window": 29, "target": 73, "ppl": 6.20312, "seconds": 87.2, "eta_h": 33.62}
+{"t": 1788346313.7969205, "elapsed_h": 19.217048869199225, "kind": "window", "config": "baseline", "window": 30, "target": 73, "ppl": 6.17507, "seconds": 83.6, "eta_h": 33.28}
+{"t": 1788346408.9905164, "elapsed_h": 19.243491534656947, "kind": "window", "config": "baseline", "window": 31, "target": 73, "ppl": 6.20711, "seconds": 95.2, "eta_h": 32.95}
+{"t": 1788346500.0814805, "elapsed_h": 19.26879458030065, "kind": "window", "config": "baseline", "window": 32, "target": 73, "ppl": 6.29038, "seconds": 91.1, "eta_h": 32.62}
+{"t": 1788346520.6459246, "elapsed_h": 19.274506925874284, "kind": "graft", "config": "k4v4", "seconds": 20.6, "bytes_per_token_per_layer": 1056}
+{"t": 1788348508.932729, "elapsed_h": 19.826808815929624, "kind": "window", "config": "k4v4", "window": 25, "target": 73, "ppl": 6.85807, "seconds": 1988.3, "eta_h": 33.19}
+{"t": 1788350335.4630265, "elapsed_h": 20.334178343017896, "kind": "window", "config": "k4v4", "window": 26, "target": 73, "ppl": 6.8615, "seconds": 1826.5, "eta_h": 33.65}
+{"t": 1788352211.2696655, "elapsed_h": 20.855235742727917, "kind": "window", "config": "k4v4", "window": 27, "target": 73, "ppl": 6.80515, "seconds": 1875.8, "eta_h": 34.13}
+{"t": 1788353954.4637687, "elapsed_h": 21.339456326961518, "kind": "window", "config": "k4v4", "window": 28, "target": 73, "ppl": 6.72924, "seconds": 1743.2, "eta_h": 34.53}
+{"t": 1788353973.7581596, "elapsed_h": 21.34481587999397, "kind": "graft", "config": "k4v3", "seconds": 19.3, "bytes_per_token_per_layer": 928}
+{"t": 1788355113.0033908, "elapsed_h": 21.661272888647186, "kind": "window", "config": "k4v3", "window": 25, "target": 73, "ppl": 6.89393, "seconds": 1139.2, "eta_h": 34.66}
+{"t": 1788356247.8260238, "elapsed_h": 21.97650139782164, "kind": "window", "config": "k4v3", "window": 26, "target": 73, "ppl": 6.89961, "seconds": 1134.8, "eta_h": 34.77}
+{"t": 1788357381.977731, "elapsed_h": 22.291543538702857, "kind": "window", "config": "k4v3", "window": 27, "target": 73, "ppl": 6.84234, "seconds": 1134.2, "eta_h": 34.88}
+{"t": 1788358526.5641313, "elapsed_h": 22.609484205444655, "kind": "window", "config": "k4v3", "window": 28, "target": 73, "ppl": 6.76441, "seconds": 1144.6, "eta_h": 34.98}
+{"t": 1788358545.2399168, "elapsed_h": 22.614671923716863, "kind": "graft", "config": "k4v2", "seconds": 18.7, "bytes_per_token_per_layer": 800}
+{"t": 1788359455.8990376, "elapsed_h": 22.867632790605228, "kind": "window", "config": "k4v2", "window": 25, "target": 73, "ppl": 7.15772, "seconds": 910.7, "eta_h": 34.99}
+{"t": 1788360418.258857, "elapsed_h": 23.134954962597952, "kind": "window", "config": "k4v2", "window": 26, "target": 73, "ppl": 7.16737, "seconds": 962.4, "eta_h": 35.01}
+{"t": 1788361370.8372543, "elapsed_h": 23.399560072951846, "kind": "window", "config": "k4v2", "window": 27, "target": 73, "ppl": 7.10726, "seconds": 952.6, "eta_h": 35.02}
+{"t": 1788362327.678323, "elapsed_h": 23.66534925871425, "kind": "window", "config": "k4v2", "window": 28, "target": 73, "ppl": 7.02608, "seconds": 956.8, "eta_h": 35.03}
+{"t": 1788362346.552081, "elapsed_h": 23.67059196929137, "kind": "graft", "config": "k3v2", "seconds": 18.9, "bytes_per_token_per_layer": 672}
+{"t": 1788363266.7302194, "elapsed_h": 23.926197007695833, "kind": "window", "config": "k3v2", "window": 25, "target": 73, "ppl": 7.94518, "seconds": 920.2, "eta_h": 35.03}
+{"t": 1788364213.995016, "elapsed_h": 24.18932611796591, "kind": "window", "config": "k3v2", "window": 26, "target": 73, "ppl": 7.95778, "seconds": 947.3, "eta_h": 35.03}
+{"t": 1788365149.2561817, "elapsed_h": 24.449120886127155, "kind": "window", "config": "k3v2", "window": 27, "target": 73, "ppl": 7.8834, "seconds": 935.3, "eta_h": 35.02}
+{"t": 1788366072.4756866, "elapsed_h": 24.705570748580826, "kind": "window", "config": "k3v2", "window": 28, "target": 73, "ppl": 7.79002, "seconds": 923.2, "eta_h": 35.0}
+{"t": 1788366159.4054, "elapsed_h": 24.72971789121628, "kind": "window", "config": "baseline", "window": 33, "target": 73, "ppl": 6.25533, "seconds": 86.9, "eta_h": 34.65}
+{"t": 1788366249.3134382, "elapsed_h": 24.754692346254984, "kind": "window", "config": "baseline", "window": 34, "target": 73, "ppl": 6.25901, "seconds": 89.9, "eta_h": 34.31}
+{"t": 1788366347.1271007, "elapsed_h": 24.781862808068592, "kind": "window", "config": "baseline", "window": 35, "target": 73, "ppl": 6.2426, "seconds": 97.8, "eta_h": 33.98}
+{"t": 1788366445.0233924, "elapsed_h": 24.809056222438812, "kind": "window", "config": "baseline", "window": 36, "target": 73, "ppl": 6.20849, "seconds": 97.9, "eta_h": 33.65}
+{"t": 1788366464.8792336, "elapsed_h": 24.814571733872096, "kind": "graft", "config": "k4v4", "seconds": 19.9, "bytes_per_token_per_layer": 1056}
+{"t": 1788368390.62645, "elapsed_h": 25.349501516222954, "kind": "window", "config": "k4v4", "window": 29, "target": 73, "ppl": 6.61365, "seconds": 1925.7, "eta_h": 34.01}
+{"t": 1788370233.52036, "elapsed_h": 25.861416491270067, "kind": "window", "config": "k4v4", "window": 30, "target": 73, "ppl": 6.57944, "seconds": 1842.9, "eta_h": 34.32}
+{"t": 1788371954.015218, "elapsed_h": 26.339331729544533, "kind": "window", "config": "k4v4", "window": 31, "target": 73, "ppl": 6.61759, "seconds": 1720.5, "eta_h": 34.58}
+{"t": 1788373804.1722205, "elapsed_h": 26.85326423022482, "kind": "window", "config": "k4v4", "window": 32, "target": 73, "ppl": 6.70182, "seconds": 1850.2, "eta_h": 34.88}
+{"t": 1788373823.5680442, "elapsed_h": 26.858651959035132, "kind": "graft", "config": "k4v3", "seconds": 19.4, "bytes_per_token_per_layer": 928}
+{"t": 1788374876.419939, "elapsed_h": 27.151110818717214, "kind": "window", "config": "k4v3", "window": 29, "target": 73, "ppl": 6.64818, "seconds": 1052.8, "eta_h": 34.89}
+{"t": 1788375951.176335, "elapsed_h": 27.449654262132114, "kind": "window", "config": "k4v3", "window": 30, "target": 73, "ppl": 6.60966, "seconds": 1074.8, "eta_h": 34.89}
+{"t": 1788376998.930576, "elapsed_h": 27.740697106785245, "kind": "window", "config": "k4v3", "window": 31, "target": 73, "ppl": 6.64968, "seconds": 1047.8, "eta_h": 34.88}
+{"t": 1788378065.3483026, "elapsed_h": 28.03692425303989, "kind": "window", "config": "k4v3", "window": 32, "target": 73, "ppl": 6.73432, "seconds": 1066.4, "eta_h": 34.88}
+{"t": 1788378084.1157913, "elapsed_h": 28.042137444350455, "kind": "graft", "config": "k4v2", "seconds": 18.8, "bytes_per_token_per_layer": 800}
+{"t": 1788378969.4407165, "elapsed_h": 28.288061034679412, "kind": "window", "config": "k4v2", "window": 29, "target": 73, "ppl": 6.90544, "seconds": 885.3, "eta_h": 34.82}
+{"t": 1788379867.8288758, "elapsed_h": 28.537613301144706, "kind": "window", "config": "k4v2", "window": 30, "target": 73, "ppl": 6.86522, "seconds": 898.4, "eta_h": 34.75}
+{"t": 1788380774.663164, "elapsed_h": 28.78951171451145, "kind": "window", "config": "k4v2", "window": 31, "target": 73, "ppl": 6.9072, "seconds": 906.8, "eta_h": 34.68}
+{"t": 1788381676.1058433, "elapsed_h": 29.039912458790674, "kind": "window", "config": "k4v2", "window": 32, "target": 73, "ppl": 6.99401, "seconds": 901.4, "eta_h": 34.61}
+{"t": 1788381695.164805, "elapsed_h": 29.045206614865197, "kind": "graft", "config": "k3v2", "seconds": 19.1, "bytes_per_token_per_layer": 672}
+{"t": 1788382602.340949, "elapsed_h": 29.29719998816649, "kind": "window", "config": "k3v2", "window": 29, "target": 73, "ppl": 7.6592, "seconds": 907.2, "eta_h": 34.55}
+{"t": 1788383570.9797468, "elapsed_h": 29.566266320877606, "kind": "window", "config": "k3v2", "window": 30, "target": 73, "ppl": 7.61972, "seconds": 968.6, "eta_h": 34.49}
+{"t": 1788384524.5546923, "elapsed_h": 29.831148250169225, "kind": "window", "config": "k3v2", "window": 31, "target": 73, "ppl": 7.66118, "seconds": 953.6, "eta_h": 34.43}
+{"t": 1788385467.07252, "elapsed_h": 30.092958757943578, "kind": "window", "config": "k3v2", "window": 32, "target": 73, "ppl": 7.77481, "seconds": 942.5, "eta_h": 34.37}
+{"t": 1788385552.5126839, "elapsed_h": 30.116692136791016, "kind": "window", "config": "baseline", "window": 37, "target": 73, "ppl": 6.25674, "seconds": 85.4, "eta_h": 34.03}
+{"t": 1788385639.5482128, "elapsed_h": 30.140868672596085, "kind": "window", "config": "baseline", "window": 38, "target": 73, "ppl": 6.25274, "seconds": 87.0, "eta_h": 33.7}
+{"t": 1788385735.8412528, "elapsed_h": 30.167616739206842, "kind": "window", "config": "baseline", "window": 39, "target": 73, "ppl": 6.26142, "seconds": 96.3, "eta_h": 33.37}
+{"t": 1788385836.522042, "elapsed_h": 30.195583625104693, "kind": "window", "config": "baseline", "window": 40, "target": 73, "ppl": 6.27866, "seconds": 100.7, "eta_h": 33.05}
+{"t": 1788385858.0273383, "elapsed_h": 30.201557318502, "kind": "graft", "config": "k4v4", "seconds": 21.5, "bytes_per_token_per_layer": 1056}
+{"t": 1788387831.8362734, "elapsed_h": 30.74983757827017, "kind": "window", "config": "k4v4", "window": 33, "target": 73, "ppl": 6.66402, "seconds": 1973.8, "eta_h": 33.3}
+{"t": 1788389694.1636555, "elapsed_h": 31.2671507399612, "kind": "window", "config": "k4v4", "window": 34, "target": 73, "ppl": 6.66425, "seconds": 1862.3, "eta_h": 33.5}
+{"t": 1788391563.8295484, "elapsed_h": 31.786502376861044, "kind": "window", "config": "k4v4", "window": 35, "target": 73, "ppl": 6.64426, "seconds": 1869.7, "eta_h": 33.7}
+{"t": 1788393330.4980307, "elapsed_h": 32.27724362194538, "kind": "window", "config": "k4v4", "window": 36, "target": 73, "ppl": 6.60871, "seconds": 1766.7, "eta_h": 33.86}
+{"t": 1788393349.8261049, "elapsed_h": 32.28261253145006, "kind": "graft", "config": "k4v3", "seconds": 19.3, "bytes_per_token_per_layer": 928}
+{"t": 1788394436.5746355, "elapsed_h": 32.5844871232907, "kind": "window", "config": "k4v3", "window": 33, "target": 73, "ppl": 6.69442, "seconds": 1086.7, "eta_h": 33.82}
+{"t": 1788395522.3908772, "elapsed_h": 32.88610274599658, "kind": "window", "config": "k4v3", "window": 34, "target": 73, "ppl": 6.69476, "seconds": 1085.8, "eta_h": 33.77}
+{"t": 1788396614.2015495, "elapsed_h": 33.189383488297466, "kind": "window", "config": "k4v3", "window": 35, "target": 73, "ppl": 6.67409, "seconds": 1091.8, "eta_h": 33.72}
+{"t": 1788397707.2573173, "elapsed_h": 33.49301009045707, "kind": "window", "config": "k4v3", "window": 36, "target": 73, "ppl": 6.63705, "seconds": 1093.1, "eta_h": 33.67}
+{"t": 1788397726.430341, "elapsed_h": 33.49833593037393, "kind": "graft", "config": "k4v2", "seconds": 19.2, "bytes_per_token_per_layer": 800}
+{"t": 1788398639.640593, "elapsed_h": 33.75200544483132, "kind": "window", "config": "k4v2", "window": 33, "target": 73, "ppl": 6.95513, "seconds": 913.2, "eta_h": 33.57}
+{"t": 1788399614.4202957, "elapsed_h": 34.022777584526274, "kind": "window", "config": "k4v2", "window": 34, "target": 73, "ppl": 6.95356, "seconds": 974.8, "eta_h": 33.49}
+{"t": 1788400585.9768748, "elapsed_h": 34.292654411991435, "kind": "window", "config": "k4v2", "window": 35, "target": 73, "ppl": 6.9282, "seconds": 971.6, "eta_h": 33.39}
+{"t": 1788401545.95839, "elapsed_h": 34.55931594398287, "kind": "window", "config": "k4v2", "window": 36, "target": 73, "ppl": 6.88949, "seconds": 960.0, "eta_h": 33.3}
+{"t": 1788401565.6304674, "elapsed_h": 34.56478040993213, "kind": "graft", "config": "k3v2", "seconds": 19.7, "bytes_per_token_per_layer": 672}
+{"t": 1788402485.1565866, "elapsed_h": 34.82020433194108, "kind": "window", "config": "k3v2", "window": 33, "target": 73, "ppl": 7.73666, "seconds": 919.5, "eta_h": 33.2}
+{"t": 1788403447.5945253, "elapsed_h": 35.08754820379946, "kind": "window", "config": "k3v2", "window": 34, "target": 73, "ppl": 7.74576, "seconds": 962.4, "eta_h": 33.1}
+{"t": 1788404399.5701737, "elapsed_h": 35.35198588391145, "kind": "window", "config": "k3v2", "window": 35, "target": 73, "ppl": 7.72407, "seconds": 952.0, "eta_h": 33.0}
+{"t": 1788405359.9178946, "elapsed_h": 35.61874913977252, "kind": "window", "config": "k3v2", "window": 36, "target": 73, "ppl": 7.68679, "seconds": 960.3, "eta_h": 32.89}
+{"t": 1788405445.1866066, "elapsed_h": 35.64243489311801, "kind": "window", "config": "baseline", "window": 41, "target": 73, "ppl": 6.29388, "seconds": 85.3, "eta_h": 32.57}
+{"t": 1788405536.7743008, "elapsed_h": 35.667875919209585, "kind": "window", "config": "baseline", "window": 42, "target": 73, "ppl": 6.25163, "seconds": 91.6, "eta_h": 32.25}
+{"t": 1788405634.4112368, "elapsed_h": 35.694997290306624, "kind": "window", "config": "baseline", "window": 43, "target": 73, "ppl": 6.23837, "seconds": 97.6, "eta_h": 31.93}
+{"t": 1788405736.1637464, "elapsed_h": 35.723261876304946, "kind": "window", "config": "baseline", "window": 44, "target": 73, "ppl": 6.21652, "seconds": 101.8, "eta_h": 31.62}
+{"t": 1788405757.8605363, "elapsed_h": 35.729288762410484, "kind": "graft", "config": "k4v4", "seconds": 21.7, "bytes_per_token_per_layer": 1056}
+{"t": 1788407712.1544719, "elapsed_h": 36.272148188948634, "kind": "window", "config": "k4v4", "window": 37, "target": 73, "ppl": 6.66049, "seconds": 1954.3, "eta_h": 31.76}
+{"t": 1788409501.9167857, "elapsed_h": 36.76930438723829, "kind": "window", "config": "k4v4", "window": 38, "target": 73, "ppl": 6.65435, "seconds": 1789.8, "eta_h": 31.85}
+{"t": 1788411255.4293327, "elapsed_h": 37.25639120585389, "kind": "window", "config": "k4v4", "window": 39, "target": 73, "ppl": 6.65724, "seconds": 1753.5, "eta_h": 31.93}
+{"t": 1788413058.9569218, "elapsed_h": 37.7573710917102, "kind": "window", "config": "k4v4", "window": 40, "target": 73, "ppl": 6.68298, "seconds": 1803.5, "eta_h": 32.02}
+{"t": 1788413077.758618, "elapsed_h": 37.76259378519323, "kind": "graft", "config": "k4v3", "seconds": 18.8, "bytes_per_token_per_layer": 928}
+{"t": 1788414179.9240584, "elapsed_h": 38.068750851882825, "kind": "window", "config": "k4v3", "window": 37, "target": 73, "ppl": 6.68974, "seconds": 1102.2, "eta_h": 31.94}
+{"t": 1788415288.403987, "elapsed_h": 38.376661943131026, "kind": "window", "config": "k4v3", "window": 38, "target": 73, "ppl": 6.68486, "seconds": 1108.5, "eta_h": 31.86}
+{"t": 1788416425.6281564, "elapsed_h": 38.69255754576789, "kind": "window", "config": "k4v3", "window": 39, "target": 73, "ppl": 6.68772, "seconds": 1137.2, "eta_h": 31.78}

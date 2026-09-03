@@ -1,0 +1,16 @@
+{"t": 1788170595.672794, "elapsed_h": 0.0019109584887822468, "kind": "start", "group": "core", "context": 1024, "windows": 12, "variants": ["baseline", "dense", "k4v2", "rounds1", "rounds3", "uniform", "seed1", "seed2", "seed3", "seed4"]}
+{"t": 1788170644.6850476, "elapsed_h": 0.015525473290019565, "kind": "variant", "name": "baseline", "ppl": 9.423244072726009, "seconds": 49.0}
+{"t": 1788170983.663075, "elapsed_h": 0.10968603644106123, "kind": "variant", "name": "dense", "ppl": 9.42339029505357, "seconds": 336.1}
+{"t": 1788171350.9279706, "elapsed_h": 0.21170406301816305, "kind": "variant", "name": "k4v2", "ppl": 10.236294868043352, "seconds": 365.0}
+{"t": 1788171731.8759289, "elapsed_h": 0.3175229403707716, "kind": "variant", "name": "rounds1", "ppl": 3532.257123620335, "seconds": 378.8}
+{"t": 1788172107.338596, "elapsed_h": 0.421818125711547, "kind": "variant", "name": "rounds3", "ppl": 4552.608822338007, "seconds": 373.1}
+{"t": 1788172473.4590516, "elapsed_h": 0.5235182521740596, "kind": "variant", "name": "uniform", "ppl": 10.28956102610475, "seconds": 363.6}
+{"t": 1788172840.2658217, "elapsed_h": 0.6254090217087004, "kind": "variant", "name": "seed1", "ppl": 10.21653149965938, "seconds": 364.6}
+{"t": 1788173211.4370906, "elapsed_h": 0.7285121519035763, "kind": "variant", "name": "seed2", "ppl": 10.214847275245647, "seconds": 369.0}
+{"t": 1788173577.5202122, "elapsed_h": 0.8302019078863991, "kind": "variant", "name": "seed3", "ppl": 10.222270155935973, "seconds": 363.9}
+{"t": 1788173945.489923, "elapsed_h": 0.9324157164494197, "kind": "variant", "name": "seed4", "ppl": 10.161307495248963, "seconds": 365.8}
+{"t": 1788173945.4904716, "elapsed_h": 0.9324158688386281, "kind": "done"}
+{"t": 1788174040.8452528, "elapsed_h": 0.0018301754527621798, "kind": "start", "group": "core", "context": 1024, "windows": 12, "variants": ["baseline", "dense", "k4v2", "rounds1", "rounds3", "uniform", "seed1", "seed2", "seed3", "seed4"]}
+{"t": 1788174416.1836512, "elapsed_h": 0.10609084169069925, "kind": "variant", "name": "rounds1", "ppl": 10.103988994896424, "seconds": 372.7}
+{"t": 1788174788.2750103, "elapsed_h": 0.20944955243004693, "kind": "variant", "name": "rounds3", "ppl": 10.29213027966471, "seconds": 369.7}
+{"t": 1788174788.2755592, "elapsed_h": 0.20944970488548278, "kind": "done"}

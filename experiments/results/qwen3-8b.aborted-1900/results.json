@@ -1,0 +1,46 @@
+{
+ "meta": {
+  "model": "Qwen/Qwen3-8B-Base",
+  "context": 4096,
+  "dtype": "float32",
+  "corpus": "Salesforce/wikitext:wikitext-2-raw-v1/test",
+  "n_tokens": 299078,
+  "n_windows": 73,
+  "layers": 36,
+  "heads": 32,
+  "kv_heads": 8,
+  "head_dim": 128,
+  "protocol": "non-overlapping windows, cache reset per window"
+ },
+ "baseline": {
+  "nll": 7520.735700130463,
+  "tokens": 4095,
+  "windows": 1,
+  "seconds": 79.38025665283203,
+  "ppl": 6.274949859935222
+ },
+ "dense": {
+  "nll": 0.0,
+  "tokens": 0,
+  "windows": 0,
+  "seconds": 0.0
+ },
+ "k4v4": {
+  "nll": 0.0,
+  "tokens": 0,
+  "windows": 0,
+  "seconds": 0.0
+ },
+ "k4v2": {
+  "nll": 0.0,
+  "tokens": 0,
+  "windows": 0,
+  "seconds": 0.0
+ },
+ "k3v2": {
+  "nll": 0.0,
+  "tokens": 0,
+  "windows": 0,
+  "seconds": 0.0
+ }
+}

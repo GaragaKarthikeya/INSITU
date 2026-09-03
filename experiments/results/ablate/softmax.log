@@ -1,0 +1,14 @@
+[transformers] Token indices sequence length is longer than the specified maximum sequence length for this model (341469 > 2048). Running this sequence through the model will result in indexing errors
+Loading weights:   0%|          | 0/201 [00:00<?, ?it/s]Loading weights:  24%|██▍       | 49/201 [00:00<00:00, 473.84it/s]Loading weights:  49%|████▉     | 99/201 [00:00<00:00, 475.94it/s]Loading weights:  73%|███████▎  | 147/201 [00:00<00:00, 420.19it/s]Loading weights: 100%|██████████| 201/201 [00:00<00:00, 458.12it/s]
+TinyLlama/TinyLlama-1.1B-Chat-v1.0  ctx 1024  12 windows  group 'softmax'  3 variants
+
+baseline    ppl   9.4232   199.1s  (1/3)
+k4v2        ppl  10.2363   972.2s  (2/3)
+k4v2online  ppl  10.2117  2899.7s  (3/3)
+
+variant            ppl   vs base    vs k4v2   +- s.e.  signif  B/tok/L
+baseline        9.4232   1.0000x    0.9206x    0.0063     yes        -
+k4v2           10.2363   1.0863x   (ref)         -       -      208
+k4v2online     10.2117   1.0837x    0.9976x    0.0039      no      208
+
+paired over 12 windows; 'signif' = |difference| > 2 standard errors.

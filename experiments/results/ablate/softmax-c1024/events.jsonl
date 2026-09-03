@@ -1,0 +1,5 @@
+{"t": 1788176495.9872837, "elapsed_h": 0.0020861802498499554, "kind": "start", "group": "softmax", "context": 1024, "windows": 12, "variants": ["baseline", "k4v2", "k4v2online"]}
+{"t": 1788176695.1064973, "elapsed_h": 0.05739707291126251, "kind": "variant", "name": "baseline", "ppl": 9.423244072726009, "seconds": 199.1}
+{"t": 1788177672.606075, "elapsed_h": 0.32892473340034484, "kind": "variant", "name": "k4v2", "ppl": 10.236294868043352, "seconds": 972.2}
+{"t": 1788180577.272894, "elapsed_h": 1.1357766274611156, "kind": "variant", "name": "k4v2online", "ppl": 10.211668444508526, "seconds": 2899.7}
+{"t": 1788180577.2738707, "elapsed_h": 1.1357768987947041, "kind": "done"}

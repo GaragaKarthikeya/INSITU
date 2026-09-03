@@ -1,0 +1,31 @@
+{
+ "pid": 164360,
+ "started_at": 1788176488.477035,
+ "phase": "done",
+ "group": "softmax",
+ "context": 1024,
+ "windows": 12,
+ "total_variants": 3,
+ "variant": "k4v2online",
+ "config": "k4v2online",
+ "variant_i": 3,
+ "window": 12,
+ "window_target": 12,
+ "done_windows": 35,
+ "total_windows": 36,
+ "activity": "forward",
+ "layer": 22,
+ "layers_total": 22,
+ "ppl": {
+  "baseline": 9.4232,
+  "k4v2": 10.2363,
+  "k4v2online": 10.2117
+ },
+ "eta_h": 0.0,
+ "updated_at": 1788180577.2739363,
+ "elapsed_h": 1.1357769170072343,
+ "rss_gb": 5.61,
+ "rss_peak_gb": 5.64,
+ "mem_available_gb": 42.0,
+ "alarms": []
+}
