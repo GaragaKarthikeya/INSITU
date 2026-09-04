@@ -118,7 +118,16 @@ channels look, not what the quantizer can cash in — a proxy that resembles the
 objective is not the objective, and the only way to find that out was to measure
 the thing being optimised.
 
-One round is also half the butterfly. See `experiments/ablate.py`.
+
+Three rules the package holds itself to:
+
+1. **One float→fixed cast**, in `ops/convert.py`. A cast added wherever
+   convenient is how two implementations of the same arithmetic come to
+   disagree on inputs nobody tested.
+2. **One narrowing module.** Intermediates are int64 and grow naturally; a
+   value narrows only at a named `Q.rshift` / `Q.clamp` / `Q.from_float`.
+3. **Prefill and decode are the same code.** `forward` takes `(tokens, hidden)`;
+   one row is a decode step. There is no separate steady-state path.One round is also half the butterfly. See `experiments/ablate.py`.
 
 ## Measured on the real model
 

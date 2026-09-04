@@ -121,6 +121,19 @@ class AttentionKernel:
         # small.
         self.softmax = "two_pass"
 
+        # An OBSERVER, for the vector generator. Called as
+        # `on_stage(name, array)` at each named point below; the array it is
+        # handed is the one the datapath already computed and is never read
+        # back. `None` -- the default -- is one `is not None` check per stage,
+        # which is the same guard `record` uses for the trace and for the same
+        # reason: golden vectors must come off the UNMODIFIED kernel, or they
+        # are vectors for a different machine.
+        self.on_stage = None
+
+    def _tap(self, name: str, value) -> None:
+        if self.on_stage is not None:
+            self.on_stage(name, value)
+
     # -- the reduction chunk is the ONLY thing hardware config leaks ---------
 
     def _chunk(self, which: str) -> int | None:
@@ -184,10 +197,19 @@ class AttentionKernel:
         # V carries no position: RoPE on the value path would have to be undone
         # by the output projection, and there is nothing to undo it with.
 
+        # THE SEAM. Everything below this line is what the PL owns; these three
+        # are exactly what crosses the wire, in Q8.16, 24-bit lanes.
+        self._tap("wire.q", qi)
+        self._tap("wire.k", ki)
+        self._tap("wire.v", vi)
+
         # 4. rotate all three ----------------------------------------------
         qr = self.rotation.apply(qi, trace, "rotate")
         kr = self.rotation.apply(ki, trace, "rotate")
         vr = self.rotation.apply(vi, trace, "rotate")
+        self._tap("rot.q", qr)
+        self._tap("rot.k", kr)
+        self._tap("rot.v", vr)
 
         # 5. write ----------------------------------------------------------
         base = self.cache.length
@@ -246,7 +268,12 @@ class AttentionKernel:
         report.context = base + n
 
         # 7. output projection, R^-1 already folded in -----------------------
-        acc = self.qk_q.to_float(merge_heads(out))
+        # THE OTHER SIDE OF THE SEAM. This is what the FPGA returns: Q16, still
+        # in the rotated domain, `merge_heads` order. `to_float` and `W_o'` on
+        # the next line are the host's again.
+        merged = merge_heads(out)
+        self._tap("out", merged)
+        acc = self.qk_q.to_float(merged)
         y = project(w.o, acc, unit="o_array", bias=w.o_bias,
                     chunk=self._chunk("o"), trace=trace)
         return y, report

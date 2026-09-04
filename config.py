@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, replace
+from typing import ClassVar
 
 from .ops.rope import RopeScaling
 
@@ -255,6 +256,95 @@ class ArrayConfig:
 
 
 @dataclass(frozen=True)
+class RotateConfig:
+    """`rot_fwht.sv`. One vector per cycle through six add/sub stages.
+
+    `d = 64` makes `log2(d)` even, so the `1/sqrt(d)` scale is an exact right
+    shift and the whole block is LUT -- no DSP, no reciprocal multiply. The
+    throughput is therefore one vector per cycle regardless of `d`, and only
+    the pipeline depth grows.
+    """
+
+    vectors_per_cycle: int = 1
+    stage_latency: int = 1          # cycles per butterfly stage, log2(d) of them
+
+
+@dataclass(frozen=True)
+class EncoderConfig:
+    """`rot_norm.sv` + `rot_encode.sv`. One rotated vector in, one cache row out.
+
+    The norm is an integer square root and the codes are a binary search
+    `bits` deep, so the latency depends on the format while the throughput does
+    not: the two stages pipeline, and a vector is retired every cycle.
+    """
+
+    vectors_per_cycle: int = 1
+    norm_latency: int = 8           # integer sqrt, `ops/quantize.py:40`
+
+
+@dataclass(frozen=True)
+class AttentionConfig:
+    """The score -> softmax -> accumulate lanes.
+
+    `lanes` is the number of query heads scored against ONE cached row at a
+    time. Under grouped-query attention the group sharing a KV head reads the
+    same 52 B, so widening this costs adders and no bandwidth -- it is the one
+    axis in the datapath that is free to parallelise, and the reason it is set
+    to `kv_groups` rather than to 1.
+
+    `rescale_cycles` is what a running-maximum update costs when the elastic
+    FIFO between the score pipe and the softmax cannot absorb it. Charged per
+    RESCALE record, which only the online softmax emits.
+    """
+
+    lanes: int = 4                  # query heads in a group, in parallel
+    score_latency: int = 10         # S0..S10, drained once per scan
+    rescale_cycles: int = 1
+
+
+@dataclass(frozen=True)
+class CacheConfig:
+    """`kv_store_ddr.sv`: the DDR-resident cache, and the bandwidth it gets.
+
+    THIS IS THE ONLY PLACE A MEASURED NUMBER ENTERS THE MODEL
+    --------------------------------------------------------
+    `ddr_gbps` is not an estimate. It is 14.708 GB/s, measured on the ZCU104 at
+    4 AXI-HP ports, burst 64, outstanding 2, median of five repeats across two
+    runs and a power cycle (`results/step1_ddr_sweep_run2_medians.log`). It is
+    a read-only, four-stream, sequential figure -- the KV-scan pattern -- and
+    must not be quoted as general memcpy bandwidth.
+
+    The interface ceiling is derived, not stated: an AXI-HP port moves
+    `port_bits/8` bytes per PL clock, so `hp_ports` of them cap the engine
+    independently of what the DRAM can do. The model takes the smaller of the
+    two and reports which one bound it, because the fix differs -- a short
+    interface wants another port, a short DRAM wants a different access
+    pattern.
+    """
+
+    lanes: int = 1                  # cache rows consumed per cycle
+    parallel_kv: int = 1            # KV heads scanned concurrently
+    hp_ports: int = 4
+    port_bits: int = 128            # one AXI-HP master
+    ddr_gbps: float = 14.708        # MEASURED. See the docstring.
+
+    @property
+    def interface_bytes_per_cycle(self) -> float:
+        return self.hp_ports * self.port_bits / 8.0
+
+    def ddr_bytes_per_cycle(self, clock_mhz: float) -> float:
+        """The measured DRAM figure expressed in this clock's cycles."""
+        return self.ddr_gbps * 1e9 / (clock_mhz * 1e6)
+
+    def bytes_per_cycle(self, clock_mhz: float) -> float:
+        return min(self.interface_bytes_per_cycle, self.ddr_bytes_per_cycle(clock_mhz))
+
+    def bound_by(self, clock_mhz: float) -> str:
+        return "interface" if self.interface_bytes_per_cycle <= \
+            self.ddr_bytes_per_cycle(clock_mhz) else "dram"
+
+
+@dataclass(frozen=True)
 class MemoryConfig:
     """The off-die port, and the cost of using it."""
 
@@ -281,7 +371,25 @@ class HardwareConfig:
     v_array: ArrayConfig = field(default_factory=ArrayConfig)
     o_array: ArrayConfig = field(default_factory=ArrayConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    # The PL half of the seam. Named to match the `unit` strings the ops
+    # already record, so `replay` reaches them by `getattr(hw, unit)` and a
+    # trace naming a unit the hardware does not have is an error rather than a
+    # silent zero -- which is what `ROTATE`, `QUANTIZE`, `SOFTMAX`,
+    # `ACCUMULATE` and `RESCALE` used to be.
+    rotate: RotateConfig = field(default_factory=RotateConfig)
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
+    attention: AttentionConfig = field(default_factory=AttentionConfig)
+    cache: CacheConfig = field(default_factory=CacheConfig)
     clock_mhz: float = 100.0
+
+    # Units the trace names that cost the PL nothing, and WHY -- an empty set
+    # here would make every one of them a silent zero again.
+    #
+    #   rope   RoPE is applied on the host, before the wire. The seam is
+    #          post-RoPE by construction (`plan.MD`, "Who owns what").
+    #   codec  full dequantisation. The compressed path never calls it; only
+    #          the dense baseline and the accuracy tests do.
+    HOST_UNITS: ClassVar[frozenset[str]] = frozenset({"rope", "codec"})
 
     @classmethod
     def sized_for(cls, model: ModelConfig, side: int = 128, **kw) -> "HardwareConfig":
@@ -297,7 +405,38 @@ class HardwareConfig:
         q = ArrayConfig(rows=min(side, model.hidden_size), cols=min(side, model.q_out_features))
         kv = ArrayConfig(rows=min(side, model.hidden_size), cols=min(side, model.kv_out_features))
         o = ArrayConfig(rows=min(side, model.q_out_features), cols=min(side, model.hidden_size))
+        # The score lanes default to the GQA group width: those query heads
+        # share one cached row, so scoring them together costs adders and no
+        # bandwidth. Sizing it from the model rather than defaulting to 4 keeps
+        # a model without grouped-query attention honest -- there the group is
+        # 1 and the lanes buy nothing.
+        kw.setdefault("attention", AttentionConfig(lanes=model.kv_groups))
         return cls(q_array=q, k_array=kv, v_array=kv, o_array=o, **kw)
+
+    @classmethod
+    def zcu104(cls, model: "ModelConfig", **kw) -> "HardwareConfig":
+        """The board this is being built for, with its MEASURED numbers.
+
+        Two things are pinned here rather than left to defaults, because
+        getting either wrong makes the report quietly optimistic:
+
+        `clock_mhz = 250`. Implementation closed at 250 MHz on the step-1
+        probe design (WNS +0.575 ns), and every bandwidth figure below is that
+        clock's cycles.
+
+        `memory.port_bits = 512`. The cache stream is four dedicated 128-bit
+        AXI-HP masters, so the burst model and the bandwidth model must see the
+        SAME interface -- 4 x 128 b = 64 B/cycle. Leaving `MemoryConfig` at its
+        generic 256-bit default would have the burst model charging for a
+        narrower port than the one the measurement was taken on, and it would
+        show up as a burst bound where the truth is a DRAM bound.
+        """
+        kw.setdefault("clock_mhz", 250.0)
+        kw.setdefault("cache", CacheConfig())
+        cache = kw["cache"]
+        kw.setdefault("memory", MemoryConfig(
+            port_bits=cache.hp_ports * cache.port_bits, read_latency=100))
+        return cls.sized_for(model, **kw)
 
 
 # --------------------------------------------------------------------------

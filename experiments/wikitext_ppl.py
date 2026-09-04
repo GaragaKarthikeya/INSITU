@@ -29,11 +29,27 @@ The first chunk is deliberately small, so every configuration is exercised
 within the first couple of hours. A configuration that crashes, or a graft that
 does not reproduce the baseline, then surfaces at hour 2 instead of hour 40.
 
+THE SATURATION GATE RIDES ALONG
+-------------------------------
+The 24-bit wire lane between the host and the PL is Q8.16, and the evidence for
+it is a dynamic-range peak of 21.06 over 400 tokens of ONE passage. That is not
+enough text to lock a wire format on, and `FixedFormat.saturate=True` CLAMPS
+rather than wraps -- so a saturating element is silent quality loss, not a
+crash. Nothing would fail; the numbers would just quietly get worse.
+
+So every window this runs also aggregates `StepReport.conversion` across all
+layers, and the table carries `sat` (the fraction of Q/K/V elements that hit the
+rail) and `max|x|` (the largest float that reached the cast). `sat` must be 0.
+
+This costs nothing: `ConversionStats` is already computed inside every
+`forward`, and was simply being discarded at the adapter boundary.
+
 WHAT THIS DOES NOT CHANGE
 -------------------------
 Nothing here touches the hardware model. Byte counts, cycle accounting and the
 trace are exactly what a single-token run produces; this file only decides what
-text goes in and in what order.
+text goes in and in what order. The saturation figures are read off reports the
+kernel already produced -- an observation, not a code path.
 """
 
 from __future__ import annotations
@@ -50,6 +66,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from kernel import ModelConfig, QuantConfig
+from kernel.ops.convert import ConversionStats
 from kernel.adapters.torch_llama import graft, ungraft
 from kernel.experiments.runlog import (Alarm, RunLog, STOPPED_EXIT,
                                        read_json_resilient, write_json_atomic)
@@ -117,6 +134,21 @@ def attach_heartbeat(model, log: RunLog):
     return handles
 
 
+def conversion_stats(model) -> ConversionStats:
+    """Sum `StepReport.conversion` over every grafted layer.
+
+    Returns an empty `ConversionStats` when nothing is grafted -- the baseline
+    config runs stock attention and never reaches the fp -> fixed cast, so
+    there is genuinely nothing to report rather than a zero to interpret.
+    """
+    total = ConversionStats()
+    for layer in model.model.layers:
+        r = getattr(layer.self_attn, "last_report", None)
+        if r is not None:
+            total.merge(r.conversion)
+    return total
+
+
 def reset_all(model):
     for layer in model.model.layers:
         a = layer.self_attn
@@ -127,14 +159,18 @@ def reset_all(model):
 def table(state, order):
     base = state.get("baseline", {}).get("ppl")
     out = [f"{'config':<10} {'ppl':>9} {'vs base':>9} {'windows':>8} "
-           f"{'B/tok/layer':>12} {'hours':>7}"]
+           f"{'B/tok/layer':>12} {'sat':>9} {'max|x|':>8} {'hours':>7}"]
     for name in order:
         r = state.get(name)
         if not r or "ppl" not in r:
             continue
         ratio = f"{r['ppl'] / base:8.4f}x" if base else "       --"
+        sat = r.get("saturation_rate")
+        mx = r.get("max_abs_float")
         out.append(f"{name:<10} {r['ppl']:9.4f} {ratio} {r['windows']:8d} "
                    f"{str(r.get('bytes_per_token_per_layer', '-')):>12} "
+                   f"{'--' if sat is None else f'{sat:9.2e}'} "
+                   f"{'--' if mx is None else f'{mx:8.3f}'} "
                    f"{r['seconds'] / 3600:7.2f}")
     return "\n".join(out)
 
@@ -256,6 +292,28 @@ def main() -> None:
                         rec["seconds"] += time.time() - t0
                         rec["ppl"] = float(np.exp(rec["nll"] / rec["tokens"]))
 
+                        # The saturation gate. Accumulated across windows, not
+                        # reset, so the rate is over every element the cast has
+                        # ever seen -- which is the population the wire format
+                        # has to hold. A rate that is zero on window 1 and
+                        # non-zero on window 40 is exactly the failure this is
+                        # here to catch, so it must not be a per-window figure.
+                        c = conversion_stats(model)
+                        if c.n_values:
+                            rec["n_values"] = rec.get("n_values", 0) + c.n_values
+                            rec["n_saturated"] = rec.get("n_saturated", 0) + c.n_saturated
+                            rec["max_abs_float"] = max(rec.get("max_abs_float", 0.0),
+                                                       c.max_abs_float)
+                            rec["saturation_rate"] = \
+                                rec["n_saturated"] / rec["n_values"]
+                            if rec["n_saturated"]:
+                                log.event("saturation", config=name, window=w + 1,
+                                          rate=rec["saturation_rate"],
+                                          max_abs_float=rec["max_abs_float"],
+                                          note="Q8.16 wire lane CLAMPED. Silent "
+                                               "quality loss -- the 24-bit lane "
+                                               "width is not safe as it stands.")
+
                         write_json_atomic(results_path, state)
                         done = sum(state[c]["windows"] for c in order)
                         total = sum(targets[c] for c in order)
@@ -267,8 +325,11 @@ def main() -> None:
                                   ppl=round(rec["ppl"], 5),
                                   seconds=round(time.time() - t0, 1),
                                   eta_h=round(eta / 3600, 2))
+                        sat = ("" if "saturation_rate" not in rec else
+                               f"  sat {rec['saturation_rate']:.2e} "
+                               f"max|x| {rec['max_abs_float']:6.3f}")
                         print(f"{name:<9} w{w + 1:3d}/{target}  ppl {rec['ppl']:8.4f}  "
-                              f"{time.time() - t0:6.1f}s  ETA {eta / 3600:5.2f} h",
+                              f"{time.time() - t0:6.1f}s  ETA {eta / 3600:5.2f} h{sat}",
                               flush=True)
                         log.check_memory(args.rss_abort, args.rss_warn)
                         if STOPPING:

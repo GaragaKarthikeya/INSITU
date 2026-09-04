@@ -19,8 +19,9 @@ Layering, outermost first:
     config.py      one validated dataclass tree.
 """
 
-from .config import (ArrayConfig, FixedFormat, HardwareConfig, KernelConfig,
-                     MemoryConfig, ModelConfig, QuantConfig)
+from .config import (ArrayConfig, AttentionConfig, CacheConfig, EncoderConfig,
+                     FixedFormat, HardwareConfig, KernelConfig, MemoryConfig,
+                     ModelConfig, QuantConfig, RotateConfig)
 from .kernel import AttentionKernel, StepReport
 from .trace import Op, Trace
 from .weights import Weights
@@ -29,4 +30,5 @@ __all__ = [
     "AttentionKernel", "StepReport", "Weights", "Trace", "Op",
     "KernelConfig", "ModelConfig", "QuantConfig", "FixedFormat",
     "HardwareConfig", "ArrayConfig", "MemoryConfig",
+    "RotateConfig", "EncoderConfig", "AttentionConfig", "CacheConfig",
 ]

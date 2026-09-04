@@ -2,3 +2,7 @@ models/
 *.pyc
 __pycache__/
 reference/goldens/
+build/
+*.jou
+*.log
+.Xil/

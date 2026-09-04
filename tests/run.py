@@ -13,6 +13,7 @@ MODULES = [
     "kernel.tests.test_rope_scaling",
     "kernel.tests.test_kernel",
     "kernel.tests.test_hardware",
+    "kernel.tests.test_vectors",
     "kernel.tests.test_adapter",
 ]
 
