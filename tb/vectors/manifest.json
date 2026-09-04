@@ -1,0 +1,21 @@
+{
+  "head_dim": 64,
+  "num_heads": 32,
+  "num_kv_heads": 8,
+  "kv_groups": 4,
+  "lane_bits": 24,
+  "qk_frac": 16,
+  "beat_bits": 512,
+  "beats_per_vector": 3,
+  "key_bits": 4,
+  "value_bits": 2,
+  "norm_bits": 16,
+  "norm_frac": 9,
+  "row_bytes": 52,
+  "context": 64,
+  "rot_seed": 0,
+  "rot_rounds": 1,
+  "rot_sign_negative_is_one": true,
+  "rot_random_vectors": 1024,
+  "softmax_golden": "out.online.hex"
+}
