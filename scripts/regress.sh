@@ -22,9 +22,10 @@ run() {   # run <name> <extra sources...>
     fi
 }
 
-declare -a NAMES=(tb_ddr_probe tb_rot tb_rot_norm tb_rot_encode)
+declare -a NAMES=(tb_ddr_probe tb_rot tb_rot_norm tb_rot_encode tb_qtab_build tb_score_lane)
 declare -a SRCS=("rtl/ddr_probe.sv rtl/axi_rd_engine.sv" "rtl/rot_fwht.sv" \
-                 "rtl/rot_norm.sv" "rtl/rot_encode.sv")
+                 "rtl/rot_norm.sv" "rtl/rot_encode.sv" "rtl/qtab_build.sv" \
+                 "rtl/score_lane.sv rtl/qtab_build.sv")
 
 fail=0
 for i in "${!NAMES[@]}"; do

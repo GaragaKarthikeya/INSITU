@@ -744,6 +744,96 @@ clamp. Ping-pong tables.
 *Exit:* scores bit-exact against `CompressedAttention.scores` for a fixed cached
 row; synth confirms ~3 DSP and ~3k LUT per lane.
 
+**Status: DONE.** `rtl/qtab_build.sv`, `rtl/score_lane.sv`, `tb/tb_qtab_build.sv`,
+`tb/tb_score_lane.sv`. `hw/vectors.py` gained the whole cache
+(`cache_rows_h0..7.hex`), the codebook centroids as a format artifact
+(`cb_centroids_{key,value}.hex`), the product tables (`qtab_table.hex`) and five
+constructed rows (`score_edge_rows.hex`).
+
+**2,080 scores bit-exact** — all 32 query heads against the 65 cached tokens
+those scores were computed over — plus 32,768 table entries and 5 edge rows.
+The golden is `CompressedAttention.scores` called by `hw/vectors.py::collect`
+on the kernel's own attention object and the kernel's own cache: the same call
+`forward` makes, not a reimplementation. The lane is handed the raw 52-byte row
+and splits it itself, so `_pack_codes`'s bit layout is under test rather than
+mirrored by a second decoder.
+
+`tb_qtab_build` sweeps code *i* across **all D channels at once**, for every
+*i*. A token reads D of the 1,024 entries, so driving real cache codes would
+leave most of the table untested and would pass a builder that wrote the right
+value to the wrong code index; the sweep is exhaustive and a transposed write
+fails on the first head. Head *j+1* is built while head *j* is still being
+gathered, and the overlap is *measured* (a flag set from `dut.busy`) rather than
+inferred from relative durations — the first version of that check asserted
+`out_valid` after a 32-cycle sweep of a 64-cycle build and failed the DUT for
+the bench's arithmetic.
+
+Both benches were checked against deliberately broken DUTs. `qtab_build`:
+building into the bank being read, and a one-lane rotation of the channel index.
+`score_lane`: round-half-up instead of floor (1,017 failures), the norm reaching
+the multiply one stage early (1,204), and a perturbed value plane (2,083).
+
+**The fourth mutation is the interesting one, because it survived.** Reading the
+norm as *unsigned* agreed with all 2,080 real scores. `_unpack_word`
+sign-extends, so the model multiplies by a signed 16-bit norm — but every norm
+`isqrt` produces here is far below 2^15, so the rule is unobservable on real
+data. `score_edge_rows.hex` puts the norm at 0, 1, 2^15−1, 2^15 and 2^16−1, the
+last two negative once sign-extended, and the mutation now fails on two of the
+five. A rule that no stimulus can violate is not being tested.
+
+The last four heads are scanned with `out_ready` pulsed low at random — **239
+stalled cycles**, asserted rather than assumed — and produce values identical to
+the unstalled run. The first driver read the combinational `row_ready` in the
+same delta it assigned `out_ready`, which raced the continuous assignment and
+made the bench and the DUT disagree about which rows were accepted; that showed
+up as isolated wrong scores in the stalled head only.
+
+**The product table is LUTRAM, not URAM, and synthesis is what said so.** The
+budget table above assumed 320 Kb of URAM. It cannot be: `score_lane` gathers
+all 64 channels in the *same* cycle at 64 *different* addresses, so the table is
+64 independent memories, not one wide one. The first attempt declared them as a
+two-dimensional array and Vivado inferred **registers — 93,486 FF and zero
+LUTRAM for a single lane**, which is 374k FF across four and does not fit the
+part. Rewritten as D one-dimensional arrays with a scalar write address and an
+asynchronous read, it infers `RAM32M16` and drops to 5,401 FF:
+
+| | 2-D array | D separate arrays |
+|---|---|---|
+| FF | **93,486** | **5,401** |
+| LUT | 26,659 | 3,461 |
+| LUTRAM | **0** | **1,664** |
+
+The width also moves: **43 b, not 40**. The widest gaussian centroid at
+`KEY_BITS=4` is 89,465 — an 18-bit signed value, not the 16-bit one the estimate
+assumed — so the table is 4 lanes x 64 x 16 x 43 b x 2 banks = **352 Kb of
+distributed RAM**, 6,656 LUTRAM across the group.
+
+Out-of-context, `xczu7ev-ffvc1156-2-e`, 250 MHz:
+
+| block | WNS | LUT | of which LUTRAM | FF | DSP |
+|---|---|---|---|---|---|
+| `qtab_build` | **+1.702 ns** | 3,461 | 1,664 | 5,401 | **16** |
+| `score_lane` (lane only) | **+1.702 ns** | 862 | 0 | 1,591 | **2** |
+| `score_lane` + its table | +1.702 ns | 6,387 | 1,664 | 7,011 | 18 |
+
+**Two DSPs in the inner loop, which is the claim this step exists to check.**
+The 49x16 norm multiply is split at bit 25 into two DSP-sized products and a
+shifted add; synthesis absorbs both, along with the norm's pipeline register,
+into the DSP48s. The estimate of "~3 DSP and ~3k LUT per lane" was for the inner
+loop and holds at 2 DSP / 862 LUT; the **table build is 16 DSP and 3.5k LUT on
+top of it**, which the estimate did not carry. Four lanes are therefore 8 DSP of
+scoring and 64 DSP of table building — still 4% of the part, and still nothing
+next to the 1,728 a dense unit would need, but it is 9x the figure this document
+had.
+
+Measured latency accept-to-score is **8 cycles**, not the 10 `AttentionConfig.
+score_latency` carries. That constant covers S0..S10 — score *and* softmax — so
+it is left alone until step 8 measures the other half. It is latency drained
+once per scan either way and moves no conclusion.
+
+131 checks green (three new in `tests/test_vectors.py`); `./scripts/regress.sh`
+green on all six benches. No numeric module was touched.
+
 **Step 8 — `softmax_online.sv` + `accum.sv`.** Speculative "no new max" commit,
 flush-and-rescale on the rare path, 16×48 b elastic FIFO, 4-constant mux
 accumulate. **exp LUT replicated ×4.**

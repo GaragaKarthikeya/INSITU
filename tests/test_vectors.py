@@ -326,3 +326,79 @@ def check_the_encoder_goldens_agree_with_the_packed_cache_row():
     exact(kv.v_idx, qz._encode_plane(x[8:], qz.value, norms[8:]), "row v codes")
     exact(kv.k_norm, norms[:8], "row k norm")
     exact(kv.v_norm, norms[8:], "row v norm")
+
+
+def check_the_cache_rows_are_the_rows_the_scores_were_computed_over():
+    """`cache_rows_hN.hex` and `scores.hex` must describe one cache, not two.
+
+    The score bench streams the rows and compares against the scores. If the
+    rows were snapshotted at a different point in the step than the scores
+    were computed at -- before `append_rotated` rather than after, say -- the
+    bench would be off by one token and would still look like a datapath bug.
+    """
+    vs, kernel = _built()
+    assert vs.cache.shape[0] == vs.context + 1
+    for h in range(vs.model.num_kv_heads):
+        exact(vs.cache[:, h], kernel.cache.buf[:vs.context + 1, h],
+              f"cache rows head {h}")
+        kv = kernel.cache.quantizer.unpack(vs.cache[:, h])
+        view = kernel.cache.view(h)
+        exact(kv.k_idx, view.k_idx, f"head {h} k codes")
+        exact(kv.k_norm, view.k_norm, f"head {h} k norms")
+    # The last row of the cache is the token `kv_rows.hex` holds, so the two
+    # score-lane stimuli cannot describe different tokens.
+    exact(vs.cache[vs.context], vs.rows, "the last cache row is kv_rows.hex")
+
+
+def check_the_product_table_is_the_multiply_the_scan_avoids():
+    """`qtab_table.hex` must reproduce `scores` when gathered by real codes.
+
+    The table is only worth building if summing its entries at a token's codes
+    is the same integer as the dot product `CompressedAttention.scores`
+    computes. Checked here on real cache rows rather than asserted, because
+    the whole architecture rests on that identity.
+    """
+    from kernel.hw.vectors import CENT_BITS
+
+    vs, kernel = _built()
+    cents = kernel.cache.quantizer.key.codebook.centroids
+    prod_w = vs.lane_bits + CENT_BITS - 1
+    assert np.abs(np.outer(vs.rotated["q"][0], cents)).max() < (1 << (prod_w - 1))
+
+    groups = vs.model.kv_groups
+    for head in (0, 7, 31):
+        q = vs.rotated["q"][0][head]
+        table = q[:, None] * cents[None, :]              # (d, 2**key_bits)
+        view = kernel.cache.view(head // groups)
+        gathered = table[np.arange(vs.model.head_dim), view.k_idx.astype(np.int64)]
+        s, _ = kernel.attn.scores(q, view)
+        from kernel.numerics.fixed import rshift
+        exact(rshift(gathered.sum(axis=-1) * view.k_norm,
+                     kernel.attn.score_shift), s, f"head {head} gathered scores")
+
+
+def check_the_constructed_norm_rows_are_negative_where_they_claim_to_be():
+    """The edge rows exist to make the norm's SIGN observable.
+
+    Every norm a real cache holds is far below 2**15, so a score lane that
+    read the norm as unsigned agrees with all 2,080 real rows. These rows have
+    to actually sign-extend negative, or the bench they feed proves nothing.
+    """
+    vs, kernel = _built()
+    with tempfile.TemporaryDirectory() as d:
+        names = {os.path.basename(p) for p in emit(vs, d)}
+        assert {"score_edge_rows.hex", "score_edge_gold.hex",
+                "qtab_table.hex", "cb_centroids_key.hex"} <= names
+        rows = [ln for ln in open(os.path.join(d, "score_edge_rows.hex")).read().split()]
+        assert len(rows) == 5
+        buf = np.array([[int(ln[i:i + 2], 16) for i in range(0, len(ln), 2)][::-1]
+                        for ln in rows], dtype=np.uint8)
+        kv = kernel.cache.quantizer.unpack(buf)
+        assert (kv.k_norm < 0).sum() == 2, "two of the five norms must be negative"
+        assert kv.k_norm.max() == (1 << 15) - 1 and kv.k_norm.min() == -(1 << 15)
+        gold = [int(ln, 16) for ln in
+                open(os.path.join(d, "score_edge_gold.hex")).read().split()]
+        s, _ = kernel.attn.scores(vs.rotated["q"][0][0], kv)
+        sign = 1 << 47
+        exact(np.array([(g ^ sign) - sign for g in gold]), np.ravel(s),
+              "score_edge_gold.hex")

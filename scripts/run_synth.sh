@@ -8,10 +8,12 @@ declare -A SRCS=(
     [rot_fwht]="rtl/rot_fwht.sv"
     [rot_norm]="rtl/rot_norm.sv"
     [rot_encode]="rtl/rot_encode.sv"
+    [qtab_build]="rtl/qtab_build.sv"
+    [score_lane]="rtl/score_lane.sv rtl/qtab_build.sv"
 )
 TARGET="${1:-all}"
 if [ "$TARGET" = "all" ]; then
-    TARGETS="rot_fwht rot_norm rot_encode"
+    TARGETS="rot_fwht rot_norm rot_encode qtab_build score_lane"
 elif [ -n "${SRCS[$TARGET]:-}" ]; then
     TARGETS="$TARGET"
 else

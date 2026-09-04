@@ -151,7 +151,9 @@ class VectorSet:
     wire: dict = field(default_factory=dict)      # stage -> (tokens, heads, d)
     rotated: dict = field(default_factory=dict)
     quantizer: object | None = None               # the kernel's own KVQuantizer
+    attn: object | None = None                    # the kernel's own CompressedAttention
     rows: np.ndarray | None = None                # (kv_heads, row_bytes) this token
+    cache: np.ndarray | None = None               # (ctx+1, kv_heads, row_bytes) all
     scores: np.ndarray | None = None              # (heads, ctx+1) Q(acc_frac)
     out_two_pass: np.ndarray | None = None        # (tokens, hidden) Q(qk_frac)
     out_online: np.ndarray | None = None
@@ -220,10 +222,19 @@ def collect(kernel, hidden, positions=None) -> VectorSet:
         # a second one built from the same config -- a codebook rebuilt here
         # would agree today and drift the first time `Codebook.build` changes.
         vs.quantizer = kernel.cache.quantizer
+        vs.attn = kernel.attn
 
         # The row layout `kv_store_ddr.sv` must match byte for byte: the packed
         # bytes the cache actually stored, not a re-packing of them.
         vs.rows = kernel.cache.buf[ctx].copy()
+
+        # The WHOLE cache, `ctx + 1` tokens including the one just appended.
+        # `score_lane.sv` scans this; `kv_rows.hex` is only its last row, and a
+        # bench fed one token cannot tell a working adder tree from a working
+        # accumulator. Taken after `forward`, so the causal set the scores
+        # below were computed over and the rows the bench streams are the same
+        # `slice(0, ctx + 1)` -- not two slices that happen to agree today.
+        vs.cache = kernel.cache.buf[:ctx + 1].copy()
 
         # Per-token scores and the online result, for `score_lane.sv` and
         # `softmax_online.sv`. Both come from the kernel's own attention
@@ -250,6 +261,7 @@ def collect(kernel, hidden, positions=None) -> VectorSet:
 ENC_RANDOM = 512
 ENC_TIES = 32
 BOUND_BITS = 20          # widest boundary is 78,586 -- 18 b signed; 20 b on the wire
+CENT_BITS  = 20          # widest centroid is 89,465 -- 18 b signed; same wire width
 
 
 def _tie_vectors(quantizer, base: np.ndarray, plane) -> np.ndarray:
@@ -396,6 +408,91 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
         written.append(_write(p("kv_rows.hex"),
                               ["".join(f"{b:02x}" for b in reversed(row))
                                for row in vs.rows]))
+
+    # -- the score lane ------------------------------------------------
+    #
+    # One file per KV head, `ctx + 1` rows of `row_bytes`, in causal order --
+    # exactly the byte stream `kv_store_ddr.sv` will hand `score_lane.sv`, and
+    # exactly the bytes `pack` wrote. The lane splits the row itself rather
+    # than being handed pre-split fields, so a bench that passes has agreed
+    # with `_pack_codes`'s layout and not merely with a second decoder.
+    if vs.cache is not None:
+        for h in range(vs.model.num_kv_heads):
+            written.append(_write(
+                p(f"cache_rows_h{h}.hex"),
+                ["".join(f"{b:02x}" for b in reversed(row))
+                 for row in vs.cache[:, h]]))
+
+    if vs.quantizer is not None:
+        qz = vs.quantizer
+        cw = (CENT_BITS + 3) // 4
+        for plane in (qz.key, qz.value):
+            written.append(_write(
+                p(f"cb_centroids_{plane.name}.hex"),
+                [f"{int(c) & ((1 << CENT_BITS) - 1):0{cw}x}"
+                 for c in plane.codebook.centroids]))
+
+        # The product tables `qtab_build.sv` must hold, one line per QUERY
+        # head. Entry (ch, i) is `q_rot[ch] * centroid[i]` -- the multiply the
+        # scan is amortising away -- at bit offset `(ch * 2**BITS + i) * PROD_W`,
+        # LSB-first, the same convention every other packed file here uses.
+        #
+        # Emitted as the whole table rather than as the entries some token's
+        # codes happen to select, so `tb_qtab_build` can sweep all 2**BITS
+        # codes across all D channels and leave no untested entry.
+        prod_w = vs.lane_bits + CENT_BITS - 1
+        cents = qz.key.codebook.centroids.astype(np.int64)
+        nb = int(cents.shape[0])
+        mask = (1 << prod_w) - 1
+        lines = []
+        for q in vs.rotated["q"][0]:
+            acc = 0
+            for ch, x in enumerate(q):
+                for i, c in enumerate(cents):
+                    v = int(x) * int(c)
+                    if not -(1 << (prod_w - 1)) <= v < (1 << (prod_w - 1)):
+                        raise AssertionError(
+                            f"q*centroid = {v} does not fit {prod_w} b; the "
+                            f"product table width is wrong, not the vector")
+                    acc |= (v & mask) << ((ch * nb + i) * prod_w)
+            lines.append(f"{acc:0{(vs.model.head_dim * nb * prod_w + 3) // 4}x}")
+        written.append(_write(p("qtab_table.hex"), lines))
+
+        # -- rows a real cache does not contain --------------------------
+        #
+        # `_unpack_word` SIGN-EXTENDS the norm, so the model multiplies by a
+        # signed 16-bit value. Every norm `isqrt` produces here is far below
+        # 2**15, which means a lane that treated the norm as unsigned agrees
+        # with `scores` on all 2,080 real rows and is still wrong. These rows
+        # put the norm at 0, 1, 2**15-1, 2**15 and 2**16-1 -- the last two
+        # negative once sign-extended -- and give the rule a case that can
+        # actually fail. The codes are random because the norm is the point;
+        # the golden is `CompressedAttention.scores` either way.
+        from ..ops.quantize import CompressedKV
+
+        rng = np.random.default_rng(0x5C0E)
+        edge_norms = [0, 1, (1 << 15) - 1, 1 << 15, (1 << 16) - 1]
+        d, nk, nv = vs.model.head_dim, 1 << vs.quant.key_bits, 1 << vs.quant.value_bits
+        n_edge = len(edge_norms)
+        kv = CompressedKV(
+            k_idx=rng.integers(0, nk, size=(n_edge, d), dtype=np.uint8),
+            k_norm=np.array([(n ^ (1 << 15)) - (1 << 15) for n in edge_norms],
+                            dtype=np.int64),
+            v_idx=rng.integers(0, nv, size=(n_edge, d), dtype=np.uint8),
+            v_norm=np.array([(n ^ (1 << 15)) - (1 << 15) for n in edge_norms],
+                            dtype=np.int64),
+        )
+        rows = qz.pack(kv)
+        back = qz.unpack(rows)
+        if not np.array_equal(back.k_norm, kv.k_norm):
+            raise AssertionError("the constructed norms do not survive pack/unpack")
+        edge, _ = vs.attn.scores(vs.rotated["q"][0][0], kv)
+        written.append(_write(p("score_edge_rows.hex"),
+                              ["".join(f"{b:02x}" for b in reversed(row))
+                               for row in rows]))
+        written.append(_write(p("score_edge_gold.hex"),
+                              [f"{int(x) & 0xFFFFFFFFFFFF:012x}"
+                               for x in np.ravel(edge)]))
     if vs.scores is not None:
         written.append(_write(p("scores.hex"),
                               ["".join(f"{int(x) & 0xFFFFFFFFFFFF:012x}"
@@ -421,6 +518,10 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
         "rot_sign_negative_is_one": True,
         "rot_random_vectors": int(r_in.shape[0]),
         "bound_bits": BOUND_BITS,
+        "cent_bits": CENT_BITS,
+        "prod_bits": vs.lane_bits + CENT_BITS - 1,
+        "cache_tokens": int(vs.cache.shape[0]) if vs.cache is not None else 0,
+        "score_edge_rows": 5,
         "enc_vectors": n_enc,
         "enc_real": 2 * m.num_kv_heads,
         "enc_random": ENC_RANDOM,
