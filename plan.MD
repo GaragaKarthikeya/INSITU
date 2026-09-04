@@ -540,6 +540,10 @@ At ctx 4096 the model reproduces the microarchitecture's own arithmetic without
 being told it: attention retires `8 × 4097` cycles — 8 KV heads sequential, 4
 query heads parallel — against 78 cycles for Phase A. 124 checks green.
 
+**Superseded by step 6:** the encoder's 78 cycles were an estimate of RTL that
+did not exist yet. The synthesised blocks fold over the head dimension and cost
+293. See step 6.
+
 **Step 3 — vector generator.**
 `hw/vectors.py`, in the style of
 `fpga_work/systolic_zcu104/scripts/gen_vectors.py`. Emits the 24-bit packed beat
@@ -654,6 +658,85 @@ passed, unchanged.
 stages.
 *Exit:* codes and norms **byte-exact** against `quantize.encode`, including the
 `>` tie-to-lower-bin rule; row layout matches `ops/quantize.py:407` byte for byte.
+
+**Status: DONE.** `rtl/rot_norm.sv`, `rtl/rot_encode.sv`, `tb/tb_rot_norm.sv`,
+`tb/tb_rot_encode.sv`. `run_synth.sh` and `synth_block.tcl` are now generic over
+blocks, so `./scripts/run_synth.sh all` closes every block the datapath has.
+
+`hw/vectors.py` gained the encoder stimulus: **560 vectors** — the 16 real
+rotated k/v tensors, 512 random, and **32 constructed to sit exactly on a
+decision boundary**. The tie vectors are the point. `_encode_plane` compares
+with `>`, so a channel on a boundary belongs to the bin *below* it, and random
+stimulus hits `x << 8 == norm * boundary` about once in 2³². They are built by
+setting the last lane to the value that lands on a boundary and iterating to a
+fixed point, because moving the lane moves the norm which moves the boundary.
+
+Both benches were checked against a deliberately broken DUT before being
+believed: `>=` in place of `>` fails on vector 528 lane 63 at *both* widths, and
+half-up in place of half-to-even fails four norms out of 560. A bench that
+cannot fail the mutation was not testing the rule.
+
+The key plane (4 b, 15 boundaries) and the value plane (2 b, 3) run on the same
+stimulus in the same bench, because the interesting bug is a boundary index
+that is right at one width and off by one at the other. The boundaries are a
+parameter checked against the emitted codebook, exactly as `SIGN_NEG` is against
+the sign diagonal — a stale build fails there, not as a scattering of one-off
+codes.
+
+**Two blocks, two design decisions.**
+
+*The norm is quantized before the thresholds are built from it.* `rot_norm` is
+the only producer of the norm and everything downstream consumes what it
+emitted. If the encoder thresholded against a wider norm than the cache row
+carries, encoder and decoder would work from different numbers and a channel
+near a boundary would decode into the wrong bin — a fraction of a percent of
+accuracy, invisible to every test that does not look for it.
+
+*Both blocks fold over the head dimension, 8 channels of 64 per cycle.* Phase A
+runs once per token against a Phase B that runs once per **cached** token.
+Sixty-four squarers and sixty-four comparator stacks would buy back cycles
+nothing is waiting on, and take area from the score lanes, which are the thing
+actually starved. The square root is one pipelined stage per output bit, so the
+folding costs area, not throughput.
+
+**Both first attempts missed 250 MHz, and synthesis is what said so.**
+
+| | first attempt | fixed |
+|---|---|---|
+| `rot_norm` | **−0.990 ns** — lane mux + DSP multiply + 53-bit adder tree + the first sqrt subtract in one cycle | **+0.931 ns** — square → sum → mean as three registered stages |
+| `rot_encode` | **−0.641 ns** — four 36-bit compares against mux-selected thresholds, chained | **+2.298 ns** — one registered level per bit |
+
+Both fixes cost latency on a block nothing is waiting on. Neither was visible in
+simulation; both were invisible to inspection.
+
+Out-of-context, `xczu7ev-ffvc1156-2-e`, 250 MHz:
+
+| block | WNS | LUT | FF | DSP |
+|---|---|---|---|---|
+| `rot_fwht` | +3.309 ns | 12,385 | 11,361 | 0 |
+| `rot_norm` | **+0.931 ns** | 2,366 | 2,773 | **16** |
+| `rot_encode` | **+2.298 ns** | 2,493 | 2,483 | **14** |
+
+The 16 DSPs are 8 squarers (24×24 takes two each); the 14 are the 15 threshold
+multiplies, one of which is against a zero boundary and optimises away.
+
+**The cost model moved, and this is the correction.** `EncoderConfig` claimed
+one vector per cycle and an 8-cycle latency. The RTL retires one every **13**
+(`D/LANES + KEY_BITS + 1`, the encoder being the slower of the two) with **31**
+cycles of latency. So Phase A at ctx 4096 is **293 cycles, not 78** — 54 rotate
+plus 239 encoder. Phase B is 32,786, so Phase B is still **112× Phase A** and
+the conclusion ("optimise nothing but Phase B") is untouched, but the number
+this document reported for step 2 was an estimate and this is the measurement
+replacing it. `check_phase_b_is_the_whole_step_at_long_context` now asserts the
+ratio, which is the claim, rather than the estimate.
+
+The row layout closes the loop: `out_codes` is lane *i* at `[BITS*i +: BITS]`,
+LSB-first, which is byte for byte what `_pack_codes` writes into a cache row,
+and `check_the_encoder_goldens_agree_with_the_packed_cache_row` asserts the
+bench's goldens are the codes `kv_rows.hex` actually contains. The two benches
+cannot be verifying a row the other will never produce.
+
+128 checks green; `./scripts/regress.sh` green on all four benches.
 
 **Step 7 — `qtab_build.sv` + `score_lane.sv`.** The multiplier-free core: 64
 parallel table gathers, six-level adder tree, one `k_norm` multiply, shift and

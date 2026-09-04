@@ -89,6 +89,10 @@ class EncoderUnit:
     A `QUANTIZE` record counts `n = 2 * n_tokens` vectors -- a key plane and a
     value plane -- which is exactly what the hardware pushes through the norm
     and the threshold compare.
+
+    The two blocks are in series but pipelined against each other, so the cost
+    of a vector is the SLOWER of them, not their sum, and the fixed latency is
+    charged once rather than per vector.
     """
 
     def __init__(self, cfg: EncoderConfig) -> None:
@@ -96,8 +100,8 @@ class EncoderUnit:
 
     def cost(self, works: list[Work]) -> UnitReport:
         vectors = sum(max(w.n, 1) for w in works)
-        thru = math.ceil(vectors / self.cfg.vectors_per_cycle)
-        latency = self.cfg.norm_latency
+        thru = vectors * self.cfg.cycles_per_vector
+        latency = self.cfg.latency_cycles
         return UnitReport("encoder", thru + latency, thru, latency, vectors, "encode")
 
 

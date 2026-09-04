@@ -1,0 +1,28 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2026.1 (lin64) Build 6511674 Tue Jun 16 11:01:26 MDT 2026
+| Date         : Sat Sep  5 01:04:10 2026
+| Host         : redhatacademy23 running 64-bit Red Hat Enterprise Linux release 8.10 (Ootpa)
+| Command      : report_utilization -hierarchical -file /home/digital3/kernel/build/synth/rot_encode/utilization.rpt
+| Design       : rot_encode
+| Device       : xczu7ev-ffvc1156-2-e
+| Speed File   : -2
+| Design State : Synthesized
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++------------+--------+------------+------------+---------+------+------+--------+--------+------+------------+
+|  Instance  | Module | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs | RAMB36 | RAMB18 | URAM | DSP Blocks |
++------------+--------+------------+------------+---------+------+------+--------+--------+------+------------+
+| rot_encode |  (top) |       2493 |       2489 |       0 |    4 | 2483 |      0 |      0 |    0 |         14 |
++------------+--------+------------+------------+---------+------+------+--------+--------+------+------------+
+
+

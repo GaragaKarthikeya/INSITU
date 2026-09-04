@@ -227,3 +227,102 @@ def check_the_tap_is_an_observer_and_leaves_no_trace():
         return seen["out"]
 
     exact(one(True), one(False), "observer changed the answer")
+
+
+# --------------------------------------------------------------------------
+# step 6: the encoder stimulus
+# --------------------------------------------------------------------------
+
+def check_encoder_stimulus_contains_exact_boundary_ties():
+    """The reason the tie vectors are constructed instead of sampled.
+
+    `_encode_plane` compares with `>`, so a channel exactly on a boundary falls
+    to the LOWER bin. An RTL comparator that used `>=` would disagree on those
+    channels alone -- and a tie needs `x << 8 == norm * boundary` exactly, which
+    random stimulus hits with probability about 2**-32. If this check ever finds
+    no ties, `tb_rot_encode` has silently stopped testing the rule.
+    """
+    from kernel.hw.vectors import ENC_TIES, encoder_stimulus
+
+    vs, _ = _built()
+    qz, plane = vs.quantizer, vs.quantizer.key
+    x = encoder_stimulus(vs)
+    norms = qz._norm_wire(x)
+    shift = plane.threshold_frac - plane.qk_frac
+    thresholds = norms[:, None] * plane.codebook.boundaries[None, :]
+
+    ties = ((x[:, -1, None] << shift) == thresholds).any(axis=1)
+    assert ties.sum() >= 8, f"only {int(ties.sum())} exact ties in {x.shape[0]} vectors"
+    assert ties[-ENC_TIES:].sum() >= 8, "the constructed tail is not where the ties are"
+
+    # And the rule is load-bearing: `>=` would move those channels by one bin.
+    t3 = thresholds[:, None, :]
+    lo = ((x[..., None] << shift) > t3).sum(axis=-1)
+    hi = ((x[..., None] << shift) >= t3).sum(axis=-1)
+    assert np.any(lo != hi), "no channel distinguishes `>` from `>=`"
+
+
+def check_encoder_goldens_come_from_the_kernels_own_quantizer():
+    """Not a second codebook built here from the same config.
+
+    A rebuilt one agrees today and drifts the first time `Codebook.build`
+    changes, which would make the RTL bit-exact against a stale format.
+    """
+    vs, kernel = _built()
+    assert vs.quantizer is kernel.cache.quantizer
+
+
+def check_encoder_files_reload_to_the_quantizers_own_answer():
+    from kernel.hw.vectors import BOUND_BITS, encoder_stimulus
+
+    vs, _ = _built()
+    qz = vs.quantizer
+    with tempfile.TemporaryDirectory() as d:
+        names = {os.path.basename(p) for p in emit(vs, d)}
+        assert {"enc_in.hex", "enc_norm.hex", "enc_idx_key.hex",
+                "enc_idx_value.hex", "enc_bounds_key.hex",
+                "enc_bounds_value.hex"} <= names
+
+        man = json.load(open(os.path.join(d, "manifest.json")))
+        x = encoder_stimulus(vs)
+        assert man["enc_vectors"] == x.shape[0] == 16 + man["enc_random"] + 32
+
+        def rows(name, width):
+            out = []
+            for ln in open(os.path.join(d, name)).read().split():
+                v = [int(ln[i:i + width], 16) for i in range(0, len(ln), width)]
+                out.append(list(reversed(v)))     # lane 0 is printed rightmost
+            return np.array(out, dtype=np.int64)
+
+        sign = 1 << (vs.lane_bits - 1)
+        got_x = (rows("enc_in.hex", 6) ^ sign) - sign
+        exact(got_x, x, "enc_in.hex round trip")
+
+        norms = qz._norm_wire(x)
+        exact(rows("enc_norm.hex", 4).ravel(), norms, "enc_norm.hex")
+        for plane in (qz.key, qz.value):
+            exact(rows(f"enc_idx_{plane.name}.hex", 2),
+                  qz._encode_plane(x, plane, norms), f"enc_idx_{plane.name}.hex")
+
+            bsign = 1 << (BOUND_BITS - 1)
+            b = (rows(f"enc_bounds_{plane.name}.hex", BOUND_BITS // 4).ravel()
+                 ^ bsign) - bsign
+            exact(b, plane.codebook.boundaries, f"enc_bounds_{plane.name}.hex")
+
+
+def check_the_encoder_goldens_agree_with_the_packed_cache_row():
+    """The 8 real key vectors are the first 8 lines of `enc_idx_key.hex`.
+
+    `kv_rows.hex` is what the cache stored and `enc_idx_key.hex` is what the
+    encoder bench checks against. If those two disagree, one of the benches is
+    verifying a row layout the other will never produce.
+    """
+    vs, _ = _built()
+    qz = vs.quantizer
+    x = np.concatenate([vs.rotated["k"][0], vs.rotated["v"][0]], axis=0)
+    norms = qz._norm_wire(x)
+    kv = qz.unpack(vs.rows)
+    exact(kv.k_idx, qz._encode_plane(x[:8], qz.key, norms[:8]), "row k codes")
+    exact(kv.v_idx, qz._encode_plane(x[8:], qz.value, norms[8:]), "row v codes")
+    exact(kv.k_norm, norms[:8], "row k norm")
+    exact(kv.v_norm, norms[8:], "row v norm")

@@ -273,13 +273,26 @@ class RotateConfig:
 class EncoderConfig:
     """`rot_norm.sv` + `rot_encode.sv`. One rotated vector in, one cache row out.
 
-    The norm is an integer square root and the codes are a binary search
-    `bits` deep, so the latency depends on the format while the throughput does
-    not: the two stages pipeline, and a vector is retired every cycle.
+    MEASURED, not estimated. Both blocks fold over the head dimension --
+    `LANES = 8` of 64 channels per cycle -- because Phase A runs once per token
+    against a Phase B that runs once per CACHED token. Sixty-four squarers and
+    sixty-four comparator stacks would buy back cycles nothing is waiting on
+    and take area from the score lanes, which are the thing that is actually
+    bandwidth-limited.
+
+    `cycles_per_vector` is `D/LANES + KEY_BITS + 1` = 13, the slower of the two
+    blocks (the norm retires one vector every 9). `latency_cycles` is the norm's
+    two accumulate stages plus its 24 square-root levels plus the encoder's
+    KEY_BITS search levels and its write cycle.
+
+    Both numbers come from RTL that closes at 250 MHz out of context
+    (`plan.MD`, step 6): +0.931 ns for the norm, +2.298 ns for the encoder.
+    The first attempt at each fused a stage too many and missed -- see the
+    step 6 status block.
     """
 
-    vectors_per_cycle: int = 1
-    norm_latency: int = 8           # integer sqrt, `ops/quantize.py:40`
+    cycles_per_vector: int = 13
+    latency_cycles: int = 31
 
 
 @dataclass(frozen=True)

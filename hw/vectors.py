@@ -150,6 +150,7 @@ class VectorSet:
     context: int                     # cached tokens BEFORE this step
     wire: dict = field(default_factory=dict)      # stage -> (tokens, heads, d)
     rotated: dict = field(default_factory=dict)
+    quantizer: object | None = None               # the kernel's own KVQuantizer
     rows: np.ndarray | None = None                # (kv_heads, row_bytes) this token
     scores: np.ndarray | None = None              # (heads, ctx+1) Q(acc_frac)
     out_two_pass: np.ndarray | None = None        # (tokens, hidden) Q(qk_frac)
@@ -215,6 +216,11 @@ def collect(kernel, hidden, positions=None) -> VectorSet:
     vs.out_two_pass = tap["out"]
 
     if kernel.compressed:
+        # The encoder golden is the quantizer the cache is actually using, not
+        # a second one built from the same config -- a codebook rebuilt here
+        # would agree today and drift the first time `Codebook.build` changes.
+        vs.quantizer = kernel.cache.quantizer
+
         # The row layout `kv_store_ddr.sv` must match byte for byte: the packed
         # bytes the cache actually stored, not a re-packing of them.
         vs.rows = kernel.cache.buf[ctx].copy()
@@ -235,6 +241,66 @@ def collect(kernel, hidden, positions=None) -> VectorSet:
         from ..ops.project import merge_heads
         vs.out_online = merge_heads(out_on[None])
     return vs
+
+
+# --------------------------------------------------------------------------
+# the encoder: norms, codes, and the boundary artifact
+# --------------------------------------------------------------------------
+
+ENC_RANDOM = 512
+ENC_TIES = 32
+BOUND_BITS = 20          # widest boundary is 78,586 -- 18 b signed; 20 b on the wire
+
+
+def _tie_vectors(quantizer, base: np.ndarray, plane) -> np.ndarray:
+    """Vectors where a channel sits EXACTLY on a decision boundary.
+
+    The `>` in `_encode_plane` sends a tie to the lower bin. That rule is one
+    character of Python and one comparator bit in RTL, it disagrees with the
+    obvious `>=`, and random stimulus will never hit it: a tie needs
+    `x << 8 == norm * boundary` exactly, which has probability ~2**-32.
+
+    Constructed rather than searched for. Set the last lane to the value that
+    lands on a boundary, then recompute -- the change moves the norm, which
+    moves the boundary, so it is iterated to a fixed point and only the vectors
+    that actually converge are kept.
+    """
+    from ..numerics.fixed import INT
+
+    shift = plane.threshold_frac - plane.qk_frac
+    out = []
+    for j, row in enumerate(base):
+        v = row.copy()
+        for _ in range(20):
+            norm = int(quantizer._norm_wire(v[None])[0])
+            # Only some boundaries land on a whole lane value at this norm.
+            # Which one is picked is rotated across the stimulus so the ties
+            # are spread over the bins rather than piled into one.
+            usable = [int(norm) * int(b) for b in plane.codebook.boundaries
+                      if (int(norm) * int(b)) % (1 << shift) == 0
+                      and abs(int(norm) * int(b)) >> shift < (1 << 23)]
+            if not usable:
+                break
+            cand = usable[j % len(usable)] >> shift
+            if int(v[-1]) == cand:
+                out.append(v.copy())       # fixed point: the tie is real
+                break
+            v[-1] = cand
+    if len(out) < 8:
+        raise AssertionError(f"only {len(out)} boundary-tie vectors converged")
+    return np.array(out, dtype=INT)
+
+
+def encoder_stimulus(vs: "VectorSet") -> np.ndarray:
+    """Every vector the encoder benches run: real, random, and on-boundary."""
+    real = np.concatenate([vs.rotated["k"][0], vs.rotated["v"][0]], axis=0)
+    rng = np.random.default_rng(0xE17C0DE)
+    # Bounded the way `rot_fwht`'s output is: this is the rotated domain, and a
+    # vector the seam cannot carry is not a case the encoder has to encode.
+    rand = rng.integers(-(1 << 21), 1 << 21,
+                        size=(ENC_RANDOM, vs.model.head_dim), dtype=np.int64)
+    ties = _tie_vectors(vs.quantizer, rand[:ENC_TIES], vs.quantizer.key)
+    return np.concatenate([real, rand, ties], axis=0)
 
 
 # --------------------------------------------------------------------------
@@ -294,6 +360,38 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
     written.append(_write(p("rot_random_out.hex"), [
         "".join(f"{int(x) & 0xFFFFFF:06x}" for x in reversed(row)) for row in r_out]))
 
+    # -- the encoder ---------------------------------------------------
+    #
+    # The boundaries are a format artifact exactly as the sign diagonal is:
+    # hardware receives the integers `Codebook.build` produced, never a second
+    # implementation of the Lloyd-Max solve.  Norms are plane-independent
+    # (`_norm_wire` uses one `norm_q`), so one file serves both planes and the
+    # same stimulus exercises KEY_BITS=4 and VAL_BITS=2 side by side.
+    if vs.quantizer is not None:
+        qz = vs.quantizer
+        bw = (BOUND_BITS + 3) // 4
+        for plane in (qz.key, qz.value):
+            written.append(_write(
+                p(f"enc_bounds_{plane.name}.hex"),
+                [f"{int(b) & ((1 << BOUND_BITS) - 1):0{bw}x}"
+                 for b in plane.codebook.boundaries]))
+
+        x = encoder_stimulus(vs)
+        norms = qz._norm_wire(x)
+        written.append(_write(p("enc_in.hex"), [
+            "".join(f"{int(v) & ((1 << vs.lane_bits) - 1):0{w}x}" for v in reversed(vec))
+            for vec in x]))
+        written.append(_write(p("enc_norm.hex"),
+                              [f"{int(n) & 0xFFFF:04x}" for n in norms]))
+        for plane in (qz.key, qz.value):
+            idx = qz._encode_plane(x, plane, norms)
+            written.append(_write(
+                p(f"enc_idx_{plane.name}.hex"),
+                ["".join(f"{int(c):02x}" for c in reversed(row)) for row in idx]))
+        n_enc = int(x.shape[0])
+    else:
+        n_enc = 0
+
     if vs.rows is not None:
         written.append(_write(p("kv_rows.hex"),
                               ["".join(f"{b:02x}" for b in reversed(row))
@@ -322,6 +420,10 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
         "rot_rounds": vs.quant.rot_rounds,
         "rot_sign_negative_is_one": True,
         "rot_random_vectors": int(r_in.shape[0]),
+        "bound_bits": BOUND_BITS,
+        "enc_vectors": n_enc,
+        "enc_real": 2 * m.num_kv_heads,
+        "enc_random": ENC_RANDOM,
         "softmax_golden": "out.online.hex",
     }, indent=2)]))
     return written

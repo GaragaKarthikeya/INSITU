@@ -17,5 +17,9 @@
   "rot_rounds": 1,
   "rot_sign_negative_is_one": true,
   "rot_random_vectors": 1024,
+  "bound_bits": 20,
+  "enc_vectors": 560,
+  "enc_real": 16,
+  "enc_random": 512,
   "softmax_golden": "out.online.hex"
 }

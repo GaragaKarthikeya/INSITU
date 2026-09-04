@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
-# Run OOC synthesis for standalone RTL blocks.  Step 5 currently has rot_fwht.
+# Run OOC synthesis for standalone RTL blocks.  One block per invocation;
+# `all` walks every block the datapath has so far.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-TARGET="${1:-rot_fwht}"
-case "$TARGET" in
-    rot_fwht) TCL="scripts/synth_rot_fwht.tcl" ;;
-    *) echo "usage: $0 [rot_fwht]" >&2; exit 2 ;;
-esac
+declare -A SRCS=(
+    [rot_fwht]="rtl/rot_fwht.sv"
+    [rot_norm]="rtl/rot_norm.sv"
+    [rot_encode]="rtl/rot_encode.sv"
+)
+TARGET="${1:-all}"
+if [ "$TARGET" = "all" ]; then
+    TARGETS="rot_fwht rot_norm rot_encode"
+elif [ -n "${SRCS[$TARGET]:-}" ]; then
+    TARGETS="$TARGET"
+else
+    echo "usage: $0 [all|${!SRCS[*]}]" >&2; exit 2
+fi
 
 VIVADO_SETTINGS="${VIVADO_SETTINGS:-/home/digital3/2026.1/Vivado/settings64.sh}"
 if [ ! -f "$VIVADO_SETTINGS" ]; then
@@ -25,6 +34,10 @@ if [ -z "${XILINXD_LICENSE_FILE:-}" ] && [ -f "$HOME/.flexlmrc" ]; then
     set +a
 fi
 
-OUT="build/synth/$TARGET"
-mkdir -p "$OUT"
-vivado -mode batch -nojournal -nolog -source "$TCL" -tclargs "$OUT"
+for t in $TARGETS; do
+    OUT="build/synth/$t"
+    mkdir -p "$OUT"
+    echo "--- $t"
+    vivado -mode batch -nojournal -nolog -source scripts/synth_block.tcl \
+        -tclargs "$OUT" "$t" ${SRCS[$t]}
+done
