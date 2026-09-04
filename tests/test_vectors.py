@@ -488,3 +488,56 @@ def check_the_exp_sweep_covers_every_reachable_output():
         exact(e(dv), e.two_step(dv), "the flat and two-step exp agree")
         # Every one of the 4,353 reachable outputs is produced by some delta.
         assert len(set(int(x) for x in pv)) == len(set(int(x) for x in e._flat))
+
+
+def check_the_finalize_goldens_are_the_kernels_own_two_lines():
+    """`fin_*.hex` must be `reciprocal` and `_finalize`, on tapped state.
+
+    `finalize.sv` is the seam: its output is `merge_heads(out)` in Q16, exactly
+    what the FPGA returns. So the golden has to be the function the kernel
+    actually calls, applied to the accumulator and denominator each head's scan
+    really ended on -- not a division recomputed here from the same formula.
+    """
+    from kernel.ops.attention import reciprocal
+    from kernel.numerics.fixed import rshift
+
+    vs, kernel = _built()
+    acc, l = vs.final["acc"], vs.final["l"]
+    assert acc.shape == (vs.model.num_heads, vs.model.head_dim)
+    assert l.shape == (vs.model.num_heads,)
+
+    # The end of the scan really is what `attend_online` returned.
+    out = rshift(acc * reciprocal(l, vs.fmt)[..., None], vs.fmt.recip_frac)
+    from kernel.ops.project import merge_heads
+    exact(merge_heads(out[None]), vs.out_online, "finalize reproduces out.online")
+
+    with tempfile.TemporaryDirectory() as d:
+        names = {os.path.basename(p) for p in emit(vs, d)}
+        assert {"fin_acc.hex", "fin_l.hex", "fin_recip.hex", "fin_out.hex"} <= names
+        man = json.load(open(os.path.join(d, "manifest.json")))
+        assert man["finalize_rows"] == vs.model.num_heads + man["finalize_edge_rows"]
+
+        gl = [int(x, 16) for x in open(os.path.join(d, "fin_l.hex")).read().split()]
+        gr = [int(x, 16) for x in open(os.path.join(d, "fin_recip.hex")).read().split()]
+        exact(np.array(gr), reciprocal(np.array(gl, dtype=np.int64), vs.fmt),
+              "fin_recip.hex")
+        # l = 0 is a real input -- a masked position -- and answers zero.
+        assert 0 in gl and gr[gl.index(0)] == 0
+        # The constructed rows must take the reciprocal to its ceiling.
+        assert max(gr) == 1 << (vs.fmt.recip_frac + vs.fmt.prob_frac)
+
+
+def check_the_real_denominators_do_not_exercise_the_divider():
+    """Why the constructed rows exist, pinned rather than asserted in a comment.
+
+    Every head ends the same length of scan, so every `l` is close to
+    `n_tokens << prob_frac` and every reciprocal is a 10-bit number in a band
+    four values wide. A divider wrong above ten bits, or on a zero or a one,
+    agrees with all 32 of them.
+    """
+    from kernel.ops.attention import reciprocal
+
+    vs, _ = _built()
+    r = reciprocal(vs.final["l"], vs.fmt)
+    assert int(r.max()) - int(r.min()) < 16, (int(r.min()), int(r.max()))
+    assert int(r.max()).bit_length() <= 12

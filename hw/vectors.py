@@ -158,6 +158,7 @@ class VectorSet:
     out_two_pass: np.ndarray | None = None        # (tokens, hidden) Q(qk_frac)
     out_online: np.ndarray | None = None
     softmax: dict = field(default_factory=dict)  # the online recurrence, per token
+    final: dict = field(default_factory=dict)    # end-of-scan acc and l, all heads
 
     @property
     def lane_bits(self) -> int:
@@ -242,6 +243,7 @@ def collect(kernel, hidden, positions=None) -> VectorSet:
         # object, on the kernel's own cache -- the same calls `forward` makes.
         qr = vs.rotated["q"][0]
         sc, out_on = [], np.zeros((m.num_heads, m.head_dim), dtype=np.int64)
+        fin_acc, fin_l = [], []
         for h in range(m.num_kv_heads):
             heads = slice(h * m.kv_groups, (h + 1) * m.kv_groups)
             kv = kernel.cache.view(h).select(slice(0, ctx + 1))
@@ -268,6 +270,15 @@ def collect(kernel, hidden, positions=None) -> VectorSet:
                     [st["factor"] if st["factor"] is not None
                      else np.full(m.kv_groups, 1 << kernel.cfg.fmt.prob_frac,
                                   dtype=np.int64) for st in steps])
+            # `finalize.sv`'s stimulus: the accumulator and the denominator
+            # this head's scan ended on. Every head, not just group 0 -- the
+            # divide is per query head and 32 real denominators are 32 real
+            # reciprocals, which is the only part of this block with any range
+            # to it.
+            fin_acc.append(steps[-1]["acc"])
+            fin_l.append(steps[-1]["l"])
+        vs.final["acc"] = np.concatenate(fin_acc, axis=0)
+        vs.final["l"] = np.concatenate(fin_l, axis=0)
         vs.scores = np.concatenate(sc, axis=0)
         from ..ops.project import merge_heads
         vs.out_online = merge_heads(out_on[None])
@@ -632,6 +643,67 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
     else:
         stress_factors = 0
 
+    # -- finalize: one reciprocal per query head -------------------------
+    #
+    # THE REAL DENOMINATORS DO NOT EXERCISE THE DIVIDER. All 32 heads end a
+    # 65-token scan with `l` near 65 * 32768, so `2**31 // l` lands between
+    # 1,008 and 1,012 -- a four-value spread, all of them 10-bit. A divider
+    # that was wrong above 10 bits, or that mishandled a zero or a one, would
+    # agree with every real head.
+    #
+    # So the stimulus is the 32 real (acc, l) pairs FOLLOWED by constructed
+    # ones at l = 0, 1, 2, 3, 2**15-1, 2**15, 2**16-1, 2**20, 2**31-1, 2**31,
+    # 2**32-1 and 2**33. l = 0 is a real input -- a masked or padded position --
+    # and `reciprocal` answers it with zero rather than dividing. l = 1 gives
+    # the largest reciprocal the format holds, 2**31, and paired with a
+    # saturated accumulator it produces the widest product this block can make.
+    #
+    # The goldens are `reciprocal` and `_finalize` themselves, on the kernel's
+    # own attention object.
+    if vs.attn is not None and vs.final:
+        from ..ops.attention import reciprocal
+        from ..numerics.fixed import rshift
+
+        real_acc, real_l = vs.final["acc"], vs.final["l"]
+        edge_l = np.array([0, 1, 2, 3, (1 << 15) - 1, 1 << 15, (1 << 16) - 1,
+                           1 << 20, (1 << 31) - 1, 1 << 31, (1 << 32) - 1,
+                           1 << 33], dtype=np.int64)
+        hi, lo = (1 << (vs.fmt.acc_width - 1)) - 1, -(1 << (vs.fmt.acc_width - 1))
+        rng = np.random.default_rng(0xF1A1)
+        edge_acc = rng.integers(lo, hi, size=(edge_l.size, vs.model.head_dim),
+                                dtype=np.int64)
+        # Channel 0 saturated high, 1 saturated low, 2 zero: the widest product
+        # and the identities, on every denominator.
+        edge_acc[:, 0], edge_acc[:, 1], edge_acc[:, 2] = hi, lo, 0
+
+        fa = np.concatenate([real_acc, edge_acc])
+        fl = np.concatenate([real_l, edge_l])
+        fr = reciprocal(fl, vs.fmt)
+        fo = rshift(fa * fr[..., None], vs.fmt.recip_frac)
+
+        # The output is emitted at OUT_BITS, not at the seam's 24, because
+        # `_finalize` does not clamp and the constructed rows overflow 24 bits
+        # by design. `finalize.sv` reports a range error rather than saturating
+        # behind the model, exactly as `rot_fwht` does.
+        OUT_BITS = 48
+        if np.any(np.abs(fo) >= (1 << (OUT_BITS - 1))):
+            raise AssertionError(f"a finalize golden does not fit {OUT_BITS} b")
+        if np.any(np.abs(fo[:vs.model.num_heads]) >= (1 << (vs.lane_bits - 1))):
+            raise AssertionError("a REAL head's output does not fit the seam")
+        written.append(_write(p("fin_acc.hex"), [
+            "".join(f"{int(x) & 0xFFFFFFFF:08x}" for x in reversed(vec))
+            for vec in fa]))
+        written.append(_write(p("fin_l.hex"),
+                              [f"{int(x) & ((1 << 48) - 1):012x}" for x in fl]))
+        written.append(_write(p("fin_recip.hex"),
+                              [f"{int(x) & 0xFFFFFFFF:08x}" for x in fr]))
+        written.append(_write(p("fin_out.hex"), [
+            "".join(f"{int(x) & ((1 << OUT_BITS) - 1):012x}" for x in reversed(vec))
+            for vec in fo]))
+        n_fin, n_fin_edge = int(fl.size), int(edge_l.size)
+    else:
+        n_fin = n_fin_edge = 0
+
     m = vs.model
     written.append(_write(p("manifest.json"), [json.dumps({
         "head_dim": m.head_dim, "num_heads": m.num_heads,
@@ -660,6 +732,10 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
         "softmax_tokens": int(vs.softmax["s"].shape[0]) if vs.softmax else 0,
         "stress_query_scale": 1024,
         "stress_distinct_factors": stress_factors,
+        "recip_frac": vs.fmt.recip_frac,
+        "finalize_rows": n_fin,
+        "finalize_edge_rows": n_fin_edge,
+        "finalize_out_bits": 48,
         "enc_vectors": n_enc,
         "enc_real": 2 * m.num_kv_heads,
         "enc_random": ENC_RANDOM,

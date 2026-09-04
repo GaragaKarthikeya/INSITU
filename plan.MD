@@ -934,6 +934,66 @@ and it carries cycles, never a numeric result.
 *Exit:* end-of-scan output bit-exact against `_finalize`
 (`ops/attention.py:553`).
 
+**Status: DONE.** `rtl/finalize.sv`, `tb/tb_finalize.sv`. `collect` now keeps the
+accumulator and denominator every head's scan actually ended on, for all 32
+heads, and `check_the_finalize_goldens_are_the_kernels_own_two_lines` asserts
+`reciprocal` + `_finalize` on those reproduces `out.online.hex` exactly — which
+is the seam, so the block is checked against the value the FPGA returns and not
+against an intermediate.
+
+**44 rows bit-exact: 32 real heads and 12 constructed.** The constructed ones
+are the point. Every head ends the same length of scan, so every `l` is near
+`65 << 15` and every reciprocal lands between **1,008 and 1,012** — a four-value
+band, all of them 10-bit. A divider wrong above ten bits, or on a zero or a
+one, agrees with all 32. The extra rows put `l` at 0, 1, 2, 3, 2^15−1, 2^15,
+2^16−1, 2^20, 2^31−1, 2^31, 2^32−1 and 2^33, which takes the reciprocal across
+its whole range from 2^31 down to zero, with channel 0 of each a saturated
+accumulator and channel 1 its negative so the widest product this block can
+form is formed on every denominator.
+
+`l = 0` is a real input, not an error case — a masked or padded position scores
+nothing — and `reciprocal` answers zero rather than dividing. Removing that
+special case fails 68 checks.
+
+**The result is not clamped, deliberately.** `_finalize` does not clamp, so a
+clamp here would make the block disagree with the model it is checked against.
+The output is carried at 48 bits and `range_error` reports a channel the 24-bit
+seam could not hold — the convention `rot_fwht` already uses. The bench checks
+the flag against the golden's own width rather than merely observing it: 7 of
+the 44 rows overflow the seam, all of them constructed, and **all 32 real heads
+fit**, which is the property that matters.
+
+Mutations caught: `>` for `>=` in the restoring compare (323), the `l = 0` case
+(68), the `l >= 2^32` guard (68), and rounding instead of flooring the product
+(1,259). One survived and is an equivalence rather than a gap: `>>` for `>>>` on
+the product. The product needs at most `ACC_WIDTH + PROB_FRAC + 1` = 48 bits,
+which is `OUT_BITS`, so the only bit where a logical and an arithmetic shift
+differ is the one the truncation discards. It is written arithmetically anyway —
+that is what the model does, and the equivalence is a property of one parameter
+set, not of the operation.
+
+**Slow on purpose: 50 cycles, 19 when the divide is skipped.** 32 of restoring
+division plus 16 of folded multiply, once per head at the *end* of a T-cycle
+scan. Widening either buys back cycles nothing is waiting on and takes DSPs from
+the score lanes, which are the thing actually starved — the same argument that
+sized `rot_norm`'s fold. At ctx 64 that is 77% of a scan and at ctx 8,192 it is
+0.6%; overlapping it with the next head's scan is `attn_top`'s problem, not this
+block's.
+
+Out-of-context, `xczu7ev-ffvc1156-2-e`, 250 MHz:
+
+| block | WNS | LUT | FF | DSP | BRAM |
+|---|---|---|---|---|---|
+| `finalize` | **+0.863 ns** | 1,060 | 5,326 | 16 | 0 |
+
+The 5,326 FFs are almost entirely two registers: the held accumulator (64 × 32)
+and the output (64 × 48). Carrying the output at 48 bits when the seam is 24
+costs about 1,500 FF, and it is what keeps the block bit-exact against an
+unclamped model; narrowing it is a decision for `attn_top`, where the 24-bit
+lane packing happens and `range_error` says whether it is safe.
+
+137 checks green (two new); `./scripts/regress.sh` green on all nine benches.
+
 ### Phase 3 — memory and integration
 
 **Step 10 — `kv_store_ddr.sv`.** 4× AXI-HP master, one per port; deep prefetch sized
