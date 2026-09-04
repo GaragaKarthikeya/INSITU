@@ -36,6 +36,29 @@
   "finalize_rows": 44,
   "finalize_edge_rows": 12,
   "finalize_out_bits": 48,
+  "ddr": {
+    "row_bytes": 52,
+    "beat_bytes": 16,
+    "n_ports": 4,
+    "plane_width": [
+      16,
+      16,
+      16,
+      4
+    ],
+    "plane_span": [
+      4096,
+      4096,
+      4096,
+      4096
+    ],
+    "head_stride": 16384,
+    "capacity": 65,
+    "n_kv_heads": 8,
+    "base": 0,
+    "total_bytes": 131072,
+    "bytes_per_cycle": 52
+  },
   "enc_vectors": 560,
   "enc_real": 16,
   "enc_random": 512,

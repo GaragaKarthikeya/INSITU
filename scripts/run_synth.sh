@@ -14,10 +14,13 @@ declare -A SRCS=(
     [softmax_online]="rtl/softmax_online.sv rtl/exp_lut.sv"
     [accum]="rtl/accum.sv"
     [finalize]="rtl/finalize.sv"
+    [kv_plane_rd]="rtl/kv_plane_rd.sv"
+    [kv_store_ddr]="rtl/kv_store_ddr.sv rtl/kv_plane_rd.sv"
+    [kv_write]="rtl/kv_write.sv"
 )
 TARGET="${1:-all}"
 if [ "$TARGET" = "all" ]; then
-    TARGETS="rot_fwht rot_norm rot_encode qtab_build score_lane exp_lut softmax_online accum finalize"
+    TARGETS="rot_fwht rot_norm rot_encode qtab_build score_lane exp_lut softmax_online accum finalize kv_plane_rd kv_store_ddr kv_write"
 elif [ -n "${SRCS[$TARGET]:-}" ]; then
     TARGETS="$TARGET"
 else

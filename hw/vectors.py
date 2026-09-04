@@ -704,6 +704,37 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
     else:
         n_fin = n_fin_edge = 0
 
+    # -- the DDR image ---------------------------------------------------
+    #
+    # The cache as `kv_store_ddr.sv` will actually find it: four planes per KV
+    # head, each a contiguous stream one port reads sequentially. See
+    # `hw/ddr_layout.py` for why it is not the flat row layout `plan.MD`
+    # specified -- a 52-byte row needs four ports at once, and four ports need
+    # four streams.
+    #
+    # Emitted one 16-byte beat per line, MSB-first hex, which is what a
+    # behavioural AXI slave loaded by `$readmemh` wants. The image is checked
+    # here against `row_at` before it is written, so a testbench that passes
+    # cannot be reading an image the layout module would not produce.
+    if vs.cache is not None:
+        from .ddr_layout import BEAT_BYTES, DdrLayout
+
+        lay = DdrLayout.for_quant(vs.quant, vs.model.head_dim,
+                                  vs.model.num_kv_heads, vs.context + 1)
+        img = lay.image(vs.cache)
+        for h in range(vs.model.num_kv_heads):
+            for t in range(vs.context + 1):
+                if not np.array_equal(lay.row_at(img, h, t), vs.cache[t, h]):
+                    raise AssertionError(f"DDR image loses head {h} token {t}")
+        written.append(_write(p("ddr_image.hex"), [
+            "".join(f"{b:02x}" for b in reversed(img[i:i + BEAT_BYTES]))
+            for i in range(0, img.size, BEAT_BYTES)]))
+        written.append(_write(p("ddr_map.json"), [json.dumps(lay.describe(),
+                                                             indent=2)]))
+        ddr = lay.describe()
+    else:
+        ddr = {}
+
     m = vs.model
     written.append(_write(p("manifest.json"), [json.dumps({
         "head_dim": m.head_dim, "num_heads": m.num_heads,
@@ -736,6 +767,7 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
         "finalize_rows": n_fin,
         "finalize_edge_rows": n_fin_edge,
         "finalize_out_bits": 48,
+        "ddr": ddr,
         "enc_vectors": n_enc,
         "enc_real": 2 * m.num_kv_heads,
         "enc_random": ENC_RANDOM,

@@ -1003,6 +1003,102 @@ performance depend on a memory system rather than on vectors.
 *Exit:* against a DDR behavioural model, sustains the step-1 bandwidth with the
 score pipe never starved; row round-trip byte-exact against `quantize.pack`.
 
+**Status: DONE.** `hw/ddr_layout.py`, `rtl/kv_plane_rd.sv`, `rtl/kv_store_ddr.sv`,
+`rtl/kv_write.sv`, `tb/tb_kv_store.sv`, `tests/test_ddr_layout.py`.
+
+**THE FLAT ROW LAYOUT ABOVE CANNOT FEED FOUR PORTS, AND THAT IS THIS STEP'S
+FINDING.** This document specified the cache as packed 52-byte rows at a flat
+stride, on the reasoning that a sequential address pattern is what a prefetcher
+wants. It is — but a row is 52 B and one 128-bit HP port carries 16 B per cycle,
+so four ports must run *at once* and each needs its **own** sequential stream. A
+flat row layout contains exactly one stream.
+
+Splitting the token range into quarters does not rescue it. The scan is causal,
+so every token of the first quarter comes from port 0 alone, at 16 B/cycle
+against the 52 B/cycle the score lane eats — and the only way port 0 keeps up is
+if its whole quarter is already on chip. Four of those is **the entire cache
+resident in BRAM**, which is the one thing this project exists not to do.
+
+**So the cache is transposed into planes.** Split each row at its field
+boundaries and chop any field longer than a beat into beats; at 4b/2b that is
+four planes of 16, 16, 16 and 4 bytes, each held contiguously for every token.
+Every port then reads one plane sequentially and the four together deliver one
+row per cycle — three at a beat per token and the fourth at a beat per four.
+The reassembly buffer is sized by *latency*, a few hundred bytes, not by
+context.
+
+The **row format is untouched**: these are the bytes `KVQuantizer.pack` wrote,
+in its order, grouped differently in memory.
+`check_the_reassembled_row_still_unpacks_to_the_cache` puts them back through
+`unpack`, which knows nothing about either side.
+
+*Fields first, not every 16 bytes.* Blind chunking is simpler and wrong for
+**half** the `(key_bits, value_bits)` grid step 15 sweeps: `kb + vb = 3` gives a
+28-byte row and a trailing plane of 12, and 12 neither divides a 16-byte beat
+nor is a multiple of one, so that port would need a byte shift register. Every
+field is `8*kb`, `8*vb` or 4 bytes — 0 or 8 mod 16, or 4 — so field-aligned
+planes are always 16, 8 or 4 wide and all three divide the beat. All 64
+combinations are swept, and 32 of them break under the blind split.
+
+**One row per cycle in steady state, measured.** Against a behavioural DDR with
+40 cycles of latency (worse than the board's) and two outstanding bursts per
+port: **1,024 rows in 1,024 cycles** after the first, 44 starve cycles and all
+of them at startup. That is 52 B/cycle = **13.0 GB/s at 250 MHz**, which is what
+`PARALLEL_KV = 1` was sized against. The eight-head scan is byte-exact against
+`cache_rows_h0..7.hex`, with and without random R stalls.
+
+**Two bench bugs that looked exactly like DUT bugs, and are worth recording.**
+The first slave model left `rvalid`/`rlast` asserted after a burst's last beat,
+so the master counted an RLAST every cycle and its in-flight counter underflowed
+to 213 — after which that port never issued another read and served stale FIFO
+data forever. The symptom was wrong cache rows; the cause was a non-compliant
+slave. There is now an assertion on the master's in-flight counter, which would
+have localised it immediately.
+
+The second is subtler and would have discredited the design: the model counted
+down the *head* request's latency only, so a second outstanding AR did not begin
+its round trip until the first finished. That makes outstanding-2 behave exactly
+like outstanding-1 — the 8,458 MB/s row of the step-1 sweep rather than the
+14,708 one — and the prefetcher measured 0.63 rows/cycle and looked like it hid
+no latency at all. Every pending burst's latency now runs from when it was
+accepted.
+
+**The write path is a separate master.** 416 B per token per layer, 0.02% of the
+traffic, but a write that stalled the read stream would stall the score pipe for
+a rounding error's worth of bytes. One row is four single-beat writes, one per
+plane, each naturally aligned to its own width — a narrow AXI transfer at
+`AWSIZE=2` for the norms rather than a read-modify-write of a beat holding three
+other tokens' norms. The bench round-trips **40 rows** (tokens 60–64 × 8 heads)
+through WSTRB and back through the four read masters.
+
+Mutations, all four caught after two rounds: a row that fires when *any* plane
+has data (2,603), a write that ignores the byte lane (323), and the prefetch
+depth moved to 1 or 4 (5 and 4 — the bench pins the measured depth, because a
+build that quietly raised it would be 19% slower on the board and pass every
+other check). Two needed the bench strengthened first: the round trip originally
+wrote only token 64, whose norms land on byte lane 0 and exercise nothing, and
+`plane_off(p)` is *equal* to `p*16` at 4b/2b — so a second DUT runs a
+non-uniform 16/8/16/4 layout, where the two disagree, on synthetic stimulus.
+
+Out-of-context, `xczu7ev-ffvc1156-2-e`, 250 MHz:
+
+| block | WNS | LUT | of which LUTRAM | FF | DSP |
+|---|---|---|---|---|---|
+| `kv_store_ddr` (4 planes) | **+1.975 ns** | 3,795 | 2,368 | 967 | 0 |
+| `kv_write` | **+0.245 ns** | 2,382 | 0 | 763 | 2 |
+
+Zero DSP and zero BRAM in the read path: the 2,368 LUTRAMs are the four 256-beat
+prefetch FIFOs, which is the whole on-chip cost of streaming a cache of any
+length. `kv_write` at +0.245 ns is the tightest block in the design; the path is
+the byte-lane placement, and it runs 32 times per token against a T-cycle scan,
+so it can be pipelined freely if `attn_top` needs the slack.
+
+**Carried to step 11.** The RTL is verified at 4b/2b plus one synthetic
+non-uniform layout; the other 63 `(key_bits, value_bits)` combinations are
+checked in Python only. Step 15 sweeps them and will need a second emitted image.
+
+144 checks green (6 new); `./scripts/regress.sh` green on all ten benches.
+
 **Step 11 — `attn_top.sv`.** Control FSM, 512-bit AXI4-Stream wrapper, 8 groups
 of 6 vectors, k/v before q, raw-q hold (6 KiB) with just-in-time table build,
 stream-through egress.
