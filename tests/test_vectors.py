@@ -402,3 +402,89 @@ def check_the_constructed_norm_rows_are_negative_where_they_claim_to_be():
         sign = 1 << 47
         exact(np.array([(g ^ sign) - sign for g in gold]), np.ravel(s),
               "score_edge_gold.hex")
+
+
+def check_the_online_observer_leaves_no_trace():
+    """`CompressedAttention.on_step` must be detached again, like `on_stage`.
+
+    A vector generator that leaves an observer attached turns every later call
+    into a silent memory leak and, worse, makes a second `collect` record into
+    the first one's list. The kernel's own tap is checked this way already;
+    this is the same contract on the attention object.
+    """
+    vs, kernel = _built()
+    assert kernel.attn.on_step is None, "the online observer must be detached again"
+    assert vs.softmax, "the recurrence was never tapped"
+    assert vs.softmax["acc"].shape == (vs.context + 1, vs.model.kv_groups,
+                                       vs.model.head_dim)
+
+
+def check_the_real_scores_do_not_exercise_the_rescale():
+    """The reason a second, scaled query exists at all.
+
+    At ctx 64 the four lanes take 19 new maxima between them and the rescale
+    factor is unity -- 32,768 -- in all but three. Consecutive maxima differ by
+    a few LSBs of Q16, so `exp(-delta)` rounds to 1.0 and `acc * factor >> 15`
+    returns `acc` unchanged: the multiply is present but numerically inert, and
+    a testbench built only on this stimulus cannot tell a correct rescale from
+    a rounded one. This check pins that fact, so if the golden data ever starts
+    exercising the rescale on its own, the extra stimulus can go.
+    """
+    vs, _ = _built(ctx=64)          # the context the shipped vectors are built at
+    grew = vs.softmax["grew"].astype(bool)
+    factors = vs.softmax["factor"][grew]
+    unity = 1 << vs.fmt.prob_frac
+    assert grew.sum() == 19
+    # Four are the zero of each lane's first token, where `m` starts at the
+    # format's floor and annihilates an empty accumulator. Thirteen are exactly
+    # unity, so the multiply runs and changes nothing. TWO of nineteen events
+    # do arithmetic a mutation could get wrong.
+    assert (factors == 0).sum() == vs.model.kv_groups
+    assert (factors == unity).sum() == 13
+    assert len(set(int(x) for x in factors)) == 3
+
+
+def check_the_stress_query_spreads_the_rescale_factors():
+    """The scaled query must produce factors across the range, not near unity.
+
+    The manifest carries the count so a regeneration that quietly stopped
+    spreading them fails here rather than in a testbench that still passes
+    while testing nothing.
+    """
+    vs, _ = _built()
+    with tempfile.TemporaryDirectory() as d:
+        names = {os.path.basename(p) for p in emit(vs, d)}
+        assert {"sm2_factor.hex", "sm2_acc.hex", "sm2_q.hex",
+                "exp_table.hex", "exp_in.hex", "exp_out.hex"} <= names
+        man = json.load(open(os.path.join(d, "manifest.json")))
+        assert man["stress_distinct_factors"] >= 8, man["stress_distinct_factors"]
+
+        # The stress query must still fit the seam it claims to cross.
+        lim = 1 << (vs.lane_bits - 1)
+        q = [int(ln[i:i + 6], 16) for ln in
+             open(os.path.join(d, "sm2_q.hex")).read().split()
+             for i in range(0, len(ln), 6)]
+        assert all(-lim <= (x ^ lim) - lim < lim for x in q)
+
+
+def check_the_exp_sweep_covers_every_reachable_output():
+    """`exp_in.hex` must straddle every step of the LUT, not sample it.
+
+    The hardware splits `delta * log2e` into a table index and a shift. Every
+    boundary between two outputs is where an off-by-one in that split lives,
+    and uniform random stimulus plateaus over all of them.
+    """
+    vs, kernel = _built()
+    e = kernel.attn.exp
+    with tempfile.TemporaryDirectory() as d:
+        emit(vs, d)
+        dv = np.array([int(x, 16) for x in
+                       open(os.path.join(d, "exp_in.hex")).read().split()],
+                      dtype=np.int64)
+        pv = np.array([int(x, 16) for x in
+                       open(os.path.join(d, "exp_out.hex")).read().split()],
+                      dtype=np.int64)
+        exact(pv, e(dv), "exp_out.hex")
+        exact(e(dv), e.two_step(dv), "the flat and two-step exp agree")
+        # Every one of the 4,353 reachable outputs is produced by some delta.
+        assert len(set(int(x) for x in pv)) == len(set(int(x) for x in e._flat))

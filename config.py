@@ -305,14 +305,32 @@ class AttentionConfig:
     axis in the datapath that is free to parallelise, and the reason it is set
     to `kv_groups` rather than to 1.
 
-    `rescale_cycles` is what a running-maximum update costs when the elastic
-    FIFO between the score pipe and the softmax cannot absorb it. Charged per
+    `rescale_cycles` is what a running-maximum update costs the scan: cycles in
+    which a score is waiting and the datapath cannot take it. Charged per
     RESCALE record, which only the online softmax emits.
+
+    MEASURED, not estimated. `tb_softmax_accum` counts the bubbles directly --
+    a score sitting in the input FIFO with no pop -- over 39 rescale events
+    across two stimulus sets, and gets **11 cycles each**, not the 1 an earlier
+    draft assumed. A new maximum must not move while tokens computed against
+    the old one are in flight, so the event is: drain the three-stage exp pipe,
+    three more cycles to compute the factor from it, issue the SCALE, and wait
+    while `accum` folds 64 channels through 8 multipliers.
+
+    It does not change any conclusion, and that is worth stating plainly. New
+    maxima are logarithmically rare -- about ln T + 0.577 -- so at a context of
+    32,768 this is 11 events and 121 cycles against a 32,786-cycle scan:
+    **0.37%**, against the 0.27% the 8-cycle estimate gave. The rescale is
+    still nearly free and the hazard still shrinks as context grows.
+
+    `score_latency` covers S0..S10, score through softmax. `score_lane.sv`
+    measures 8 cycles accept-to-score and `softmax_online.sv` adds 3 for the
+    exp pipe, so 10 is now 11 -- it is drained once per scan and moves nothing.
     """
 
     lanes: int = 4                  # query heads in a group, in parallel
-    score_latency: int = 10         # S0..S10, drained once per scan
-    rescale_cycles: int = 1
+    score_latency: int = 11         # 8 in score_lane + 3 in the exp pipe
+    rescale_cycles: int = 11        # measured; see the docstring
 
 
 @dataclass(frozen=True)

@@ -840,6 +840,95 @@ accumulate. **exp LUT replicated ×4.**
 *Exit:* bit-exact against `attend_online` — **not** `attend_two_pass` — at short
 context, where rescales are frequent enough to exercise the flush path.
 
+**Status: DONE.** `rtl/exp_lut.sv`, `rtl/softmax_online.sv`, `rtl/accum.sv`,
+`tb/tb_exp_lut.sv`, `tb/tb_softmax_accum.sv`. `CompressedAttention.on_step` is a
+new read-only observer on `attend_online` — the same `is not None` contract
+`AttentionKernel.on_stage` uses — so `hw/vectors.py` taps the running `m`, `l`
+and `acc` instead of reimplementing the recurrence in the vector generator.
+
+**Bit-exact against `attend_online` on every token, not on the answer.** Two
+stimulus sets x 4 lanes x 65 cached tokens: `m`, `l`, the probability, the
+rescale factor and **all 64 accumulator channels** are compared after each
+token. 39 rescale events, matching the count the model recorded lane for lane.
+Plus 13,565 exp deltas.
+
+**The exp LUT is 132 LUTs, not 8 BRAM36.** `ExpLut.__call__` collapses
+table-then-shift into one gather over 4,353 entries; that is a numpy
+optimisation (it was 28% of the model's runtime as two passes) and the budget
+table above priced it as hardware — 68 Kb x 4 lanes, 272 Kb, 8 BRAM36. In
+silicon the collapse is a pessimisation. `ExpLut.two_step` is the hardware form:
+a 256 x 16 b distributed ROM, a 20x17 multiply and a barrel shift. Measured
+**132 LUT, 16 FF, 1 DSP, zero BRAM** — 528 LUT across four lanes against 8
+BRAM36 budgeted. `check_exp_lut_flat_matches_two_step` already asserted the two
+agree; this is which one to build.
+
+**Two stimulus sets, because the real scores do not exercise the rescale.** At
+ctx 64 the four lanes take 19 new maxima and the factor is exactly unity in 13
+of them, zero in the 4 first-token events, and something else **twice**.
+Consecutive maxima differ by a few LSBs of Q16, so `exp(-delta)` rounds to 1.0
+and `acc * factor >> 15` returns `acc` unchanged — the multiply runs and is
+numerically inert. A mutation that rounds that rescale instead of flooring it
+passed the entire real-data bench. Scaling the query by 1,024 (clipped to the
+24-bit seam) spreads the maxima and yields **17 distinct factors** from 0 to
+unity; the mutation then fails 130 checks. Same `attend_online`, same cached
+rows — only the query is synthetic, and a query is exactly what the host is
+free to send. `check_the_real_scores_do_not_exercise_the_rescale` pins the gap
+so the extra set can be dropped if the golden data ever closes it.
+
+**`accum`'s drain guard needed its own driver.** A SCALE must not be applied
+while add terms are still in flight, or it scales a partial accumulator and
+un-scaled terms land on top of it. But `softmax_online` drains its own pipe and
+spends three more cycles on the factor before issuing one, so `accum` never
+sees that case through this producer and the mutation removing the guard
+passed. The bench now captures lane 0's op stream and **replays it into a
+second `accum` at full rate**: the goldens are unchanged because the arithmetic
+does not depend on the timing, a SCALE lands directly behind an ADD, and the
+mutation fails 68 checks.
+
+Also caught: `>=` for the new-maximum test (an infinite rescale loop — a
+watchdog was added, because a deadlock that hangs iverilog reads as an
+infrastructure problem rather than as the DUT being wrong), a double truncation
+of the accumulator rescale, and two transposed value centroids.
+
+**`rescale_cycles` was 1. It is 11, measured.** `tb_softmax_accum` counts the
+bubbles directly — a score waiting in the input FIFO with no pop — over 39
+events: drain the 3-stage exp pipe, 3 cycles to compute the factor from it,
+issue the SCALE, wait while `accum` folds 64 channels through 8 multipliers.
+**The conclusion is untouched and that is worth stating plainly:** new maxima
+are logarithmically rare, so at ctx 32,768 this is 11 events and 121 cycles
+against a 32,786-cycle scan — **0.37%**, against the 0.27% the 8-cycle estimate
+gave. `score_latency` goes 10 → 11 (8 measured in `score_lane`, 3 in the exp
+pipe); it drains once per scan and moves nothing.
+
+**The input FIFO is 192 b wide, not 48.** The plan sized it counting only the
+score. `accum` needs `v_idx` and `v_norm` for the same token whose probability
+is emerging, and the only other way to get them is a second reader on the DDR
+stream, so the entry is 48 + 128 + 16 bits. Depth is another matter: the FIFO
+saturated at ctx 64 and that is an artifact, not a result — 19 rescales in 65
+tokens is 11 cycles of stall for every 3.4 tokens, and no depth absorbs that.
+It must cover **one** event, and one event is 11 cycles. Steady state cannot be
+demonstrated at this context and is not claimed here.
+
+Out-of-context, `xczu7ev-ffvc1156-2-e`, 250 MHz:
+
+| block | WNS | LUT | of which LUTRAM/SRL | FF | DSP | BRAM |
+|---|---|---|---|---|---|---|
+| `exp_lut` | **+2.204 ns** | 132 | 0 | 16 | 1 | **0** |
+| `softmax_online` (with its exp) | **+0.377 ns** | 598 | 112 / 144 | 331 | 4 | 0 |
+| `accum` | **+0.675 ns** | 7,427 | 0 | 2,487 | **17** | 0 |
+
+`accum` is the largest block in the datapath so far, and the shape is the point:
+17 DSPs, of which 5 are the inner loop (`v_norm * p`, then that against the four
+value centroids) and the rest are the 8-wide rescale fold. The 7.4k LUTs are 64
+saturating 32-bit adders and 64 4:1 muxes — the muxes are what a conventional
+unit spends 64 multipliers on. `softmax_online` at +0.377 ns is the tightest
+block in the design; the path is the 48x16 rescale of `l`, and it will want
+watching when `attn_top` places it.
+
+135 checks green (four new); `./scripts/regress.sh` green on all eight benches.
+`config.py`'s `AttentionConfig` is the only non-RTL file whose numbers moved,
+and it carries cycles, never a numeric result.
+
 **Step 9 — `finalize.sv`.** One reciprocal divide per query head, `acc × recip
 >> 16`.
 *Exit:* end-of-scan output bit-exact against `_finalize`

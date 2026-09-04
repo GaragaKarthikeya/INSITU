@@ -221,6 +221,14 @@ class CompressedAttention:
         self.score_q = Q(fmt.score_width, fmt.acc_frac, fmt.saturate)
         self.acc_q = Q(fmt.acc_width, fmt.acc_frac, fmt.saturate)
 
+        # An OBSERVER on the online loop, for `hw/vectors.py`. Same contract as
+        # `AttentionKernel.on_stage`: guarded by `is not None`, handed copies,
+        # and read-only -- `softmax_online.sv` and `accum.sv` need the running
+        # `m`, `l` and `acc` per token, and the alternative is a second
+        # implementation of the recurrence in the vector generator, which is
+        # exactly what these files exist to avoid.
+        self.on_step = None
+
     # -- scoring -----------------------------------------------------------
 
     def scores(self, q_rot: np.ndarray, kv: CompressedKV,
@@ -325,6 +333,10 @@ class CompressedAttention:
             )
             stats.acc_overflows += self.acc_q.overflow_count(acc)
             acc = self.acc_q.clamp(acc)
+
+            if self.on_step is not None:
+                self.on_step(t, s=st, m=m, p=p, l=l, acc=acc,
+                             grew=grew, factor=factor if grew.any() else None)
 
         stats.max_abs_acc = int(np.abs(acc).max(initial=0))
         record(trace, Op.SOFTMAX, "attention", m=1, n=n_heads * n_tok)

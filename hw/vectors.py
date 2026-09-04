@@ -157,6 +157,7 @@ class VectorSet:
     scores: np.ndarray | None = None              # (heads, ctx+1) Q(acc_frac)
     out_two_pass: np.ndarray | None = None        # (tokens, hidden) Q(qk_frac)
     out_online: np.ndarray | None = None
+    softmax: dict = field(default_factory=dict)  # the online recurrence, per token
 
     @property
     def lane_bits(self) -> int:
@@ -246,8 +247,27 @@ def collect(kernel, hidden, positions=None) -> VectorSet:
             kv = kernel.cache.view(h).select(slice(0, ctx + 1))
             s, _ = kernel.attn.scores(qr[heads], kv)
             sc.append(np.atleast_2d(s))
-            y_on, _ = kernel.attn.attend_online(qr[heads], kv)
+            steps = []
+            prev_step, kernel.attn.on_step = kernel.attn.on_step, (
+                lambda t, **kw: steps.append(
+                    {k: (np.array(v, dtype=np.int64, copy=True)
+                         if v is not None else None) for k, v in kw.items()}))
+            try:
+                y_on, _ = kernel.attn.attend_online(qr[heads], kv)
+            finally:
+                kernel.attn.on_step = prev_step
             out_on[heads] = y_on.reshape(m.kv_groups, m.head_dim)
+            # Stack the per-token recurrence for `softmax_online.sv` and
+            # `accum.sv`. Only KV head 0's group is kept: the other seven are
+            # the same four lanes on different rows, and 8x the vectors would
+            # buy no case the first group does not already contain.
+            if h == 0:
+                for key in ("s", "m", "p", "l", "acc", "grew"):
+                    vs.softmax[key] = np.stack([st[key] for st in steps])
+                vs.softmax["factor"] = np.stack(
+                    [st["factor"] if st["factor"] is not None
+                     else np.full(m.kv_groups, 1 << kernel.cfg.fmt.prob_frac,
+                                  dtype=np.int64) for st in steps])
         vs.scores = np.concatenate(sc, axis=0)
         from ..ops.project import merge_heads
         vs.out_online = merge_heads(out_on[None])
@@ -504,6 +524,114 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
                 p(name), ["".join(f"{int(x) & 0xFFFFFF:06x}" for x in reversed(row))
                           for row in np.atleast_2d(arr)]))
 
+    # -- the online softmax --------------------------------------------
+    #
+    # `exp_table.hex` is the 256-entry table of `ExpLut.two_step`, NOT the
+    # 4,353-entry flat gather. The flat form is a numpy speed trick -- one
+    # index where the two-step needs a table read and a shift -- and
+    # `check_exp_lut_flat_matches_two_step` already asserts they agree on every
+    # reachable input. In hardware the two-step is a 256 x 16 b distributed ROM
+    # and a barrel shift, against a 68 Kb block RAM for the flat one.
+    if vs.attn is not None:
+        e = vs.attn.exp
+        written.append(_write(p("exp_table.hex"),
+                              [f"{int(x) & 0xFFFF:04x}" for x in e.table]))
+
+        # Every reachable output, and both sides of every transition. For each
+        # flat index `u` the smallest delta that reaches it is
+        # `ceil(u << 24 / log2e)`; that delta and the one below it bracket the
+        # step. Random stimulus would cover the plateaus and miss the edges,
+        # which is where an off-by-one shift lives.
+        log2e = int(e.log2e)
+        deltas = {0, int(e._delta_max) - 1, int(e._delta_max),
+                  int(e._delta_max) + 1, (1 << 40)}
+        for u in range(e._span + 1):
+            lo = -(-(u << (e.fmt.acc_frac + e._shift)) // log2e)
+            deltas.update((max(lo - 1, 0), lo, lo + 1))
+        rng = np.random.default_rng(0xE8F)
+        deltas.update(int(x) for x in rng.integers(0, int(e._delta_max) * 2, 512))
+        dv = np.array(sorted(deltas), dtype=np.int64)
+        pv = e(dv)
+        if not np.array_equal(pv, e.two_step(dv)):
+            raise AssertionError("the flat and two-step exp disagree on the sweep")
+        written.append(_write(p("exp_in.hex"), [f"{int(x) & ((1<<48)-1):012x}"
+                                                for x in dv]))
+        written.append(_write(p("exp_out.hex"), [f"{int(x) & 0xFFFF:04x}"
+                                                 for x in pv]))
+
+    # The recurrence itself, tapped out of `attend_online` by an observer. One
+    # line per token, the four lanes of KV head 0 packed lane 0 in the low bits
+    # -- the same LSB-first convention every other file here uses.
+    def _emit_softmax(prefix, book):
+        out = []
+        for name, bits in (("s", 48), ("m", 48), ("p", 16), ("l", 48),
+                           ("factor", 16)):
+            w = (bits + 3) // 4
+            out.append(_write(p(f"{prefix}_{name}.hex"), [
+                "".join(f"{int(x) & ((1 << bits) - 1):0{w}x}" for x in reversed(row))
+                for row in book[name]]))
+        out.append(_write(p(f"{prefix}_grew.hex"), [
+            f"{sum(int(v) << i for i, v in enumerate(row)):01x}"
+            for row in book["grew"]]))
+        # One line per (token, lane): 64 accumulator channels, channel 0 in the
+        # low bits. This is what `accum.sv` must hold after EVERY token, not
+        # merely at the end of the scan -- an accumulator that is right only at
+        # the last token is one whose rescales cancelled out by luck.
+        out.append(_write(p(f"{prefix}_acc.hex"), [
+            "".join(f"{int(x) & 0xFFFFFFFF:08x}" for x in reversed(vec))
+            for tok in book["acc"] for vec in tok]))
+        return out
+
+    if vs.softmax:
+        written.extend(_emit_softmax("sm", vs.softmax))
+
+    # -- a query scaled so the rescale is not a no-op ---------------------
+    #
+    # THE REAL SCORES DO NOT TEST THE RESCALE. At ctx 64 the four lanes rescale
+    # 19 times between them and the factor is 32,768 -- exactly one -- in all
+    # but three of those. Consecutive maxima differ by a few LSBs of Q16, so
+    # `exp(-delta)` rounds to 1.0 and `acc * factor >> 15` returns `acc`
+    # unchanged. A mutation that rounds the rescale instead of flooring it
+    # passes every one of those events.
+    #
+    # Scaling the query by 1,024 (and clipping to the 24-bit seam) spreads the
+    # maxima apart and produces 17 distinct factors from 0 to unity. It is the
+    # same `attend_online` on the same cached rows -- only the query is
+    # synthetic, and a query is exactly the thing the host is free to send.
+    if vs.attn is not None and vs.cache is not None and vs.quantizer is not None:
+        g = vs.model.kv_groups
+        kv0 = vs.quantizer.unpack(vs.cache[:, 0])
+        q_stress = np.clip(vs.rotated["q"][0][:g].astype(np.int64) * 1024,
+                           -(1 << (vs.lane_bits - 1)), (1 << (vs.lane_bits - 1)) - 1)
+        steps = []
+        prev, vs.attn.on_step = vs.attn.on_step, (
+            lambda t, **kw: steps.append(
+                {k: (np.array(v, dtype=np.int64, copy=True)
+                     if v is not None else None) for k, v in kw.items()}))
+        try:
+            vs.attn.attend_online(q_stress, kv0)
+        finally:
+            vs.attn.on_step = prev
+        unity = 1 << vs.fmt.prob_frac
+        book = {k: np.stack([st[k] for st in steps])
+                for k in ("s", "m", "p", "l", "acc", "grew")}
+        book["factor"] = np.stack(
+            [st["factor"] if st["factor"] is not None
+             else np.full(g, unity, dtype=np.int64) for st in steps])
+        grew = book["grew"].astype(bool)
+        n_fac = len(set(int(x) for x in book["factor"][grew]))
+        if n_fac < 8:
+            raise AssertionError(
+                f"the stress query produced only {n_fac} distinct rescale "
+                f"factors; it is not exercising the rescale")
+        written.extend(_emit_softmax("sm2", book))
+        written.append(_write(p("sm2_q.hex"), [
+            "".join(f"{int(x) & 0xFFFFFF:06x}" for x in reversed(vec))
+            for vec in q_stress]))
+        stress_factors = n_fac
+    else:
+        stress_factors = 0
+
     m = vs.model
     written.append(_write(p("manifest.json"), [json.dumps({
         "head_dim": m.head_dim, "num_heads": m.num_heads,
@@ -522,6 +650,16 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
         "prod_bits": vs.lane_bits + CENT_BITS - 1,
         "cache_tokens": int(vs.cache.shape[0]) if vs.cache is not None else 0,
         "score_edge_rows": 5,
+        "exp_lut_bits": vs.fmt.exp_lut_bits,
+        "exp_log2e": int(vs.attn.exp.log2e) if vs.attn else 0,
+        "exp_delta_max": int(vs.attn.exp._delta_max) if vs.attn else 0,
+        "exp_max_int_part": vs.attn.exp.max_int_part if vs.attn else 0,
+        "prob_frac": vs.fmt.prob_frac,
+        "acc_width": vs.fmt.acc_width,
+        "acc_shift": vs.fmt.acc_shift_for(vs.quant),
+        "softmax_tokens": int(vs.softmax["s"].shape[0]) if vs.softmax else 0,
+        "stress_query_scale": 1024,
+        "stress_distinct_factors": stress_factors,
         "enc_vectors": n_enc,
         "enc_real": 2 * m.num_kv_heads,
         "enc_random": ENC_RANDOM,
