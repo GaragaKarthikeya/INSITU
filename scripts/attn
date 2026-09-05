@@ -20,6 +20,8 @@
 #    someone remembered to start a second terminal. It is always captured now,
 #    and the interesting lines are printed at the end.
 set -uo pipefail
+SELF=$(readlink -f "$0")          # absolute: the sudo re-exec below happens
+                                  # after a cd, so a relative $0 is gone by then
 VENV=/home/digital3/TurboQuant-Reproduction/.venv/bin/python
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PARENT=$(dirname "$ROOT")
@@ -33,7 +35,7 @@ case "$cmd" in
   infer) mod=kernel.experiments.fpga_infer; board=1; args=(--eth "$IFACE") ;;
   ppl)   mod=kernel.experiments.fpga_ppl;   board=1; args=(--eth "$IFACE") ;;
   reset) mod=""; board=2; args=() ;;
-  *) sed -n '2,8p' "$0"; exit 2 ;;
+  *) sed -n '2,8p' "$SELF"; exit 2 ;;
 esac
 for a in "$@"; do
   case "$a" in --cpu-only) board=0; args=() ;; --jtag) args=() ;; esac
@@ -41,7 +43,7 @@ done
 
 cd "$PARENT"
 if [ "$board" = 0 ]; then exec "$VENV" -m "$mod" "$@"; fi
-if [ "$(id -u)" != 0 ]; then exec sudo -E "$0" "$cmd" "$@"; fi
+if [ "$(id -u)" != 0 ]; then exec sudo -E "$SELF" "$cmd" "$@"; fi
 
 # -- the UART, always ---------------------------------------------------------
 : > "$LOG"
