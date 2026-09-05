@@ -67,6 +67,8 @@
 #include "xtimer_config.h"
 #endif
 
+#include "xaxidma.h"
+
 #include "attn_vectors.h"
 
 /* Pinned by `scripts/create_bd_attn_ps.tcl`, exactly as the JTAG design pinned
@@ -87,6 +89,14 @@
 #define REG_OUT_W       0x002C
 #define REG_SCAN_CYC    0x0030
 #define REG_BUSY_CYC    0x0034
+#define REG_MODE        0x0038      /* 0 = buffers, 1 = the DMA stream */
+
+/* Pinned by `create_bd_attn_dma.tcl`. 0xA0100000 and not 0xA0010000: the
+ * shim's window is 128 KB, so anything below 0xA0020000 is inside it. */
+#define DMA_BASE        0xA0100000UL
+
+#define TOKEN_BYTES     (ATTN_IN_WORDS * 4)    /* 9,216 */
+#define RESULT_BYTES    (ATTN_OUT_WORDS * 4)   /* 6,144 */
 #define IN_BASE         0x2000
 #define OUT_BASE        0x8000
 #define MAGIC           0xA77E0001U
@@ -110,6 +120,90 @@ static inline u32 rd(u32 off)          { return Xil_In32(SHIM + off); }
 static inline void wr(u32 off, u32 v)  { Xil_Out32(SHIM + off, v); }
 
 static u32 outbuf[ATTN_OUT_WORDS];
+
+/* DMA buffers, 64-byte aligned so cache maintenance covers exactly them. */
+static u8 dma_tx[TOKEN_BYTES]  __attribute__((aligned(64)));
+static u8 dma_rx[RESULT_BYTES] __attribute__((aligned(64)));
+static XAxiDma dma;
+static int dma_ok;
+
+/* One decode step through the DMA. Returns wrong words, or a negative code.
+ *
+ * THE RECEIVE SIDE IS ARMED FIRST, AND THE BLOCK IS STARTED LAST.
+ * The core emits its first egress beat as soon as group 0 has drained, so an
+ * unarmed S2MM would stall the stream mid-step. Arming MM2S before the block
+ * is started is safe on purpose: `attn_ctrl` holds `s_axis_tready` low until
+ * `busy`, because `attn_ingress` clears its beat counter on `start` and a beat
+ * accepted before that is swallowed and thrown away.
+ */
+static int run_step_dma(const attn_case_t *c, unsigned step,
+                        u64 *us_load, u64 *us_run, u64 *us_read,
+                        u32 *scan_cyc, u32 *busy_cyc, u32 *status)
+{
+    const u32 *in   = c->ingress + (u64)step * ATTN_IN_WORDS;
+    const u32 *gold = c->golden  + (u64)step * ATTN_OUT_WORDS;
+    XTime t0, t1;
+    u32 st;
+
+    XTime_GetTime(&t0);
+    memcpy(dma_tx, in, TOKEN_BYTES);
+    /* HPC0 is the coherent port, so this flush is belt and braces rather than
+     * load-bearing -- but the standalone BSP maps DDR non-shareable, which
+     * means the snoop is not something to rely on without checking. Flushing
+     * 15 KB costs microseconds and removes the question. */
+    Xil_DCacheFlushRange((UINTPTR)dma_tx, TOKEN_BYTES);
+    Xil_DCacheFlushRange((UINTPTR)dma_rx, RESULT_BYTES);
+    XTime_GetTime(&t1);
+    *us_load = ((t1 - t0) * 1000000ULL) / COUNTS_PER_SECOND;
+
+    wr(REG_NTOK,    c->n_tokens[step]);
+    wr(REG_BASE_LO, (u32)CACHE_BASE);
+    wr(REG_BASE_HI, (u32)(CACHE_BASE >> 32));
+    wr(REG_STRIDE,  c->head_stride);
+    wr(REG_SPAN,    c->plane_span);
+
+    XTime_GetTime(&t0);
+    if (XAxiDma_SimpleTransfer(&dma, (UINTPTR)dma_rx, RESULT_BYTES,
+                               XAXIDMA_DEVICE_TO_DMA) != XST_SUCCESS)
+        return -4;
+    if (XAxiDma_SimpleTransfer(&dma, (UINTPTR)dma_tx, TOKEN_BYTES,
+                               XAXIDMA_DMA_TO_DEVICE) != XST_SUCCESS)
+        return -5;
+
+    wr(REG_CTRL, 1);
+    {
+        u32 guard = 100000000;
+        do {
+            st = rd(REG_CTRL);
+        } while (!(st & ST_DONE) && --guard);
+        if (!guard) return -2;
+        while ((XAxiDma_Busy(&dma, XAXIDMA_DEVICE_TO_DMA) ||
+                XAxiDma_Busy(&dma, XAXIDMA_DMA_TO_DEVICE)) && --guard) { }
+        if (!guard) return -6;
+    }
+    XTime_GetTime(&t1);
+    /* One number, not three: with the DMA the transfer IS the step -- it
+     * overlaps the scan instead of bracketing it, so there is no separate
+     * load and read to report. */
+    *us_run = ((t1 - t0) * 1000000ULL) / COUNTS_PER_SECOND;
+    *us_read = 0;
+    *status = st;
+    *scan_cyc = rd(REG_SCAN_CYC);
+    *busy_cyc = rd(REG_BUSY_CYC);
+
+    Xil_DCacheInvalidateRange((UINTPTR)dma_rx, RESULT_BYTES);
+    memcpy(outbuf, dma_rx, RESULT_BYTES);
+
+    int bad = 0;
+    for (unsigned i = 0; i < ATTN_OUT_WORDS; i++)
+        if (outbuf[i] != gold[i]) {
+            if (bad < 4)
+                xil_printf("    dma word %4u got %08x exp %08x\r\n",
+                           i, (unsigned)outbuf[i], (unsigned)gold[i]);
+            bad++;
+        }
+    return bad;
+}
 
 /* One decode step. Returns the number of wrong words, or a negative code. */
 static int run_step(const attn_case_t *c, unsigned step,
@@ -188,16 +282,21 @@ static int run_step(const attn_case_t *c, unsigned step,
 }
 
 /* One case: load the image, then run every step on it without reloading. */
-static int run_case(const attn_case_t *c)
+static int run_case(const attn_case_t *c, int use_dma)
 {
     u64 tot_scan = 0, tot_busy = 0, tot_rows = 0, tot_us_run = 0;
     u64 tot_us_load = 0, tot_us_read = 0, tot_starve = 0;
     int fails = 0;
 
-    xil_printf("--- %s: %u cached tokens, %u steps, "
+    xil_printf("--- %s [%s]: %u cached tokens, %u steps, "
                "image %u B (stride %u, span %u)\r\n",
-               c->name, c->ctx0, c->steps, c->image_bytes,
-               c->head_stride, c->plane_span);
+               c->name, use_dma ? "DMA" : "AXI-Lite", c->ctx0, c->steps,
+               c->image_bytes, c->head_stride, c->plane_span);
+    wr(REG_MODE, use_dma ? 1 : 0);
+    if ((rd(REG_MODE) & 1u) != (u32)(use_dma ? 1 : 0)) {
+        xil_printf("    MODE did not take\r\n");
+        return 1;
+    }
 
     memcpy((void *)CACHE_BASE, c->image, c->image_bytes);
     Xil_DCacheFlushRange((UINTPTR)CACHE_BASE, c->image_bytes);
@@ -221,7 +320,8 @@ static int run_case(const attn_case_t *c)
     for (unsigned s = 0; s < c->steps; s++) {
         u64 ul = 0, ur = 0, ud = 0;
         u32 scan = 0, busy = 0, st = 0;
-        int bad = run_step(c, s, &ul, &ur, &ud, &scan, &busy, &st);
+        int bad = use_dma ? run_step_dma(c, s, &ul, &ur, &ud, &scan, &busy, &st)
+                          : run_step(c, s, &ul, &ur, &ud, &scan, &busy, &st);
         u32 starve = rd(REG_STARVE), clips = rd(REG_CLIPS), ovf = rd(REG_OVF);
 
         if (bad < 0) {
@@ -341,8 +441,38 @@ int main(void)
     }
     xil_printf("DDR round trip ok at %08x\r\n", (unsigned)CACHE_BASE);
 
-    for (unsigned i = 0; i < attn_n_cases; i++)
-        fails += run_case(&attn_cases[i]);
+    /* The DMA. A failure here is reported and the run continues on the
+     * AXI-Lite path rather than aborting: a bring-up that can still produce
+     * the right 2,048 numbers slowly is worth more than one that stops. */
+    {
+        XAxiDma_Config *cfg = XAxiDma_LookupConfig(DMA_BASE);
+        dma_ok = 0;
+        if (!cfg)
+            xil_printf("no DMA config at %08x\r\n", (unsigned)DMA_BASE);
+        else if (XAxiDma_CfgInitialize(&dma, cfg) != XST_SUCCESS)
+            xil_printf("DMA init failed\r\n");
+        else if (XAxiDma_HasSg(&dma))
+            xil_printf("DMA built for scatter-gather, expected simple mode\r\n");
+        else {
+            XAxiDma_IntrDisable(&dma, XAXIDMA_IRQ_ALL_MASK, XAXIDMA_DEVICE_TO_DMA);
+            XAxiDma_IntrDisable(&dma, XAXIDMA_IRQ_ALL_MASK, XAXIDMA_DMA_TO_DEVICE);
+            dma_ok = 1;
+            xil_printf("DMA ready at %08x\r\n", (unsigned)DMA_BASE);
+        }
+    }
+
+    /* Every case both ways. The DMA path is new and the AXI-Lite path is what
+     * step 13 ran on this board, so the fast one is measured against a slow one
+     * that has already been checked against the numpy kernel -- and both are
+     * checked against the goldens, so agreeing with each other is not enough
+     * to pass. */
+    for (unsigned i = 0; i < attn_n_cases; i++) {
+        fails += run_case(&attn_cases[i], 0);
+        if (dma_ok)
+            fails += run_case(&attn_cases[i], 1);
+    }
+    if (!dma_ok)
+        xil_printf("!!! the DMA did not initialise; only the AXI-Lite path ran\r\n");
 
     xil_printf("=== %s ===\r\n", fails ? "FAILURES PRESENT" : "ALL TESTS PASSED");
     Xil_DCacheDisable();

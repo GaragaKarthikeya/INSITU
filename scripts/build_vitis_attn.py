@@ -18,7 +18,7 @@ import vitis
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FREQ = os.environ.get("ATTN_FREQ", "250")
-VAR = os.environ.get("ATTN_VARIANT", "attnps")
+VAR = os.environ.get("ATTN_VARIANT", "attndma")
 XSA = os.path.join(ROOT, "build", f"{VAR}_f{FREQ}.xsa")
 WS = os.path.join(ROOT, "build", f"vitis_ws_{VAR}_f{FREQ}")
 PLAT = f"attn_plat_f{FREQ}"

@@ -23,7 +23,7 @@
 # one-time load and no part of any number the run reports.
 set ROOT [file dirname [file dirname [file normalize [info script]]]]
 set FREQ [expr {[info exists ::env(ATTN_FREQ)] ? $::env(ATTN_FREQ) : 250}]
-set VAR  [expr {[info exists ::env(ATTN_VARIANT)] ? $::env(ATTN_VARIANT) : "attnps"}]
+set VAR  [expr {[info exists ::env(ATTN_VARIANT)] ? $::env(ATTN_VARIANT) : "attndma"}]
 set WS   $ROOT/build/vitis_ws_${VAR}_f${FREQ}
 set PLAT attn_plat_f${FREQ}
 set APP  attn_test_f${FREQ}
