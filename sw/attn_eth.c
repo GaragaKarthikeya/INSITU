@@ -67,11 +67,25 @@ static XEmacPs emac;
  * is NOT coherent with these caches, so every descriptor and buffer is flushed
  * before the hardware reads it and invalidated after the hardware writes it.
  * This is the same discipline the KV image needs, and the same bug if missed:
- * correct hardware, stale memory. */
-static u8 rx_bd_space[RXBD_COUNT * sizeof(XEmacPs_Bd) * 2]
-    __attribute__((aligned(BD_ALIGN)));
-static u8 tx_bd_space[TXBD_COUNT * sizeof(XEmacPs_Bd) * 2]
-    __attribute__((aligned(BD_ALIGN)));
+ * correct hardware, stale memory.
+ *
+ * THE RING'S SEPARATION IS THE ALIGNMENT, NOT sizeof(XEmacPs_Bd).
+ * A descriptor is 8 bytes and `XEMACPS_BD_ALIGNMENT` is 64, so
+ * `XEmacPs_BdRingCreate` spaces them 64 bytes apart -- eight times what the
+ * struct occupies. Sizing this array as `count * sizeof(Bd) * 2` allocated a
+ * quarter of what the ring needs, and the ring then ran off the end of it into
+ * the transmit ring and the frame buffers. `XEmacPs_BdRingMemCalc` is the
+ * driver's own answer and is used here rather than arithmetic that looks
+ * right. */
+#define RXBD_BYTES  XEmacPs_BdRingMemCalc(XEMACPS_BD_ALIGNMENT, RXBD_COUNT)
+#define TXBD_BYTES  XEmacPs_BdRingMemCalc(XEMACPS_BD_ALIGNMENT, TXBD_COUNT)
+
+static u8 rx_bd_space[RXBD_BYTES] __attribute__((aligned(BD_ALIGN)));
+static u8 tx_bd_space[TXBD_BYTES] __attribute__((aligned(BD_ALIGN)));
+
+/* Parking descriptors for the priority queues this design does not use. */
+static XEmacPs_Bd bd_rx_park __attribute__((aligned(BD_ALIGN)));
+static XEmacPs_Bd bd_tx_park __attribute__((aligned(BD_ALIGN)));
 static u8 rx_buf[RXBD_COUNT][FRAME_MAX] __attribute__((aligned(BD_ALIGN)));
 static u8 tx_buf[FRAME_MAX] __attribute__((aligned(BD_ALIGN)));
 
@@ -169,8 +183,9 @@ int attn_eth_init(void)
     if (mbps == 0)
         return -1;
     XEmacPs_SetOperatingSpeed(&emac, (u16)mbps);
-    /* The GEM's TX clock divisor must match the negotiated speed, and it is
-     * set by the platform's clock code rather than by the driver. */
+    /* `XEmacPs_SetOperatingSpeed` writes the MAC's NWCFG register ONLY -- it
+     * does not touch the CRL_APB TX clock divisor. That is `psu_init`'s job,
+     * which does it now that ENET3 is enabled in the block design. */
     XEmacPs_SetMdioDivisor(&emac, MDC_DIV_224);
 
     /* -- BD rings ------------------------------------------------------- */
@@ -180,7 +195,7 @@ int attn_eth_init(void)
 
     XEmacPs_BdClear(&tmpl);
     if (XEmacPs_BdRingCreate(rxr, (UINTPTR)rx_bd_space, (UINTPTR)rx_bd_space,
-                             BD_ALIGN, RXBD_COUNT) != XST_SUCCESS ||
+                             XEMACPS_BD_ALIGNMENT, RXBD_COUNT) != XST_SUCCESS ||
         XEmacPs_BdRingClone(rxr, &tmpl, XEMACPS_RECV) != XST_SUCCESS) {
         xil_printf("ETH: rx ring setup failed\r\n");
         return -1;
@@ -188,7 +203,7 @@ int attn_eth_init(void)
     XEmacPs_BdClear(&tmpl);
     XEmacPs_BdSetStatus(&tmpl, XEMACPS_TXBUF_USED_MASK);
     if (XEmacPs_BdRingCreate(txr, (UINTPTR)tx_bd_space, (UINTPTR)tx_bd_space,
-                             BD_ALIGN, TXBD_COUNT) != XST_SUCCESS ||
+                             XEMACPS_BD_ALIGNMENT, TXBD_COUNT) != XST_SUCCESS ||
         XEmacPs_BdRingClone(txr, &tmpl, XEMACPS_SEND) != XST_SUCCESS) {
         xil_printf("ETH: tx ring setup failed\r\n");
         return -1;
@@ -203,10 +218,47 @@ int attn_eth_init(void)
         if (XEmacPs_BdRingToHw(rxr, 1, bd) != XST_SUCCESS) return -1;
     }
 
+    /* TIE OFF THE QUEUES THIS DESIGN DOES NOT USE.
+     *
+     * The ZynqMP GEM supports priority queuing, and the driver's own examples
+     * park every queue but the one in use -- "for avoiding the controller to
+     * malfunction by fetching the descriptors from these queues". Leaving them
+     * unset is not a performance question: the controller reads whatever the
+     * pointers happen to contain and the receiver stops working. That is what
+     * `rx 0 (0 ours)` on the UART looked like, with the PHY up and the link
+     * negotiated at 1 Gb/s. */
+    if (emac.MaxQueues > 1) {
+        XEmacPs_BdClear(&bd_rx_park);
+        XEmacPs_BdSetAddressRx(&bd_rx_park,
+                               (XEMACPS_RXBUF_NEW_MASK | XEMACPS_RXBUF_WRAP_MASK));
+        XEmacPs_BdClear(&bd_tx_park);
+        XEmacPs_BdSetStatus(&bd_tx_park,
+                            (XEMACPS_TXBUF_USED_MASK | XEMACPS_TXBUF_WRAP_MASK));
+        Xil_DCacheFlushRange((UINTPTR)&bd_rx_park, 64);
+        Xil_DCacheFlushRange((UINTPTR)&bd_tx_park, 64);
+        for (u8 q = 0; q < emac.MaxQueues; q++) {
+            if (q == 0) continue;
+            XEmacPs_SetQueuePtr(&emac, (UINTPTR)&bd_rx_park, q, XEMACPS_RECV);
+            XEmacPs_SetQueuePtr(&emac, (UINTPTR)&bd_tx_park, q, XEMACPS_SEND);
+        }
+        xil_printf("ETH: parked %u unused queues\r\n",
+                   (unsigned)(emac.MaxQueues - 1));
+    }
+
     XEmacPs_SetQueuePtr(&emac, emac.RxBdRing.BaseBdAddr, 0, XEMACPS_RECV);
     XEmacPs_SetQueuePtr(&emac, emac.TxBdRing.BaseBdAddr, 0, XEMACPS_SEND);
+
+    /* The screening register the example sets alongside the queue pointers:
+     * it is what routes matching frames to queue 0. */
+    XEmacPs_WriteReg(emac.Config.BaseAddress, XEMACPS_SCREEN_TYPE2_REG0,
+                     XEMACPS_CMPA_ENABLE_MASK | 0U);
+
     XEmacPs_Start(&emac);
 
+    xil_printf("ETH: rings %u+%u B for %u+%u descriptors, %u queues\r\n",
+               (unsigned)RXBD_BYTES, (unsigned)TXBD_BYTES,
+               (unsigned)RXBD_COUNT, (unsigned)TXBD_COUNT,
+               (unsigned)emac.MaxQueues);
     xil_printf("ETH: ready, MAC %02x:%02x:%02x:%02x:%02x:%02x, ethertype %04x\r\n",
                BOARD_MAC[0], BOARD_MAC[1], BOARD_MAC[2],
                BOARD_MAC[3], BOARD_MAC[4], BOARD_MAC[5],
