@@ -1,41 +1,84 @@
 #!/usr/bin/env bash
-# Run one of this project's host tools with the right interpreter, the right
-# working directory, and root when the tool needs raw sockets.
+# Run a host tool against the board, bringing the board up if it needs it.
 #
 #   ./scripts/attn probe                     # diagnose the Ethernet link
-#   ./scripts/attn infer --tokens 24         # all 16 layers, live, on the board
+#   ./scripts/attn infer --tokens 24 --trace # all layers, live, on the board
 #   ./scripts/attn ppl   --tokens 256        # perplexity, board vs baseline
-#   ./scripts/attn infer --cpu-only          # the control, no board, no sudo
+#   ./scripts/attn infer --cpu-only          # the control: no board, no sudo
+#   ./scripts/attn reset                     # reprogram and stop
 #
-# WHY THIS EXISTS
-# ---------------
-# `python -m kernel.<x>` from inside the repository imports `kernel.py` --- the
-# module --- instead of `kernel/` --- the package --- because the current
-# directory shadows it. The failure is an ImportError about relative imports
-# that says nothing about the actual mistake. So the directory is chosen here
-# rather than by the caller.
+# WHY THIS DOES SO MUCH
+# ---------------------
+# Three things kept going wrong by hand and none of them were interesting.
+#
+#  * `python -m kernel.<x>` from inside the repository imports `kernel.py`
+#    rather than the `kernel/` package, and the ImportError names none of that.
+#  * A run that dies mid-request leaves the board wedged, and the NEXT run then
+#    fails at the ping -- which looks like a new fault and is not one. So the
+#    board is pinged first and reprogrammed if it does not answer.
+#  * The UART is where the board explains itself, and it is only captured if
+#    someone remembered to start a second terminal. It is always captured now,
+#    and the interesting lines are printed at the end.
 set -uo pipefail
 VENV=/home/digital3/TurboQuant-Reproduction/.venv/bin/python
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-PARENT=$(dirname "$ROOT")            # the package lives in here, not in $ROOT
+PARENT=$(dirname "$ROOT")
 IFACE="${IFACE:-enp4s0}"
+UART="${UART:-/dev/ttyUSB1}"
+LOG=/tmp/attn.log
 
 cmd="${1:-}"; shift || true
 case "$cmd" in
-  probe) mod=kernel.host.eth_probe;          need_root=1; args=(--eth "$IFACE") ;;
-  infer) mod=kernel.experiments.fpga_infer;  need_root=1; args=(--eth "$IFACE") ;;
-  ppl)   mod=kernel.experiments.fpga_ppl;    need_root=1; args=(--eth "$IFACE") ;;
-  *) sed -n '2,16p' "$0"; exit 2 ;;
+  probe) mod=kernel.host.eth_probe;         board=1; args=(--eth "$IFACE") ;;
+  infer) mod=kernel.experiments.fpga_infer; board=1; args=(--eth "$IFACE") ;;
+  ppl)   mod=kernel.experiments.fpga_ppl;   board=1; args=(--eth "$IFACE") ;;
+  reset) mod=""; board=2; args=() ;;
+  *) sed -n '2,8p' "$0"; exit 2 ;;
 esac
-
-# --cpu-only and --jtag do not touch a raw socket, so they do not need root --
-# and running them as root would write root-owned files into the workspace.
 for a in "$@"; do
-  case "$a" in --cpu-only|--jtag) need_root=0; args=() ;; esac
+  case "$a" in --cpu-only) board=0; args=() ;; --jtag) args=() ;; esac
 done
 
 cd "$PARENT"
-if [ "$need_root" = 1 ] && [ "$(id -u)" != 0 ]; then
-  exec sudo "$VENV" -m "$mod" "${args[@]}" "$@"
-fi
-exec "$VENV" -m "$mod" "${args[@]}" "$@"
+if [ "$board" = 0 ]; then exec "$VENV" -m "$mod" "$@"; fi
+if [ "$(id -u)" != 0 ]; then exec sudo -E "$0" "$cmd" "$@"; fi
+
+# -- the UART, always ---------------------------------------------------------
+: > "$LOG"
+"$ROOT/host/uart_cap.py" "$LOG" 3600 "$UART" >/dev/null 2>&1 &
+CAP=$!
+trap 'kill $CAP 2>/dev/null' EXIT
+
+bringup() {
+    echo "### the board is not answering -- reprogramming"
+    ( source /home/digital3/2026.1/Vitis/settings64.sh 2>/dev/null
+      cd "$ROOT" && xsdb host/run_attn_server.tcl ) 2>&1 | sed 's/^/    /'
+    for i in $(seq 30); do
+        grep -q "ETH SERVER READY" "$LOG" && { echo "### server up"; return 0; }
+        sleep 1
+    done
+    echo "### the board did not reach ETH SERVER READY; see $LOG"
+    return 1
+}
+
+# A ping is the cheapest possible liveness test, and it is the same code path
+# every tool uses.
+"$VENV" - "$IFACE" <<'PYEOF' >/dev/null 2>&1
+import sys, socket
+sys.path.insert(0, "/home/digital3")
+from kernel.host.attn_client import RawEthClient
+c = RawEthClient(sys.argv[1], bytes.fromhex("0200 5a77 e001".replace(" ", "")),
+                 timeout=1.5)
+sys.exit(0 if c.ping()["status"] == 0 else 1)
+PYEOF
+alive=$?
+[ "$alive" != 0 ] && { bringup || exit 1; }
+[ "$board" = 2 ] && { echo "### board ready"; exit 0; }
+
+"$VENV" -m "$mod" "${args[@]}" "$@"
+rc=$?
+
+echo
+echo "--- the board's own account (tail of $LOG) ---"
+grep -E "ETH:|SERVER|exhausted|failed" "$LOG" | tail -8
+exit $rc
