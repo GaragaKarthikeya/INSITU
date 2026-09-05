@@ -44,6 +44,26 @@ module attn_ctrl #(
     input  logic clk,
     input  logic rstn,
 
+    // ---------------- the DMA stream (step 13's measured bill) ----------------
+    //
+    // Step 13 measured 366 us of every 433 us decode step as the A53 walking
+    // 15 KB through the 32-bit AXI-Lite window one store at a time -- 85% of
+    // the step, against 67 us of block. That is what these carry instead.
+    //
+    // The buffers are NOT removed. They are how step 12 and step 13 ran, they
+    // are readable back, and a bring-up that cannot re-read what it loaded
+    // cannot interpret what it gets out. `MODE` picks which one feeds the
+    // core, so the slow path stays available as the thing a failing fast path
+    // is diffed against.
+    input  logic                  s_axis_tvalid,
+    output logic                  s_axis_tready,
+    input  logic [BEAT_BITS-1:0]  s_axis_tdata,
+    input  logic                  s_axis_tlast,
+    output logic                  m_axis_tvalid,
+    input  logic                  m_axis_tready,
+    output logic [BEAT_BITS-1:0]  m_axis_tdata,
+    output logic                  m_axis_tlast,
+
     // ---------------- AXI-Lite control ----------------
     input  logic [LAW-1:0]  s_axi_awaddr,
     input  logic [2:0]      s_axi_awprot,
@@ -210,6 +230,8 @@ module attn_ctrl #(
     logic [AW-1:0] cache_base;
     logic [31:0] head_stride, plane_span, n_tokens;
     logic s_valid, s_ready, m_valid, m_ready, m_last;
+    logic feed_valid, coll_ready;
+    logic stream_mode;
     logic [BEAT_BITS-1:0] s_data, m_data;
     logic [31:0] starve_cycles, clip_count, overflow_count;
     logic [31:0] scan_cycles, busy_cycles;
@@ -236,18 +258,42 @@ module attn_ctrl #(
     logic feeding;
     logic [BEAT_BITS-1:0] beat_sh;
 
-    assign s_data = beat_sh;
+    // MODE 0 plays the input buffer into the core, as steps 12 and 13 did.
+    // MODE 1 hands the core straight to the DMA. One mux, and everything below
+    // it -- the core, the four read masters, the write master, the register
+    // map -- is untouched, which is the same promise the shim made when the
+    // JTAG master became the PS.
+    assign s_valid = stream_mode ? s_axis_tvalid : feed_valid;
+    assign s_data  = stream_mode ? s_axis_tdata  : beat_sh;
+    // GATED ON `busy`, AND THAT IS de-facto A PROTOCOL RULE MADE INTO LOGIC.
+    //
+    // `attn_ingress` clears its beat counter on `start`. A beat accepted
+    // BEFORE the step begins is therefore swallowed and then thrown away with
+    // that reset, and the stream ends one vector short -- which surfaces as
+    // the LAST group hanging in S_RECV forever, with every beat apparently
+    // delivered. The buffered path cannot hit it because its feeder is armed
+    // by `start` itself.
+    //
+    // Requiring software to start the DMA after the block would work and would
+    // be a rule nothing enforces. Holding `tready` low until the core is
+    // running makes the ordering unnecessary: a DMA armed early simply waits.
+    assign s_axis_tready = stream_mode && s_ready && busy;
+
+    assign m_axis_tvalid = stream_mode && m_valid;
+    assign m_axis_tdata  = m_data;
+    assign m_axis_tlast  = m_last;
+    assign m_ready = stream_mode ? m_axis_tready : coll_ready;
 
     always_ff @(posedge clk) begin
         if (!rstn) begin
-            feeding <= 1'b0; feed_w <= '0; feed_sub <= '0; s_valid <= 1'b0;
+            feeding <= 1'b0; feed_w <= '0; feed_sub <= '0; feed_valid <= 1'b0;
         end else begin
-            if (start) begin
-                feeding <= 1'b1; feed_w <= '0; feed_sub <= '0; s_valid <= 1'b0;
+            if (start && !stream_mode) begin
+                feeding <= 1'b1; feed_w <= '0; feed_sub <= '0; feed_valid <= 1'b0;
             end else if (feeding) begin
-                if (s_valid) begin
+                if (feed_valid) begin
                     if (s_ready) begin
-                        s_valid <= 1'b0;
+                        feed_valid <= 1'b0;
                         // Every word has been shifted in and the last beat has
                         // been taken: the stream is complete.
                         if (feed_w == (IN_AW+1)'(IN_W)) feeding <= 1'b0;
@@ -257,7 +303,7 @@ module attn_ctrl #(
                     feed_w  <= feed_w + 1'b1;
                     if (feed_sub == WPB-1) begin
                         feed_sub <= '0;
-                        s_valid  <= 1'b1;
+                        feed_valid <= 1'b1;
                     end else
                         feed_sub <= feed_sub + 1'b1;
                 end
@@ -271,7 +317,7 @@ module attn_ctrl #(
     logic [BEAT_BITS-1:0] coll_sh;
     logic collecting;
 
-    assign m_ready = !collecting;
+    assign coll_ready = !collecting;
 
     always_ff @(posedge clk) begin
         if (!rstn) begin
@@ -288,7 +334,7 @@ module attn_ctrl #(
                     collecting <= 1'b0;
                 end else
                     coll_sub <= coll_sub + 1'b1;
-            end else if (m_valid) begin
+            end else if (m_valid && !stream_mode) begin
                 coll_sh    <= m_data;
                 coll_sub   <= '0;
                 collecting <= 1'b1;
@@ -330,6 +376,7 @@ module attn_ctrl #(
             head_stride <= 32'd16384;
             plane_span  <= 32'd4096;
             n_tokens    <= 32'd1;
+            stream_mode <= 1'b0;      // the buffers, until a host asks for the DMA
         end else begin
             start <= 1'b0;
             s_axi_awready <= !aw_hit && s_axi_awvalid && !s_axi_bvalid;
@@ -357,6 +404,7 @@ module attn_ctrl #(
                         8'h10: cache_base[AW-1:32] <= wdata_q[AW-33:0];
                         8'h14: head_stride <= wdata_q;
                         8'h18: plane_span  <= wdata_q;
+                        8'h38: stream_mode <= wdata_q[0];
                         default: ;
                     endcase
                 end
@@ -404,6 +452,7 @@ module attn_ctrl #(
                     // the only one a bandwidth number may be divided by.
                     8'h30: s_axi_rdata <= scan_cycles;
                     8'h34: s_axi_rdata <= busy_cycles;
+                    8'h38: s_axi_rdata <= {31'd0, stream_mode};
                     default: s_axi_rdata <= 32'hDEAD_BEEF;
                 endcase
             end else if (s_axi_rvalid && s_axi_rready) begin

@@ -180,8 +180,18 @@ module tb_attn_ctrl;
     logic           s_arvalid, s_arready, s_rvalid, s_rready;
     logic [1:0]     s_bresp, s_rresp;
 
+    // -- the DMA stream, MODE 1 --------------------------------------------
+    wire               sx_tvalid, sx_tready, sx_tlast;
+    wire  [BW-1:0]     sx_tdata;
+    wire               mx_tvalid, mx_tready, mx_tlast;
+    wire  [BW-1:0]     mx_tdata;
+
     attn_ctrl #(.LAW(LAW), .DW(DW), .AW(AW), .IDW(IDW), .N_PORTS(NP))
     dut (
+        .s_axis_tvalid(sx_tvalid), .s_axis_tready(sx_tready),
+        .s_axis_tdata(sx_tdata),   .s_axis_tlast(sx_tlast),
+        .m_axis_tvalid(mx_tvalid), .m_axis_tready(mx_tready),
+        .m_axis_tdata(mx_tdata),   .m_axis_tlast(mx_tlast),
         .clk, .rstn,
         .s_axi_awaddr(s_awaddr), .s_axi_awprot(3'b000), .s_axi_awvalid(s_awvalid),
         .s_axi_awready(s_awready), .s_axi_wdata(s_wdata), .s_axi_wstrb(4'hF),
@@ -395,9 +405,97 @@ module tb_attn_ctrl;
                       $sformatf("second step beat %0d word %0d differs", b, w));
             end
 
+        // -- MODE 1: the same step, through the DMA stream ---------------------
+        //
+        // THE TWO PATHS MUST AGREE, AND THAT IS THE WHOLE TEST. The buffers
+        // and the stream reach the same core over the same four read masters;
+        // if the fast path is right, it returns the 2,048 numbers the slow
+        // path just returned, which are the numbers `out.online.hex` holds.
+        // Anything else -- a dropped beat, a swapped word, a TLAST in the
+        // wrong place -- shows up as a difference against a golden that has
+        // already been checked on hardware.
+        axi_write(17'h38, 32'd1);
+        axi_read(17'h38, rv);
+        check(rv[0] === 1'b1, "MODE reads back as stream");
+
+        reload_image(1);
+        stream_result = '0;
+        // Armed BEFORE the start write, deliberately: the beats offered while
+        // the core is still idle are what `s_axis_tready`'s `busy` gate exists
+        // to refuse. If that gate regresses, this hangs.
+        stream_run = 1;
+        repeat (8) @(posedge clk);
+
+        axi_write(17'h00, 32'd1);
+        polls = 0; rv = '0;
+        while (!rv[1] && polls <= 20000) begin
+            axi_read(17'h00, rv);
+            polls = polls + 1;
+        end
+        check(polls <= 20000, "the streamed step never reported done");
+        if (polls > 20000)
+            $display("  DEBUG st=%0d grp=%0d egr_beat=%0d m_valid=%0b m_ready=%0b sx_idx=%0d feeding=%0b stream=%0b",
+                     dut.core.st, dut.core.grp, dut.core.egr_beat,
+                     dut.core.m_valid, dut.core.m_ready, sx_idx,
+                     dut.feeding, dut.stream_mode);
+        check(sx_beats == IN_BEATS,
+              $sformatf("the core took %0d of %0d input beats", sx_beats, IN_BEATS));
+        check(mx_beats == OUT_BEATS,
+              $sformatf("the core emitted %0d of %0d output beats", mx_beats, OUT_BEATS));
+        check(mx_last_seen == 1, "TLAST is asserted exactly once on the stream");
+        check(stream_result === result,
+              "the streamed step returns what the buffered step returned");
+        // Not vacuous: `result` was itself checked against out.online.hex above.
+        for (int h = 0; h < HEADS; h++)
+            for (int c = 0; c < D; c++)
+                check(stream_result[(h*D + c)*W +: W] === gold[0][(h*D + c)*W +: W],
+                      $sformatf("stream head %0d channel %0d", h, c));
+        $display("  stream mode: %0d beats in, %0d out, identical to the buffered step",
+                 sx_beats, mx_beats);
+
         if (errors == 0) $display("=== tb_attn_ctrl: ALL TESTS PASSED ===");
         else $display("=== tb_attn_ctrl: %0d TESTS FAILED ===", errors);
         $finish;
+    end
+
+    // -- the stream endpoints ------------------------------------------------
+    logic [HEADS*D*W-1:0] stream_result;
+    int sx_beats = 0, mx_beats = 0, mx_last_seen = 0;
+
+    // A DMA that is not always ready: `tvalid` and `tready` each drop on a
+    // free-running pattern, so a core that ignored backpressure would deliver
+    // a short or duplicated stream rather than passing by luck on a bench that
+    // never stalls.
+    //
+    // CLOCKED, NOT A TASK. A hand-rolled task that sets `tvalid` and then
+    // looks at `tready` has to decide which edge it is reading, and the first
+    // version of this counted a transfer that had not happened -- it reported
+    // all 144 beats delivered while the core had seen fewer, which surfaced as
+    // the LAST group hanging with 84 of 96 output beats emitted. Driving from
+    // the clock and counting `tvalid && tready` at the same edge the core does
+    // removes the question.
+    logic stream_run = 0;
+    int   sx_idx = 0, tick_n = 0;
+
+    always @(posedge clk) tick_n <= tick_n + 1;
+
+    assign sx_tvalid = stream_run && (sx_idx < IN_BEATS) && (tick_n % 4 != 3);
+    assign sx_tdata  = stim[(sx_idx < IN_BEATS) ? sx_idx : 0];
+    assign sx_tlast  = (sx_idx == IN_BEATS-1);
+    assign mx_tready = stream_run && (tick_n % 3 != 2);
+
+    always @(posedge clk) begin
+        if (stream_run) begin
+            if (sx_tvalid && sx_tready) begin
+                sx_idx   <= sx_idx + 1;
+                sx_beats <= sx_beats + 1;
+            end
+            if (mx_tvalid && mx_tready) begin
+                stream_result[mx_beats*BW +: BW] <= mx_tdata;
+                if (mx_tlast) mx_last_seen <= mx_last_seen + 1;
+                mx_beats <= mx_beats + 1;
+            end
+        end
     end
 
     initial begin
