@@ -1362,11 +1362,130 @@ board.
 *Exit:* multi-token, multi-context, bit-exact; device-side µs reported; **measured
 DDR bandwidth under real load matches step 1**.
 
+**Status: DONE, at 250 MHz.** `hw/board_vectors.py`, `tests/test_board_vectors.py`,
+`sw/attn_main.c`, `scripts/create_bd_attn_ps.tcl`, `scripts/build_vitis_attn.py`,
+`host/run_attn_a53.tcl`. Log in `results/step13_a53_f250.log`.
+
+**Twelve decode steps, three contexts, every one of 18,432 channels bit-exact.**
+Four steps at each of 64, 256 and 1,024 cached tokens, run back to back on one
+loaded image. No clips, no accumulator overflow, no channel outside the 24-bit
+seam, at any context.
+
+**And the write path is what the multi-step run was for.** Each case loads an
+image holding tokens `0..ctx0-1` and NOTHING else. Token `ctx0+n` therefore
+scores against `n` rows that exist only because the block's own AXI write
+master put them in DDR and the *next* scan's address generator found them
+again. Step 12 ran one step and could not see that; `tb_attn` blanks one token
+and cannot either. A write off by one plane or one token answers step 0
+correctly and every step after it wrongly, and that is now checked twelve times
+over three different plane geometries.
+
+**A layout bug that capacity 65 was hiding, found before the board ran.**
+`DdrLayout` gave each plane the pages its own width needed — at capacity 1,025
+that is 20,480 B for the code planes and 8,192 for the norms. `attn_top` cannot
+address it: its generator is ONE `plane_span` register walked as `cache_base +
+p*plane_span`, because per-plane bases were the 49-bit multiply that missed
+250 MHz by 1.953 ns (step 12, fix 2). Every plane now takes the widest plane's
+span. It is invisible at capacity 65, where all four planes round to one page
+anyway — which is why every vector set and every bench in this project had been
+agreeing with a map the hardware could not have read.
+
+### The scan approaches one row per cycle, and it does so from above
+
+| context | rows | scan cycles | cyc/row | MB/s | starve |
+|---|---|---|---|---|---|
+| 65–68 | 2,128 | 8,243 | **3.87** | 3,356 | 3.1% |
+| 257–260 | 8,272 | 15,188 | **1.83** | 7,080 | 1.8% |
+| 1,025–1,028 | 32,848 | 41,008 | **1.24** | **10,413** | **0.7%** |
+
+The per-group overhead is what the first column is made of: 191, 216 and 255
+cycles per group against 66, 258 and 1,026 rows. It is roughly constant and the
+rows are not, so it amortises — 74% of the scan at ctx 64 and 20% at ctx 1,024.
+`PARALLEL_KV = 1` retires one row per cycle once the pipe is full, and 1.24 is
+that number plus a fill and a drain paid eight times per step.
+
+**So the ctx-64 bandwidth figure is a statement about pipeline fill, not about
+DDR, and it would have been the only figure a single short case produced.**
+That is why three contexts were run and why the longest is the one quoted.
+
+### The DDR gate holds, and the starve fraction is what says so
+
+**No run here can reproduce 14.7 GB/s, and one that claimed to would be
+measuring the wrong thing.** Step 1 measured SUPPLY with four synthetic read
+engines and no consumer. The engine's DEMAND is capped at 13.0 GB/s by the
+datapath — one row per cycle, 52 B — and the measured 10.4 GB/s at ctx 1,024 is
+that ceiling less the fill and drain above. Demand-limited, not supply-limited.
+
+The falsifiable form of step 1's gate is the **starve fraction**, and it is
+**falling**: 3.1% → 1.8% → 0.7% across the three contexts. The absolute count
+barely moves — 64, 70, 76 cycles per step — because it is a fixed DDR round
+trip paid once per group and then amortised over a longer scan. A supply that
+could not keep up would stall a proportional share of every scan and the
+fraction would be flat or rising. It is neither.
+
+### The transport is the step, and that is the measurement step 14 needs
+
+| context | wall/step | block | transport | tok/s wall | tok/s if transport were free |
+|---|---|---|---|---|---|
+| 64 | 400 µs | 34 µs (8%) | 367 µs | 2,497 | 29,630 |
+| 256 | 407 µs | 41 µs (10%) | 366 µs | 2,455 | 24,540 |
+| 1,024 | 433 µs | **67 µs (15%)** | 366 µs | 2,309 | 14,981 |
+
+`attn_main.c` reports load, run and read separately rather than one µs/token,
+and this table is why: **85% of a decode step is the A53 moving 15 KB through a
+32-bit AXI-Lite window one store at a time.** Reads cost 156 ns/word against
+55 ns for writes — a write is posted and a read is a blocking round trip — so
+the 6 KB read back costs 239 µs against 127 µs for the 9 KB written in.
+
+**This is the measured case for a DMA, and it is deliberately not built yet.**
+The plan's heading says "PS/DMA"; what was built is the PS as master with no
+DMA, because `create_bd_attn.tcl` promised step 13 would replace the JTAG
+master "and keep everything below it identical", and the shim is addressed
+memory rather than a stream precisely so that swap would need no redesign. A
+DMA path does need one. Building it first would have been sizing a fix against
+a guess; the 366 µs above is the number to size it against, and it belongs to
+step 14, where the Ethernet path needs a fast transport anyway.
+
+### 250 MHz got EASIER when JTAG left the fabric
+
+| | WNS | WHS | FF |
+|---|---|---|---|
+| `attn_bd_wrapper` @ 250 MHz, PS master (step 13) | **+0.082 ns** | +0.009 ns | 123,990 |
+| `attn_bd_wrapper` @ 250 MHz, JTAG master (step 12) | +0.006 ns | +0.010 ns | 135,143 |
+
+Step 12 closed at +0.006 ns and this plan called that "a coin that landed face
+up" and said the answer, if step 13's fabric change made it negative, was to
+read the routed report again. It did not: dropping `jtag_axi`, its smartconnect
+port and JTAG's second path into HP3 removed 11,153 flops and returned **14×
+the margin**. None of the seven step-12 fixes were reverted, and none of them
+were wasted — the core still needs every one; it simply now has room.
+
+**The clock is measured, not assumed.** The A53 divides `busy_cycles` by its own
+wall-clock µs and reports the implied PL rate: **246–247 MHz** against a nominal
+250, the 1.4% being the poll loop's overshoot inside an integer-µs measurement.
+It is not there to calibrate anything. It is there so that a bitstream built at
+150 MHz announces itself instead of quietly making every GB/s in the tables
+above 40% too high.
+
+**A note on what is NOT checked here.** The A53 reads back all 2,304 input
+words before the first step of each case, so a dropped store on the AXI-Lite
+path is caught where it happens rather than as a wrong answer three steps
+later. It does not read them back on steps 1–3: by then the path has been
+proven and the readback costs more than the step.
+
 **Step 14 — Ethernet.** Raw Ethernet frames, small custom header, polled, no OS.
 Extend `sa_proto.h` with an `ATTN` command; validate against `mock_server.c` on
 x86 first.
 *Exit:* end-to-end from the host with the GPU running the rest of the model;
 report tok/s at ctx 8k / 16k / 32k against the table above.
+
+**Step 13 handed this step its first requirement, measured.** 366 µs of every
+433 µs decode step is the A53 walking 15 KB through a 32-bit AXI-Lite window,
+against 67 µs of block. A GbE frame is 125 µs of wire time for 15 KB before
+anything else, so a transport built on top of the current shim path would be
+paying the 366 µs twice over. The DMA the system diagram already shows belongs
+here, sized against that number rather than against a guess — and it is the
+one change that needs the shim to grow a stream alongside its buffers.
 
 **Step 15 — the result.** Perplexity from a run where attention genuinely
 executed on the FPGA, then sweep `KEY_BITS`/`VAL_BITS`.

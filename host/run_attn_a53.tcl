@@ -27,13 +27,23 @@ set VAR  [expr {[info exists ::env(ATTN_VARIANT)] ? $::env(ATTN_VARIANT) : "attn
 set WS   $ROOT/build/vitis_ws_${VAR}_f${FREQ}
 set PLAT attn_plat_f${FREQ}
 set APP  attn_test_f${FREQ}
-set BIT  $WS/$PLAT/hw/sdt/${VAR}_f${FREQ}.bit
-set INIT $WS/$APP/_ide/psinit/psu_init.tcl
-set ELF  $WS/$APP/build/$APP.elf
-
-foreach f [list $BIT $INIT $ELF] {
-    if {![file exists $f]} { error "missing: $f -- run scripts/build_vitis_attn.py first" }
+# GLOBBED, NOT SPELLED OUT. Vitis names the bitstream after the XSA and puts
+# copies of it in three places; hard-coding one of them is a path that breaks
+# silently on the next tool version, and "file not found" three minutes into a
+# board session is the worst time to learn it.
+proc only {what pattern} {
+    set hits [glob -nocomplain $pattern]
+    if {[llength $hits] == 0} {
+        error "no $what matching $pattern -- run scripts/build_vitis_attn.py first"
+    }
+    return [lindex [lsort $hits] 0]
 }
+set BIT  [only bitstream  $WS/$PLAT/hw/sdt/*.bit]
+set INIT [only psu_init   $WS/$APP/_ide/psinit/psu_init.tcl]
+set ELF  [only ELF        $WS/$APP/build/*.elf]
+puts "### bit  $BIT"
+puts "### init $INIT"
+puts "### elf  $ELF"
 
 connect
 

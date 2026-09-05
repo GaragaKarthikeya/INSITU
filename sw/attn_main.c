@@ -191,7 +191,7 @@ static int run_step(const attn_case_t *c, unsigned step,
 static int run_case(const attn_case_t *c)
 {
     u64 tot_scan = 0, tot_busy = 0, tot_rows = 0, tot_us_run = 0;
-    u64 tot_us_load = 0, tot_us_read = 0;
+    u64 tot_us_load = 0, tot_us_read = 0, tot_starve = 0;
     int fails = 0;
 
     xil_printf("--- %s: %u cached tokens, %u steps, "
@@ -263,6 +263,7 @@ static int run_case(const attn_case_t *c)
 
         tot_scan += scan; tot_busy += busy; tot_rows += rows;
         tot_us_run += ur; tot_us_load += ul; tot_us_read += ud;
+        tot_starve += starve;
     }
 
     if (tot_scan) {
@@ -283,6 +284,27 @@ static int run_case(const attn_case_t *c)
         xil_printf("  %s TIME:  load %u us, run %u us, read %u us "
                    "over %u steps\r\n", c->name, (unsigned)tot_us_load,
                    (unsigned)tot_us_run, (unsigned)tot_us_read, c->steps);
+        /* THE NUMBER THAT ACTUALLY TESTS DDR.
+         *
+         * The MB/s above is what the ENGINE ASKED FOR, and it is capped at
+         * 13.0 GB/s by the datapath: `PARALLEL_KV = 1` retires one row per
+         * cycle and cannot consume more. It can never read back the 14.7 GB/s
+         * step 1 measured with four synthetic read engines, and a run that
+         * claimed to would be measuring something else.
+         *
+         * What says whether DDR keeps up is the STARVE FRACTION -- cycles the
+         * scan spent with no row to score. Step 1's gate was "DDR sustains
+         * more than the engine eats"; the falsifiable form of it here is that
+         * starving does not GROW with context. A supply that could not keep up
+         * would stall a proportional share of every scan, so the fraction
+         * would be flat or rising across 64, 256 and 1,024 cached tokens
+         * rather than falling towards the fixed round trip paid once per
+         * scan. Printed in tenths of a percent. */
+        u32 starve_permille = (u32)((tot_starve * 1000) / tot_scan);
+        xil_printf("  %s DDR:   starve %u of %u scan cycles (%u.%u%% of the "
+                   "scan)\r\n", c->name, (unsigned)tot_starve,
+                   (unsigned)tot_scan, (unsigned)(starve_permille / 10),
+                   (unsigned)(starve_permille % 10));
     }
     return fails;
 }
