@@ -93,4 +93,21 @@ typedef struct {
     uint32_t overflows;
 } attn_resp_hdr;
 
+/* THE FRAGMENT HEADER, in front of every Ethernet frame's slice of a message.
+ * 9,216 bytes of token does not fit a 1,500-byte frame, so a message arrives
+ * as a run of frames and is reassembled BY OFFSET rather than by arrival
+ * order. `host/attn_client.py::RawEthClient` packs this as "<IHH".
+ *
+ * `seq` is repeated in every fragment on purpose: it is what lets a straggler
+ * from an abandoned message be dropped instead of being spliced into the
+ * current one. */
+typedef struct {
+    uint32_t seq;
+    uint16_t frag;
+    uint16_t nfrag;
+} attn_frag_hdr;
+
+#define ATTN_FRAG_HDR_BYTES 8
+#define ATTN_MTU_PAYLOAD    (1500 - ATTN_FRAG_HDR_BYTES)
+
 #endif

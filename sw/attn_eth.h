@@ -1,0 +1,19 @@
+/* The GEM3 raw-Ethernet transport. See attn_eth.c. */
+#ifndef ATTN_ETH_H
+#define ATTN_ETH_H
+#include "xil_types.h"
+
+/* 0 on success. Prints why it failed -- link, PHY or config -- because a
+ * silent Ethernet failure is indistinguishable from a quiet host. */
+int  attn_eth_init(void);
+
+/* Bytes of PAYLOAD (after the 14-byte Ethernet header) copied into `dst`, or
+ * 0 if no frame of ours was waiting. Non-blocking. */
+int  attn_eth_recv(u8 *dst, int max);
+
+/* Send `len` payload bytes to whoever last talked to us. Blocks until the
+ * descriptor is retired, so `payload` may be reused on return. */
+int  attn_eth_send(const u8 *payload, int len);
+
+void attn_eth_forget_host(void);
+#endif

@@ -47,6 +47,10 @@ int main(void) {
     printf("result %u\n", (unsigned)ATTN_RESULT_BYTES);
     printf("beat %u\n", (unsigned)ATTN_BEAT);
     printf("erange %u\n", (unsigned)ATTN_ERANGE);
+    printf("frag %zu\n", sizeof(attn_frag_hdr));
+    printf("fraghdr %u\n", (unsigned)ATTN_FRAG_HDR_BYTES);
+    printf("mtu %u\n", (unsigned)ATTN_MTU_PAYLOAD);
+    F(attn_frag_hdr, seq) F(attn_frag_hdr, frag) F(attn_frag_hdr, nfrag)
     return 0;
 }
 """
@@ -106,6 +110,16 @@ def check_the_c_header_and_the_python_struct_are_the_same_format():
     assert c["result"] == P.RESULT_BYTES
     assert c["beat"] == P.BEAT
     assert c["erange"] == P.ERANGE
+
+    # The fragment header, which the Ethernet path reassembles by. A mismatch
+    # here splices frames at the wrong offset and produces a token that is the
+    # right length and the wrong bytes.
+    from kernel.host.attn_client import RawEthClient as R
+    assert c["frag"] == R.FRAG_HDR.size == c["fraghdr"], (c, R.FRAG_HDR.size)
+    assert c["mtu"] == R.MTU_PAYLOAD, (c["mtu"], R.MTU_PAYLOAD)
+    assert c["attn_frag_hdr.seq"] == 0
+    assert c["attn_frag_hdr.frag"] == 4
+    assert c["attn_frag_hdr.nfrag"] == 6
 
 
 def _codes(fmt):

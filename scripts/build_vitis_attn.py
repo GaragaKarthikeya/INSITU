@@ -59,7 +59,10 @@ client.create_app_component(name=APP, platform=xpfm, domain=DOMAIN)
 app = client.get_component(name=APP)
 app.import_files(from_loc=os.path.join(ROOT, "sw"),
                  files=["attn_main.c", "attn_vectors.c", "attn_vectors.h",
-                        "attn_server.h"])
+                        "attn_server.h", "attn_eth.c", "attn_eth.h"])
+# `attn_proto.h` lives in host/ because the x86 client shares it; the board
+# needs the same file rather than a copy that can drift.
+app.import_files(from_loc=os.path.join(ROOT, "host"), files=["attn_proto.h"])
 app.build()
 
 elf = None

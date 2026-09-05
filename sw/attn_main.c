@@ -71,6 +71,8 @@
 
 #include "attn_vectors.h"
 #include "attn_server.h"
+#include "attn_eth.h"
+#include "attn_proto.h"
 
 /* Pinned by `scripts/create_bd_attn_ps.tcl`, exactly as the JTAG design pinned
  * it, so this constant and that script are the same number in two files and
@@ -629,6 +631,147 @@ static void serve(void)
     }
 }
 
+/* --------------------------------------------------------------------------
+ * The Ethernet server. Step 14's transport, and the one the design is FOR.
+ *
+ * Reassembly is BY OFFSET, not by arrival order: each frame carries its
+ * fragment index and the total, so a reordered or duplicated frame lands where
+ * it belongs instead of where it arrived. `seq` travels in every fragment so a
+ * straggler from an abandoned message is dropped rather than spliced into the
+ * current one -- on a direct cable that should never happen, and "should never
+ * happen" is exactly the class of thing that produces a wrong answer instead
+ * of an error when it does.
+ *
+ * The payload is reassembled STRAIGHT INTO the DMA's transmit buffer, so the
+ * bytes off the wire are the bytes the core consumes. That is what
+ * `attn_proto.h` is built around.
+ * -------------------------------------------------------------------------- */
+static u8 eth_frame[1600];
+static u8 eth_msg[64 + ATTN_TOKEN_BYTES];
+
+static void serve_eth(void)
+{
+    u32 cur_seq = 0xFFFFFFFFu, have = 0, want = 0, msg_len = 0;
+    u32 served = 0;
+
+    xil_printf("ETH SERVER READY\r\n");
+
+    for (;;) {
+        int n = attn_eth_recv(eth_frame, sizeof(eth_frame));
+        if (n <= (int)ATTN_FRAG_HDR_BYTES)
+            continue;
+
+        attn_frag_hdr fh;
+        memcpy(&fh, eth_frame, ATTN_FRAG_HDR_BYTES);
+        const u8 *body = eth_frame + ATTN_FRAG_HDR_BYTES;
+        u32 blen = (u32)n - ATTN_FRAG_HDR_BYTES;
+
+        if (fh.seq != cur_seq) {          /* a new message begins */
+            cur_seq = fh.seq;
+            have = 0;
+            want = fh.nfrag;
+            msg_len = 0;
+        }
+        if (fh.nfrag != want || fh.frag >= want)
+            continue;                     /* a straggler; drop it */
+
+        u32 off = (u32)fh.frag * ATTN_MTU_PAYLOAD;
+        if (off + blen > sizeof(eth_msg))
+            continue;
+        memcpy(eth_msg + off, body, blen);
+        if (off + blen > msg_len) msg_len = off + blen;
+        have++;
+        if (have < want)
+            continue;
+
+        /* -- a whole request ------------------------------------------- */
+        attn_req_hdr rq;
+        if (msg_len < sizeof(rq)) continue;
+        memcpy(&rq, eth_msg, sizeof(rq));
+
+        attn_resp_hdr rs;
+        memset(&rs, 0, sizeof(rs));
+        rs.magic = ATTN_MAGIC;
+        rs.seq = rq.seq;
+
+        if (rq.magic != ATTN_MAGIC)            rs.status = ATTN_EBADMAGIC;
+        else if (rq.version != ATTN_VERSION)   rs.status = ATTN_EBADVER;
+        else if (rq.cmd == ATTN_CMD_PING)      rs.status = ATTN_OK;
+        else if (rq.cmd == ATTN_CMD_LOAD) {
+            u64 base = ((u64)rq.cache_base_hi << 32) | rq.cache_base_lo;
+            memcpy((void *)(UINTPTR)base, eth_msg + sizeof(rq), rq.payload);
+            Xil_DCacheFlushRange((UINTPTR)base, rq.payload);
+            rs.status = ATTN_OK;
+        } else if (rq.cmd != ATTN_CMD_STEP)    rs.status = ATTN_EBADCMD;
+        else if (rq.payload != ATTN_TOKEN_BYTES ||
+                 msg_len < sizeof(rq) + ATTN_TOKEN_BYTES)
+            rs.status = ATTN_EBADLEN;
+        else {
+            XTime t0, t1;
+            u32 st = 0, guard = 100000000, ok = 1;
+
+            memcpy(dma_tx, eth_msg + sizeof(rq), TOKEN_BYTES);
+            Xil_DCacheFlushRange((UINTPTR)dma_tx, TOKEN_BYTES);
+            Xil_DCacheFlushRange((UINTPTR)dma_rx, RESULT_BYTES);
+
+            XTime_GetTime(&t0);
+            wr(REG_MODE, 1);
+            wr(REG_NTOK,    rq.n_tokens);
+            wr(REG_BASE_LO, rq.cache_base_lo);
+            wr(REG_BASE_HI, rq.cache_base_hi);
+            wr(REG_STRIDE,  rq.head_stride);
+            wr(REG_SPAN,    rq.plane_span);
+
+            if (XAxiDma_SimpleTransfer(&dma, (UINTPTR)dma_rx, RESULT_BYTES,
+                                       XAXIDMA_DEVICE_TO_DMA) != XST_SUCCESS) ok = 0;
+            if (ok && XAxiDma_SimpleTransfer(&dma, (UINTPTR)dma_tx, TOKEN_BYTES,
+                                             XAXIDMA_DMA_TO_DEVICE) != XST_SUCCESS) ok = 0;
+            if (ok) {
+                wr(REG_CTRL, 1);
+                do { st = rd(REG_CTRL); } while (!(st & ST_DONE) && --guard);
+                while (ok && guard &&
+                       (XAxiDma_Busy(&dma, XAXIDMA_DEVICE_TO_DMA) ||
+                        XAxiDma_Busy(&dma, XAXIDMA_DMA_TO_DEVICE)) && --guard) { }
+                if (!guard) ok = 0;
+            }
+            XTime_GetTime(&t1);
+            Xil_DCacheInvalidateRange((UINTPTR)dma_rx, RESULT_BYTES);
+
+            rs.status = ok ? ((st & ST_RANGE) ? ATTN_ERANGE : ATTN_OK) : ATTN_EDMA;
+            rs.payload = ok ? ATTN_RESULT_BYTES : 0;
+            rs.dev_us = (u32)(((t1 - t0) * 1000000ULL) / COUNTS_PER_SECOND);
+            rs.scan_cycles = rd(REG_SCAN_CYC);
+            rs.busy_cycles = rd(REG_BUSY_CYC);
+            rs.starve_cycles = rd(REG_STARVE);
+            rs.clips = rd(REG_CLIPS);
+            rs.overflows = rd(REG_OVF);
+            served++;
+        }
+
+        /* -- reply, fragmented the same way -------------------------- */
+        u32 total = sizeof(rs) + rs.payload;
+        memcpy(eth_msg, &rs, sizeof(rs));
+        if (rs.payload)
+            memcpy(eth_msg + sizeof(rs), dma_rx, rs.payload);
+
+        u32 nf = (total + ATTN_MTU_PAYLOAD - 1) / ATTN_MTU_PAYLOAD;
+        if (nf == 0) nf = 1;
+        for (u32 f = 0; f < nf; f++) {
+            u32 o = f * ATTN_MTU_PAYLOAD;
+            u32 c = total - o;
+            if (c > ATTN_MTU_PAYLOAD) c = ATTN_MTU_PAYLOAD;
+            attn_frag_hdr oh = { rq.seq, (u16)f, (u16)nf };
+            memcpy(eth_frame, &oh, ATTN_FRAG_HDR_BYTES);
+            memcpy(eth_frame + ATTN_FRAG_HDR_BYTES, eth_msg + o, c);
+            if (attn_eth_send(eth_frame, (int)(ATTN_FRAG_HDR_BYTES + c)) < 0)
+                xil_printf("ETH: send failed on fragment %u\r\n", (unsigned)f);
+        }
+        cur_seq = 0xFFFFFFFFu;            /* done; the next seq starts fresh */
+        if ((served % 64) == 1)
+            xil_printf("ETH: %u steps served\r\n", (unsigned)served);
+    }
+}
+
 int main(void)
 {
     int fails = 0;
@@ -706,11 +849,18 @@ int main(void)
 
     xil_printf("=== %s ===\r\n", fails ? "FAILURES PRESENT" : "ALL TESTS PASSED");
 
-    /* Self-test done; hand the board to the host. `serve()` does not return
-     * until the host says so, so everything above is what a session reports
-     * before real inference starts. */
-    if (dma_ok)
-        serve();
+    /* Self-test done; hand the board to the host. Ethernet if the link comes
+     * up, and the JTAG mailbox if it does not -- a board that cannot reach the
+     * network is still a board that can do inference, just slowly, and falling
+     * back is better than a session that ends at a dead PHY. */
+    if (dma_ok) {
+        if (attn_eth_init() == 0)
+            serve_eth();
+        else {
+            xil_printf("ETH unavailable; falling back to the JTAG mailbox\r\n");
+            serve();
+        }
+    }
     Xil_DCacheDisable();
     return 0;
 }

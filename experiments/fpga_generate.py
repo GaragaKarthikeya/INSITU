@@ -63,6 +63,11 @@ def main(argv=None) -> int:
     ap.add_argument("--model", default=MODEL)
     ap.add_argument("--cpu-only", action="store_true",
                     help="do not touch the board; run the numpy kernel alone")
+    ap.add_argument("--eth", metavar="IFACE",
+                    help="raw Ethernet on this interface instead of JTAG "
+                         "(needs CAP_NET_RAW: run under sudo)")
+    ap.add_argument("--mac", default="02:00:5a:77:e0:01",
+                    help="the board's MAC, from sw/attn_eth.c")
     a = ap.parse_args(argv)
 
     import torch
@@ -101,8 +106,16 @@ def main(argv=None) -> int:
 
     client = None
     if not a.cpu_only:
-        print("connecting to the board over JTAG")
-        client = JtagClient()
+        if a.eth:
+            from kernel.host.attn_client import RawEthClient
+            mac = bytes(int(b, 16) for b in a.mac.split(":"))
+            print(f"connecting to the board over {a.eth} "
+                  f"(raw Ethernet, {a.mac})")
+            client = RawEthClient(a.eth, mac)
+            print(f"  ping: {client.ping()['status']}")
+        else:
+            print("connecting to the board over JTAG")
+            client = JtagClient()
         t0 = time.time()
         client.load_cache(image.tobytes(), CACHE_BASE)
         print(f"  pushed the cache image in {time.time() - t0:.1f} s")
@@ -205,9 +218,10 @@ def main(argv=None) -> int:
         print(f"tokens on the FPGA: {agree} agreed with the host, {disagree} did not")
         print(f"device time: {dev_us} us total, {dev_us / max(a.tokens, 1):.0f} us/token "
               f"(the block itself)")
-        print(f"wall: {wall:.1f} s, {wall / max(a.tokens, 1):.2f} s/token "
-              f"(JTAG transport, not the block)")
-        client.quit()
+        print(f"wall: {wall:.1f} s, {wall / max(a.tokens, 1) * 1000:.1f} ms/token "
+              f"({'Ethernet' if a.eth else 'JTAG'} transport, not the block)")
+        if hasattr(client, "quit"):
+            client.quit()
     return 0 if disagree == 0 else 1
 
 

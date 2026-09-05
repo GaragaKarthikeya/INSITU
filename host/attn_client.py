@@ -52,6 +52,11 @@ class _Base:
         if h["status"] != P.OK:
             raise RuntimeError(f"load returned {h['status']}")
 
+    # `JtagClient` calls it `load_cache`; the name is aliased rather than
+    # picked, so a caller can hold any transport without knowing which.
+    def load_cache(self, image: bytes, cache_base: int) -> None:
+        self.load(image, cache_base)
+
     def ping(self) -> dict:
         self._seq = getattr(self, "_seq", 0) + 1
         h, _ = self._exchange(P.ping_request(seq=self._seq))
@@ -105,6 +110,11 @@ class RawEthClient(_Base):
     """
 
     #  dst(6) src(6) ethertype(2) | seq(4) frag(2) nfrag(2)
+    #
+    # `attn_frag_hdr` in `host/attn_proto.h` is the same eight bytes, and
+    # `ATTN_MTU_PAYLOAD` there is this same 1,492. Two definitions again, and
+    # `tests/test_proto.py` checks them against each other the same way it
+    # checks the request header.
     FRAG_HDR = struct.Struct("<IHH")
     MTU_PAYLOAD = 1500 - FRAG_HDR.size
 
