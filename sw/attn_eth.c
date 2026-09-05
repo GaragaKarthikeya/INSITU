@@ -99,13 +99,27 @@ static int host_known;
  * accepts no frames, which is precisely the `rx 0 (0 ours)` this reported with
  * the PHY up and the link negotiated at 1 Gb/s.
  *
- * The rings are 1,024 and 256 bytes, so flushing or invalidating the whole of
- * one is a handful of cache lines and is done rather than tracking which
- * descriptor moved. */
-static void bd_flush_rx(void)  { Xil_DCacheFlushRange((UINTPTR)rx_bd_space, RXBD_BYTES); }
+ * FLUSHING THE WHOLE RING IS WRONG ONCE THE GEM IS RUNNING, AND IT COST A
+ * WHOLE DEBUG CYCLE. The GEM writes status bits into descriptors as frames
+ * land. A flush of the entire ring writes THIS side's stale cached copies back
+ * over those updates, erasing them -- the frames are received and then
+ * un-received. The symptom was precise and misleading: the first request
+ * assembled perfectly (7/7 fragments, every header field correct, the step ran
+ * and replied in 22 us) and then reception stopped dead, because the flush
+ * after the first frame clobbered the descriptors the GEM had already filled
+ * for the rest.
+ *
+ * So a flush covers exactly the one descriptor this side modified. Whole-ring
+ * INVALIDATE stays: it discards clean lines and can only lose data this side
+ * has written and not flushed, which by construction never happens.
+ * Whole-ring flush is kept only for setup, before the GEM is started. */
+static void bd_flush_one(void *bd) { Xil_DCacheFlushRange((UINTPTR)bd, 64); }
 static void bd_inval_rx(void)  { Xil_DCacheInvalidateRange((UINTPTR)rx_bd_space, RXBD_BYTES); }
-static void bd_flush_tx(void)  { Xil_DCacheFlushRange((UINTPTR)tx_bd_space, TXBD_BYTES); }
 static void bd_inval_tx(void)  { Xil_DCacheInvalidateRange((UINTPTR)tx_bd_space, TXBD_BYTES); }
+static void bd_flush_all(void) {
+    Xil_DCacheFlushRange((UINTPTR)rx_bd_space, RXBD_BYTES);
+    Xil_DCacheFlushRange((UINTPTR)tx_bd_space, TXBD_BYTES);
+}
 
 /* Counted and printed, because a silent receiver and a receiver that drops
  * everything look identical from the far end. `rx_any` is every frame the MAC
@@ -224,8 +238,7 @@ int attn_eth_init(void)
         return -1;
     }
 
-    bd_flush_rx();
-    bd_flush_tx();
+    bd_flush_all();
 
     /* Hand every receive buffer to the hardware. */
     for (int i = 0; i < RXBD_COUNT; i++) {
@@ -236,8 +249,9 @@ int attn_eth_init(void)
         if (XEmacPs_BdRingToHw(rxr, 1, bd) != XST_SUCCESS) return -1;
     }
     /* The descriptors the GEM is about to fetch. Without this it fetches the
-     * pre-`ToHw` contents and owns nothing. */
-    bd_flush_rx();
+     * pre-`ToHw` contents and owns nothing. Safe as a whole-ring flush because
+     * the GEM has not been started yet and owns none of them. */
+    bd_flush_all();
 
     /* TIE OFF THE QUEUES THIS DESIGN DOES NOT USE.
      *
@@ -337,7 +351,7 @@ int attn_eth_recv(u8 *dst, int max)
         XEmacPs_BdSetAddressRx(bd, addr);
         Xil_DCacheInvalidateRange(addr, FRAME_MAX);
         XEmacPs_BdRingToHw(rxr, 1, bd);
-        bd_flush_rx();
+        bd_flush_one(bd);          /* THIS descriptor only -- see above */
     }
     return taken;
 }
@@ -374,7 +388,7 @@ int attn_eth_send(const u8 *payload, int len)
     XEmacPs_BdSetLast(bd);
     if (XEmacPs_BdRingToHw(txr, 1, bd) != XST_SUCCESS)
         return -1;
-    bd_flush_tx();
+    bd_flush_one(bd);
     XEmacPs_Transmit(&emac);
 
     /* Polled: wait for the descriptor to come back before reusing `tx_buf`. */
