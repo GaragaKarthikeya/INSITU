@@ -47,9 +47,28 @@ import time
 
 import numpy as np
 
+from ..config import QuantConfig
 from ..hw.ddr_layout import DdrLayout
 from ..hw.vectors import collect, unpack_lanes
 from ..ops.project import project
+
+
+# WHAT THE BITSTREAM IS BUILT FOR. `attn_top` is parameterised at synthesis:
+# KEY_BITS = 4, VAL_BITS = 2, so a cache row is 8*4 + 8*2 + 4 = 52 bytes.
+#
+# `QuantConfig()` DEFAULTS TO THREE-BIT KEYS, and `graft()` takes that default
+# unless told otherwise. The host then computed 3-bit key codes for hardware
+# that decodes 4-bit ones, and the stored rows could not agree.
+#
+# It hid beautifully. At T = 1 the softmax is over one element, so the output is
+# the decoded VALUE alone and the key cannot affect it -- token 1 matched every
+# time. Values and norms matched throughout because both sides use 2-bit values.
+# Only tokens 2 onward differed, identically over both transports, which looked
+# like a hardware fault for a day. The self-test never saw it because
+# `board_vectors` passes key_bits=4 explicitly.
+BOARD_KEY_BITS = 4
+BOARD_VALUE_BITS = 2
+BOARD_ROW_BYTES = 52
 
 
 class FpgaLayers:
@@ -57,7 +76,9 @@ class FpgaLayers:
 
     def __init__(self, model, client, layers, capacity: int,
                  cache_base: int = 0x10000000, verify: bool = True,
-                 quiet: bool = False, trace: bool = False, zero: bool = True):
+                 quiet: bool = False, trace: bool = False, zero: bool = True,
+                 key_bits: int = BOARD_KEY_BITS,
+                 value_bits: int = BOARD_VALUE_BITS):
         from ..adapters.torch_llama import graft
 
         self.client = client
@@ -68,13 +89,23 @@ class FpgaLayers:
         self.wire_s = 0.0
         self.layers = list(layers)
 
-        graft(model, layers=self.layers, capacity=capacity)
+        graft(model, layers=self.layers, capacity=capacity,
+              quant=QuantConfig(key_bits=key_bits, value_bits=value_bits))
         self.mods = {L: model.model.layers[L].self_attn for L in self.layers}
 
         k0 = self.mods[self.layers[0]].kernel
         m = k0.cfg.model
         lay = DdrLayout.for_quant(k0.cfg.quant, m.head_dim, m.num_kv_heads,
                                   capacity)
+        # ASSERTED, NOT ASSUMED. A quantisation the bitstream was not built for
+        # produces rows of the wrong length, and the failure that follows looks
+        # like a datapath bug rather than a configuration one.
+        if lay.row_bytes != BOARD_ROW_BYTES:
+            raise ValueError(
+                f"the cache row is {lay.row_bytes} B for {key_bits}b/{value_bits}b "
+                f"keys/values, but this bitstream is built for "
+                f"{BOARD_KEY_BITS}b/{BOARD_VALUE_BITS}b and a {BOARD_ROW_BYTES} B "
+                f"row. Rebuild the RTL or pass matching key_bits/value_bits.")
         self.head_stride = lay.describe()["head_stride"]
         self.plane_span = lay.plane_span(0)
         self.layer_stride = m.num_kv_heads * self.head_stride
