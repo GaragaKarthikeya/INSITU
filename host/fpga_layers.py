@@ -25,9 +25,12 @@ own, deliberately -- so sixteen caches cost sixteen base addresses and no
 hardware at all. Layer L lives at `base + L * layer_stride`, and the stride is
 `8 heads * 4 planes * plane_span` for the chosen capacity.
 
-The regions are never zeroed and do not need to be: a scan reads exactly
-`n_tokens` rows, and row `t` is written by step `t` before step `t` scans it.
-Nothing reads a row that was not written by this run.
+The regions ARE zeroed before the first token. The argument that they need not
+be -- a scan reads exactly `n_tokens` rows, and row `t` is written by step `t`
+before step `t` scans it -- is a claim about the block's indices, and leaving
+16.9 MB of the self-test probe's pseudo-random bytes underneath it means a
+mistake there reads plausible noise rather than zeros. It costs one CMD_LOAD
+per layer, once.
 
 WHY THE NUMPY KERNEL STILL RUNS
 -------------------------------
@@ -54,7 +57,7 @@ class FpgaLayers:
 
     def __init__(self, model, client, layers, capacity: int,
                  cache_base: int = 0x10000000, verify: bool = True,
-                 quiet: bool = False, trace: bool = False):
+                 quiet: bool = False, trace: bool = False, zero: bool = True):
         from ..adapters.torch_llama import graft
 
         self.client = client
@@ -80,6 +83,29 @@ class FpgaLayers:
 
         # Counters, so a run can say what actually happened rather than that it
         # finished.
+        # ZERO EVERY REGION BEFORE THE FIRST TOKEN.
+        #
+        # The claim that these do not need clearing -- "a scan reads exactly
+        # n_tokens rows and row t is written by step t" -- is a claim about the
+        # block's indices, and it was resting on whatever DDR happened to hold.
+        # The self-test's long-context probe leaves 16.9 MB of pseudo-random
+        # bytes at exactly this address, so a read that strays past n_tokens
+        # returns plausible noise instead of zeros.
+        #
+        # That is also the ONE difference between the self-test's `fresh` case,
+        # which passes at T = 1..6 with every row hardware-written, and live
+        # inference, which fails from T = 2 with the same geometry and the same
+        # code: `fresh` runs before the probe, on a zeroed region.
+        #
+        # Zeroing costs one CMD_LOAD per layer, once, and removes the variable.
+        if zero:
+            blank = bytes(self.layer_stride)
+            for L in self.layers:
+                self.client.load_cache(blank, self.bases[L])
+            if not quiet:
+                print(f"  zeroed {len(self.layers)} x {self.layer_stride} B "
+                      f"of cache")
+
         self.steps = 0
         self.agree = 0
         self.disagree = 0

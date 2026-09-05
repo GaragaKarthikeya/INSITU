@@ -67,6 +67,9 @@ def main(argv=None) -> int:
     ap.add_argument("--jtag", action="store_true")
     ap.add_argument("--cpu-only", action="store_true")
     ap.add_argument("--timeout", type=float, default=5.0)
+    ap.add_argument("--no-zero", action="store_true",
+                    help="do not clear the cache regions first (they hold the "
+                         "self-test probe's pseudo-random bytes)")
     ap.add_argument("--trace", action="store_true",
                     help="print every board round trip, layer by layer")
     ap.add_argument("--no-verify", action="store_true",
@@ -109,7 +112,7 @@ def main(argv=None) -> int:
     else:
         fpga = FpgaLayers(model, client, layers, capacity,
                           cache_base=CACHE_BASE, verify=not a.no_verify,
-                          trace=a.trace)
+                          trace=a.trace, zero=not a.no_zero)
         print(f"{len(layers)} layers on the board, capacity {capacity}, "
               f"{fpga.layer_stride} B each, {fpga.bytes_used / 1e6:.1f} MB of DDR "
               f"from {CACHE_BASE:#x}")
