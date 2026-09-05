@@ -342,11 +342,36 @@ module attn_top #(
                       && (scan_count[2] >= n_tokens) && (scan_count[3] >= n_tokens);
 
     // -------------------------------------------------------- egress
-    logic [EGR_BITS-1:0] egr;
+    //
+    // The four finalized vectors ARE the result; there is no second copy of
+    // them. An earlier version loaded a 6,144-bit register and shifted it 512
+    // bits per beat, which cost 6,144 flops to hold what `fin_vec` already
+    // held and -- the reason it is gone -- put the FSM state on the enable of
+    // every one of them. In the full system that path routed to -1.953 ns with
+    // 49,557 failing endpoints, almost entirely wire delay: one LUT and 5.6 ns
+    // of getting there.
+    //
+    // Indexing instead of shifting turns that into one 12:1 mux of 512 bits,
+    // driven by a 4-bit counter, feeding a single registered output beat.
     logic [$clog2(NBEAT_EGR+1)-1:0] egr_beat;
+    logic [EGR_BITS-1:0] egr_flat;
 
-    assign m_data = egr[BEAT_BITS-1:0];
+    // The 24-bit seam takes the low bits of each 48-bit result; `range_error`
+    // says when that lost something, which is the convention `rot_fwht` and
+    // `finalize` already use.
+    always_comb
+        for (int i = 0; i < GROUPS; i++)
+            for (int c = 0; c < D; c++)
+                egr_flat[(i*D + c)*LANE_BITS +: LANE_BITS] =
+                    fin_vec[i][c*OUT_BITS +: LANE_BITS];
+
     assign m_last = (egr_beat == NBEAT_EGR-1) && (grp == KV_HEADS-1);
+
+    // Wraps rather than running one past the end: a part-select off the end of
+    // `egr_flat` is X, and that X would be the first beat of the NEXT group
+    // until S_FIN overwrote it -- true today and a trap for tomorrow.
+    wire [$clog2(NBEAT_EGR+1)-1:0] egr_next =
+        (egr_beat == NBEAT_EGR-1) ? '0 : egr_beat + 1'b1;
 
     // -------------------------------------------------------- counters
     always_ff @(posedge clk) begin
@@ -395,6 +420,7 @@ module attn_top #(
             wr_valid <= 1'b0; scan_start <= 1'b0;
             q_valid <= '0; tab_commit <= '0; fin_valid <= '0;
             m_valid <= 1'b0; done <= 1'b0; grp <= '0; egr_beat <= '0;
+            m_data <= '0;
         end else begin
             ing_ready <= 1'b0;
             scan_start <= 1'b0;
@@ -502,22 +528,15 @@ module attn_top #(
                     for (int i = 0; i < GROUPS; i++)
                         if (fin_valid[i] && fin_ready[i]) fin_valid[i] <= 1'b0;
                     if (&fin_got) begin
-                        // The 24-bit seam takes the low bits of a 48-bit
-                        // result; `range_error` says when that lost something,
-                        // which is the convention `rot_fwht` and `finalize`
-                        // already use.
-                        for (int i = 0; i < GROUPS; i++)
-                            for (int c = 0; c < D; c++)
-                                egr[(i*D + c)*LANE_BITS +: LANE_BITS]
-                                    <= fin_vec[i][c*OUT_BITS +: LANE_BITS];
-                        st <= S_EGRESS;
+                        m_data   <= egr_flat[0 +: BEAT_BITS];
+                        st       <= S_EGRESS;
                         egr_beat <= '0;
-                        m_valid <= 1'b1;
+                        m_valid  <= 1'b1;
                     end
                 end
 
                 S_EGRESS: if (m_valid && m_ready) begin
-                    egr <= egr >> BEAT_BITS;
+                    m_data <= egr_flat[egr_next*BEAT_BITS +: BEAT_BITS];
                     if (egr_beat == NBEAT_EGR-1) begin
                         m_valid <= 1'b0;
                         egr_beat <= '0;

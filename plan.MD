@@ -1226,6 +1226,97 @@ Mirror the order that already worked in `systolic_zcu104`.
 round trip, so no throughput claim.
 *Exit:* one decode step bit-exact against the on-target CPU golden model.
 
+**Status: DONE, at 150 MHz.** `rtl/attn_ctrl.sv`, `tb/tb_attn_ctrl.sv`,
+`scripts/create_bd_attn.tcl`, `scripts/build_attn_bit.tcl`,
+`scripts/jtag_ps_init.sh`, `scripts/jtag_attn.tcl`.
+
+**The block ran on the ZCU104 and returned all 2,048 channels bit-exact
+against `out.online.hex`** — the numpy kernel's own answer for the same step,
+which is the value the seam is defined by. Token 64's cache row reached DDR
+only through the block's own AXI write master: the image is loaded with that
+row zeroed, so a design that never wrote it would have scored a blank key
+against itself.
+
+```
+### DDR round trip ok
+### cache image loaded: 6784 words over 1696 beats, token 64 blanked
+### token loaded and verified: 2304 words
+### done after 1 polls, status 00000002
+### starve 00000033  clips 00000000  overflows 00000000
+### all 1536 words match out.online.hex
+```
+
+51 starve cycles, no score saturated, no accumulator channel wrapped, and no
+channel escaped the 24-bit seam.
+
+**THE CLOCK IS 150 MHz AND THAT IS A REAL RESULT, NOT A ROUNDING.** The full
+system missed 250 MHz: **WNS −1.953 ns** with 49,557 failing endpoints, against
+`attn_top`'s +0.053 ns out of context. Step 12 claims correctness and not a
+rate, so a slower clock costs it nothing — but a bitstream that misses timing
+is worse than useless *for correctness*, because it produces wrong answers that
+are indistinguishable from datapath bugs. 150 MHz closes at **+0.552 ns** and
+the answer it returns is the one the model computes.
+
+**What the full system found that out-of-context could not.** The failing path
+was `attn_top`'s own doing: a 6,144-bit `egr` register, loaded from `fin_vec`
+and shifted 512 bits per beat, which put the FSM state on the enable of every
+one of those flops — 5.6 ns of route against 0.226 ns of logic. Out of context
+the placer clusters it and the problem is invisible; with the PS, five
+smartconnects and a debug bridge on the die it cannot. It was also redundant:
+`fin_vec` already held the result. Indexing into it with a 12:1 mux instead of
+shifting a copy of it removed **5,981 flops and 4,418 LUTs** and is what makes
+150 MHz close with room. Whether it also closes 250 MHz in the full system is
+open, and is step 13's problem — the fabric changes there anyway when the PS
+replaces the JTAG bridge.
+
+**The shim is addressed memory, not a FIFO window.** 9,216 B in and 6,144 B
+out, both readable back. A push-here/pop-there pair of magic addresses is
+smaller and wrong for a bring-up: a `create_hw_axi_txn` that is retried or
+typed twice shifts the whole stream by one word, and the failure looks like a
+datapath that permutes channels. The host reads back every word it loaded
+before starting anything, and `tb_attn_ctrl` checks that reading the output
+window twice returns the same word — which a pop-on-read FIFO would fail and
+nothing else would catch.
+
+**DDR IS DEAD UNTIL SOMEBODY RUNS `psu_init`.** There is no FSBL and no A53
+software in this design, so the DRAM controller is never brought up, JTAG
+writes to it are acknowledged and discarded, and the block starts, issues its
+first AR and sits at busy forever. Status `0x00000001` and no progress reads
+exactly like a datapath hang. `jtag_ps_init.sh` does the bring-up over `xsdb`
+and `jtag_attn.tcl` calls it — **after** programming the PL, because
+`psu_ps_pl_isolation_removal` expects a configured PL and an earlier `rst
+-system` cleared it, leaving Vivado with a device that had no debug core in it.
+A two-pattern DDR round trip now runs before anything else, so the failure
+names its cause in a second instead of surfacing minutes later as a hang.
+
+**Four bring-up failures worth recording, none of them the datapath.**
+
+| symptom | cause |
+|---|---|
+| identical LUT/FF/WNS to the digit after an RTL edit | `reset_run synth_1` does not reset the block design's **out-of-context child runs**; the top level re-links a stale DCP |
+| `Protocol 'AXI4-Lite' does not support bursts` | `jtag_axi` is `PROTOCOL 2`; every transaction is one word. ~11,000 of them is seconds, so the script detects it and falls back rather than rebuilding |
+| `Invalid hw_axi handle` after `psu_init` | `xsdb` on the JTAG chain invalidates Vivado's core handles; they must be re-enumerated with `refresh_hw_device` |
+| `can't use "0x$st"` in `expr` | the hex prefix has to be inside a quoted string for `expr` to convert it |
+
+The burst word order is **detected**, not assumed: a burst of known words is
+read back with single-word reads, which have no ordering to get wrong. A
+readback check cannot catch that class of error on its own, because writing and
+reading with the same wrong transform agrees with itself.
+
+Full system, `xczu7ev-ffvc1156-2-e`, placed:
+
+| | WNS | LUT | FF | DSP | BRAM | URAM |
+|---|---|---|---|---|---|---|
+| `attn_bd_wrapper` @ 150 MHz | **+0.552 ns** | 100,784 (43.7%) | 127,771 | 252 | 2.5 | 0 |
+| `attn_bd_wrapper` @ 250 MHz | −1.953 ns | 105,202 | 133,752 | 252 | 2.5 | 0 |
+
+The 250 MHz row is the design *before* the egress fix, which is why its flop
+count is higher; it is kept because it is the measurement that found the bug.
+
+144 Python checks green (this step added none); `./scripts/regress.sh`
+green on all twelve benches, `tb_attn_ctrl` being the twelfth; `scripts/jtag_attn.tcl` reports `JTAG_ATTN_PASSED` on the
+board.
+
 **Step 13 — PS/DMA, baremetal A53.** Vitis SDT flow, `xsdb`, UART capture.
 *Exit:* multi-token, multi-context, bit-exact; device-side µs reported; **measured
 DDR bandwidth under real load matches step 1**.
