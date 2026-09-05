@@ -1663,6 +1663,38 @@ the board — it does not, and the weight analysis says why.
    non-power-of-two `d`, the rotation itself.
 8. Perplexity claims inherit the README's limits — 400 tokens of one in-domain
    passage separates a 2% effect from a 22% one and nothing finer.
+9. **THE FINAL DIVIDE LOSES PRECISION LINEARLY IN CONTEXT, AND EVERY CONTEXT
+   THIS PROJECT HAS TESTED IS A LUCKY ONE.** `finalize` computes
+   `recip = floor(2**31 / l)` in Q16 (`ops/attention.py:170`,
+   `rtl/finalize.sv`), and the online denominator measures
+   `l = T * 2**15` to within 0.2% across six contexts — every score is near
+   the max, so every `p` is near unity. So `recip = 2**16 / T`, and the
+   divide's precision is `log2(recip)` bits:
+
+   | ctx | 1,024 | 8,192 | 16,384 | 20,000 | 24,576 | 32,768 | 65,536 | 131,072 |
+   |---|---|---|---|---|---|---|---|---|
+   | `recip` | 64 | 8 | 4 | 3 | 2 | 2 | 1 | **0** |
+   | rel err | 0.2% | 0.2% | 0.2% | 8.6% | **25.2%** | 0.2% | 0.2% | **100%** |
+
+   The error is the fractional part of `2**31/l`, so it is a LOTTERY: at powers
+   of two `l` lands just above an integer and the error is 0.2%, and at ctx
+   24,576 it is 25%. The tested contexts are 32, 64, 256, 1,024 and 4,096 —
+   all powers of two, all winning tickets. The guaranteed bound is `T/2**16`,
+   which is **above 25% for any context past ~16k**, and at 131,072 `l_too_big`
+   fires and every output channel is zero.
+
+   **Bit-exactness cannot catch this.** `ops/attention.py` and `finalize.sv`
+   perform the same integer divide, so the model and the hardware are wrong
+   together and every check in the project passes. Step 13 passed at ctx 1,024
+   because `recip` was still 64 there.
+
+   This bites inside the target range: **ctx 32,768 is the bolded row of the
+   throughput table above and ctx 131,072 is its last row.** No throughput or
+   perplexity number may be quoted at a context past ~16k until the divide is
+   normalised — shift `l` to its leading one, divide, and carry the shift into
+   the final right-shift, which holds ~31 bits at every context. That is a
+   deliberate numeric-path change and it invalidates every golden, so it is
+   its own step and not a patch inside another one.
 
 ## Reference: the numbers this plan is built on
 
