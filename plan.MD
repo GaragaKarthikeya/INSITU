@@ -1587,11 +1587,79 @@ hardware retires 1.17 rows-worth of cycles per row at 11.1 GB/s.
 8.8, 9.6 and then **154.5** cycles at ctx 8,192. As a share of the scan it
 falls, falls, falls and then rises — 3.1%, 1.8%, 0.7%, **1.6%**. Two
 components, not one: a fixed round trip per group, and a per-row term that
-roughly doubled between ctx 1,024 and 8,192 (0.0094 → 0.0189 cyc/row). Only
-the second scales, and only long contexts show it. **Extrapolated to ctx
-32,768 it is 3–4% of the scan** — still small, still worth measuring rather
-than assuming, and the reason step 15 should not quote a 32k number it has not
-run.
+roughly doubled between ctx 1,024 and 8,192 (0.0094 → 0.0189 cyc/row).
+
+> **MEASURED, AND IT PLATEAUS.** The guess written here was "extrapolated to
+> ctx 32,768 it is 3–4% of the scan". It is **1.5%**. The per-row term stops
+> growing: **0.0202, 0.0184, 0.0183 cyc/row** at ctx 8k, 16k and 32k. See the
+> probe below. Two guesses about this number in two days, both wrong in
+> opposite directions, which is the argument for the probe existing at all.
+
+### The long-context probe: DDR keeps up at 32k
+
+`results/step14_longctx_probe.log`. Answering this bit-exactly needs a 16.9 MB
+image in the ELF and an O(T²) numpy prefill, and neither is needed to measure
+an ADDRESS PATTERN — so the A53 fills DDR itself and **nothing here is compared
+against a golden**. The answers are wrong by construction and are never looked
+at.
+
+| ctx | cyc/row | MB/s | starve/group | **starve cyc/row** | % of scan |
+|---|---|---|---|---|---|
+| 8,193 | 1.16 | 11,116 | 165.7 | **0.0202** | 1.7% |
+| 16,385 | 1.15 | 11,273 | 302.7 | **0.0185** | 1.6% |
+| 32,769 | **1.14** | **11,331** | 601.1 | **0.0183** | **1.6%** |
+
+**The per-row starve is flat and the per-group figure simply tracks the row
+count** — 165.7, 302.7, 601.1 for 8k, 16k, 32k, which is linear. So above ctx
+8k the fixed round trip is gone into the noise and starving is one steady-state
+rate: about one cycle in fifty-five. It does not compound. **`PARALLEL_KV = 1`
+at 4b/2b is fed at every context this design targets**, which is what step 1's
+gate was for, now measured at the far end rather than extrapolated to it.
+
+**The control is what makes the other two rows worth reading.** `probe8192` runs
+the same geometry as the bit-exact ctx-8,192 case and recomputes its span and
+stride from the same rule `ddr_layout.py` uses:
+
+| | cyc/row | MB/s | starve/step | span / stride |
+|---|---|---|---|---|
+| probe8192, PRNG cache | 1.16 | 11,116 | 1,326 | 135,168 / 540,672 |
+| ctx8192, real cache, checked | 1.17 | 11,090 | 1,279 | 135,168 / 540,672 |
+
+Within 1% on every column. The synthetic image is representative, so the 16k
+and 32k rows are about the machine and not about the filler.
+
+### The throughput table was optimistic, and by a nameable amount
+
+`cyc/row` improves all the way out — 3.87, 1.85, 1.25, 1.16, 1.15, **1.14** —
+so the scan really is converging on the one row per cycle `kv_store_ddr` was
+built for. But it converges from above, and the table below divides the cache
+by **14.7 GB/s**, which is the *supply* step 1 measured with four synthetic
+engines and no consumer.
+
+**The engine's ceiling is demand, not supply**: one row per cycle is
+`52 B × 250 MHz = 13.0 GB/s`, and what it achieves is that divided by
+`cyc/row`. That model is now predictive to 1%:
+
+| ctx | 13.0 / cyc-per-row | measured |
+|---|---|---|
+| 8,192 | 11.2 GB/s | 11.1 |
+| 16,384 | 11.3 GB/s | 11.3 |
+| 32,768 | 11.4 GB/s | 11.3 |
+
+So the corrected figures for Llama 3.2 1B's 16 layers, from the measurement
+rather than from the bandwidth:
+
+| ctx | µs/layer/token | ms/token | **tok/s measured** | tok/s predicted below | optimism |
+|---|---|---|---|---|---|
+| 8,192 | 307 | 4.91 | **204** | 234 | 1.15× |
+| 16,384 | 605 | 9.67 | **103** | 125 | 1.21× |
+| **32,768** | **1,203** | **19.25** | **52** | 65 | **1.25×** |
+
+The table below is left as written, because it is what the design was sized
+from and the sizing decisions it drove — four ports, `PARALLEL_KV = 1`, 4b/2b —
+are all still correct. But **no throughput number in it should be quoted
+without this correction**, and the 32k row in particular is **52 tok/s, not
+65**.
 
 **A measurement artifact worth naming so nobody chases it.** The implied PL
 clock reads 226–249 MHz and the low readings are all in DMA mode at short
