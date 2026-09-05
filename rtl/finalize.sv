@@ -142,7 +142,9 @@ module finalize #(
                 MUL: begin
                     mvld <= (mstep < GROUPS);
                     mstep <= mstep + 1'b1;
-                    if (mstep == GROUPS + 1) st <= DONE;
+                    // Two drain cycles, not one: the fold is select, then
+                    // multiply, then write back.
+                    if (mstep == GROUPS + 2) st <= DONE;
                 end
                 DONE: if (out_ready) st <= IDLE;
             endcase
@@ -159,7 +161,18 @@ module finalize #(
     // differ is bit OUT_BITS, which the truncation discards. Written
     // arithmetically anyway -- it is what the model does, and the equivalence
     // is a property of one parameter set, not of the operation.
-    logic [$clog2(GROUPS)+1:0] mstep_d;
+    // The SELECT is its own stage, for the same reason `accum`'s fold has one:
+    // `mstep` picks 4 of 64 accumulator words through a wide mux, and reading
+    // through that mux and a 32x32 product -- two cascaded DSPs -- in one cycle
+    // routed to -0.157 ns at 250 MHz once four of these were on the die,
+    // against +0.863 ns for the block alone. Registering the operand puts the
+    // flop on the DSP's A input, where the cascade wants it.
+    //
+    // The arithmetic is untouched, so every golden holds; the divide costs one
+    // more cycle, once per query head at the END of a T-cycle scan.
+    logic [$clog2(GROUPS)+1:0] mstep_d, mstep_d2;
+    logic mvld_d;
+    logic signed [ACC_WIDTH-1:0] sel [0:LANES-1];
     logic signed [PROD_W-1:0] prod [0:LANES-1];
     // `mstep` runs two past the last group so the pipe drains; clamping the
     // read index keeps those cycles from part-selecting off the end of `acc_h`
@@ -170,17 +183,19 @@ module finalize #(
     always_ff @(posedge clk) begin
         if (!rstn) begin
             range_error <= 1'b0;
-            mstep_d <= '0;
+            mstep_d <= '0; mstep_d2 <= '0; mvld_d <= 1'b0;
         end else begin
         if (st == IDLE && in_valid) range_error <= 1'b0;
-        mstep_d <= mstep;
+        mstep_d  <= mstep;
+        mstep_d2 <= mstep_d;
+        mvld_d   <= mvld;
         for (int i = 0; i < LANES; i++)
-            prod[i] <= $signed(PROD_W'($signed(
-                           acc_h[(rgrp*LANES + i)*ACC_WIDTH +: ACC_WIDTH]))) *
-                       $signed({1'b0, q});
-        if (mvld) begin
+            sel[i] <= $signed(acc_h[(rgrp*LANES + i)*ACC_WIDTH +: ACC_WIDTH]);
+        for (int i = 0; i < LANES; i++)
+            prod[i] <= $signed(PROD_W'(sel[i])) * $signed({1'b0, q});
+        if (mvld_d) begin
             for (int i = 0; i < LANES; i++) begin
-                out_vec[(mstep_d*LANES + i)*OUT_BITS +: OUT_BITS] <=
+                out_vec[(mstep_d2*LANES + i)*OUT_BITS +: OUT_BITS] <=
                     OUT_BITS'(prod[i] >>> RECIP_FRAC);
                 if (!((prod[i] >>> RECIP_FRAC) >= -(PROD_W'(1) << (SEAM_BITS-1)) &&
                       (prod[i] >>> RECIP_FRAC) < (PROD_W'(1) << (SEAM_BITS-1))))

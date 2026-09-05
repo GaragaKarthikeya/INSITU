@@ -1106,6 +1106,118 @@ stream-through egress.
 back-pressure; full `scripts/regress.sh` green; place-and-route meets 250 MHz
 with positive WNS.
 
+**Status: DONE.** `rtl/attn_ingress.sv`, `rtl/attn_top.sv`, `tb/tb_attn.sv`,
+`scripts/impl_block.tcl`.
+
+**The whole block, from the wire to the answer.** `tb_attn` hands the DUT
+`ingress.hex` — 144 beats, 8 groups of 6 vectors — and checks the 32 heads it
+returns against `out.online.hex`, bit for bit. Nothing between the two is given
+to the hardware: the rotation, the norms, the codes, the cache row, the score,
+the online softmax and the divide are all under test at once, which is the one
+thing this level checks that ten block benches cannot. **4,170 cycles for
+520 rows** at ctx 64, with 44 starve cycles and all of them at the first scan's
+DDR round trip.
+
+**Token 64 is BLANKED in the image, and that is the point.** `ddr_image.hex`
+holds all 65 tokens because the kernel had already appended this one when
+`collect` copied the cache. Left there, a DUT whose write path did nothing
+would still answer correctly — the current token attends to itself and its row
+would already be in memory. So the bench zeroes token 64's slot in every plane
+of every head, and the only way it returns is through `kv_write`. The necessity
+is asserted rather than assumed: with every write byte lane masked off, **all
+2,048 channels change**.
+
+**Back-pressure on both sides plus a stalling DDR is bit-identical.** The third
+run stalls ingress, stalls egress and stalls R at random, and the result must
+equal the clean run's exactly — 4,197 cycles against 4,170. A fourth run
+repeats the step on the same instance, because every counter and the ingress
+group counter have to come back to where they started or the second token of a
+real decode is wrong in a way no single-step bench can see.
+
+**FOUR BLOCKS NEEDED PIPELINING TO ROUTE, AND THEY ARE ALL THE SAME BUG.**
+Every block met 250 MHz alone; `attn_top` first routed at **−0.550 ns**. The
+failing path was the same shape four times over: a step counter fanning out
+across a 64-word register file, through a wide mux, straight into a DSP.
+Standalone that path has a whole die to spread across; with four lanes and
+92k LUT placed, the mux output is a 1.0 ns route before the multiply even
+starts.
+
+| block | the path | fix | cost |
+|---|---|---|---|
+| `accum` rescale | `sgrp` → 8-of-64 mux → 48×16, two cascaded DSPs | select, then multiply | 9 cyc/event, was 8 |
+| `finalize` fold | `mstep` → 4-of-64 mux → 32×32 | select, then multiply | one cycle per head |
+| `accum` add | `a_term` → 64 4:1 muxes → 33-bit saturating add | mux, then add | one cycle of latency |
+| `kv_write` | `pl` → address multiply → byte-lane placement | registered lane, `SETUP` state | one cycle per plane |
+| `rot_norm` | `step` → 8-of-64 mux → squarers | select, then square | one cycle per vector |
+
+None of it is arithmetic: the same operands, the same truncating shifts, the
+same goldens, and every bench still green after each change. What moved is
+`AttentionConfig.rescale_cycles`, **11 → 12**, which is measured by
+`tb_softmax_accum` and not asserted anywhere — at ctx 32,768 that is 0.40% of a
+scan against 0.37%. `plan.MD` had already said `kv_write` "can be pipelined
+freely if `attn_top` needs the slack"; it needed it.
+
+**One fix was mine and not a block's.** `head_base` is
+`cache_base + grp*head_stride + p*plane_span` at 49 bits, and driving it
+combinationally from `grp` put a 16-level carry chain between `grp` and the
+plane readers' address adders. `grp` settles at the end of a group's egress and
+the base is not read until that group's scan starts hundreds of cycles later,
+so it is registered.
+
+**Two bench bugs, both of which looked exactly like a deadlocked DUT.**
+`attn_ingress` clears its beat counter on `start`, so a beat pushed in beside
+that pulse is counted by the driver and dropped by the DUT — the step then
+waits forever for a vector one beat short. And the back-pressure pattern was
+written as `($time/4) % 5`: the clock period is 4 time units, so that modulus
+is zero on *every* cycle and the egress stream was held off permanently rather
+than randomly. The stalls are driven from a cycle counter now.
+
+**Groups run one at a time, deliberately.** `PARALLEL_KV = 1`, so the eight are
+sequential and only four query heads' softmax state is ever live. Overlapping
+group *h+1*'s Phase A with group *h*'s scan is worth ~150 cycles against a
+T-cycle scan — 0.5% at ctx 32k — and it would put ingress and the scan in the
+same state, which is the one thing this block exists to keep readable. Not
+done, and the cost is written down rather than hidden.
+
+Place and route, `xczu7ev-ffvc1156-2-e`, 250 MHz, out of context:
+
+| | WNS | LUT | of which LUTRAM | FF | DSP | BRAM/URAM |
+|---|---|---|---|---|---|---|
+| `attn_top` | **+0.053 ns** | 88,459 | 9,472 | 113,210 | 252 | **0** |
+
+| instance | LUT | FF | DSP |
+|---|---|---|---|
+| `rot_fwht` | 12,408 | 11,361 | 0 |
+| `accum` ×4 | 7,545 | 4,174 | 17 |
+| `score_lane` ×4 (incl. `qtab_build`) | 5,378 | 7,009 | 18 |
+| `kv_store_ddr` | 3,704 | 982 | 0 |
+| `kv_write` | 2,608 | 815 | 0 |
+| `rot_encode` k / v | 2,474 / 1,357 | 2,479 / 1,896 | 14 / 2 |
+| `rot_norm` | 2,086 | 2,775 | 16 |
+| `finalize` ×4 | 1,116 | 3,796 | 16 |
+| `softmax_online` ×4 (incl. `exp_lut`) | 502 | 196 | 4 |
+| `attn_ingress` | 10 | 1,542 | 0 |
+
+**Zero BRAM and zero URAM in the whole block**, against the on-chip budget's
+2 URAM of prefetch, 8 BRAM36 of exp LUT and 1.1 URAM of product tables. The
+prefetch FIFOs and the product tables inferred as LUTRAM (9,472 of them) and
+the exp LUT as a 252-LUT two-step ROM, which is what that block was written for.
+The budget over-estimated because it sized a flat 4,353-entry table; the block
+memories are simply unused and available for whatever the system build wants.
+
+**254 DSPs, against the ~12 the datapath argument claims.** Both numbers are
+right and the gap is worth stating: the "three DSPs in the inner loop" claim is
+about the loop that runs once per CACHED token, and it holds — the gathers and
+the 4:1 mux have no multipliers in them. The 252 are the things that run once
+per *token* or once per *head*: building the product tables (16 per lane), the
+reciprocal fold (16), the rescale fold (17), the norms (16) and the encoders.
+They are amortised over a T-cycle scan and they are not what DDR is waiting on.
+
+144 checks green (none new — this step added no Python; `config.py`'s
+`rescale_cycles` moved and carries a cycle count, never a numeric result);
+`./scripts/regress.sh` green on all eleven benches; `IMPL=1
+./scripts/run_synth.sh attn_top` routes at +0.053 ns.
+
 ### Phase 4 — hardware bring-up
 
 Mirror the order that already worked in `systolic_zcu104`.

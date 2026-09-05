@@ -6,3 +6,8 @@ build/
 *.jou
 *.log
 .Xil/
+
+# Vivado writes these into the working directory during place and route.
+clockInfo.txt
+cong/
+iter_*_CongestedCLBsAndNets.txt

@@ -65,7 +65,13 @@ module kv_write #(
         for (int i = 0; i < upto; i++) plane_off += PLANE_W[i*8 +: 8];
     endfunction
 
-    typedef enum logic [1:0] {IDLE, ADDR, DATA, RESP} state_t;
+        // SETUP exists only so the registered lane/offset/width above are sampled
+    // from an address that already reflects THIS plane: `pl`, `bases` and
+    // `tok` all settle at the end of IDLE or RESP, so a cycle later the
+    // combinational address is right and the registers hold it for ADDR.
+    // Without it the first plane of every row decoded the PREVIOUS row's
+    // address, which is a whole cache row written to the wrong place.
+typedef enum logic [2:0] {IDLE, SETUP, ADDR, DATA, RESP} state_t;
     state_t st;
     logic [$clog2(N_PORTS+1)-1:0] pl;
     logic [ROW_BYTES*8-1:0] held;
@@ -114,7 +120,20 @@ module kv_write #(
         endcase
     end
 
-    wire [3:0] lane = w_addr[3:0];          // byte lane within the 128-bit bus
+    // The lane, the row offset and the width are REGISTERED, not read straight
+    // out of the combinational address.  `pl` advances in RESP, a whole cycle
+    // before the ADDR that uses them, so this costs nothing -- and leaving the
+    // multiply, the byte-lane decode and the 16-way byte placement in one
+    // cycle made this the worst path in `attn_top` at -0.241 ns, exactly where
+    // `plan.MD` said the slack would have to come from.
+    logic [3:0]  lane;
+    logic [7:0]  q_bytes;
+    logic [31:0] q_off;
+    always_ff @(posedge clk) begin
+        lane    <= w_addr[3:0];
+        q_bytes <= w_bytes;
+        q_off   <= w_off;
+    end
 
     always_ff @(posedge clk) begin
         if (!rstn) begin
@@ -123,7 +142,11 @@ module kv_write #(
         end else case (st)
             IDLE: if (in_valid) begin
                 held <= row_data; bases <= head_base; tok <= token;
-                pl <= '0; st <= ADDR; awvalid <= 1'b1;
+                pl <= '0; st <= SETUP;
+            end
+            SETUP: begin
+                awvalid <= 1'b1;
+                st <= ADDR;
             end
             ADDR: begin
                 if (awready) begin
@@ -132,9 +155,9 @@ module kv_write #(
                     // The bytes go to the lanes the address selects.
                     wdata <= '0; wstrb <= '0;
                     for (int b = 0; b < BEAT; b++)
-                        if (b >= int'(lane) && b < int'(lane) + int'(w_bytes)) begin
+                        if (b >= int'(lane) && b < int'(lane) + int'(q_bytes)) begin
                             wdata[b*8 +: 8] <=
-                                held[(w_off + (b - int'(lane)))*8 +: 8];
+                                held[(q_off + (b - int'(lane)))*8 +: 8];
                             wstrb[b] <= 1'b1;
                         end
                     st <= DATA;
@@ -150,8 +173,7 @@ module kv_write #(
                     st <= IDLE;
                 end else begin
                     pl <= pl + 1'b1;
-                    awvalid <= 1'b1;
-                    st <= ADDR;
+                    st <= SETUP;
                 end
             end
         endcase

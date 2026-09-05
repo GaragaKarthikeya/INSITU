@@ -22,12 +22,13 @@ run() {   # run <name> <extra sources...>
     fi
 }
 
-declare -a NAMES=(tb_ddr_probe tb_rot tb_rot_norm tb_rot_encode tb_qtab_build tb_score_lane tb_exp_lut tb_softmax_accum tb_finalize tb_kv_store)
+declare -a NAMES=(tb_ddr_probe tb_rot tb_rot_norm tb_rot_encode tb_qtab_build tb_score_lane tb_exp_lut tb_softmax_accum tb_finalize tb_kv_store tb_attn)
 declare -a SRCS=("rtl/ddr_probe.sv rtl/axi_rd_engine.sv" "rtl/rot_fwht.sv" \
                  "rtl/rot_norm.sv" "rtl/rot_encode.sv" "rtl/qtab_build.sv" \
                  "rtl/score_lane.sv rtl/qtab_build.sv" "rtl/exp_lut.sv" \
                  "rtl/softmax_online.sv rtl/accum.sv rtl/exp_lut.sv" "rtl/finalize.sv" \
-                 "rtl/kv_store_ddr.sv rtl/kv_plane_rd.sv rtl/kv_write.sv")
+                 "rtl/kv_store_ddr.sv rtl/kv_plane_rd.sv rtl/kv_write.sv" \
+                 "rtl/attn_top.sv rtl/attn_ingress.sv rtl/rot_fwht.sv rtl/rot_norm.sv rtl/rot_encode.sv rtl/score_lane.sv rtl/qtab_build.sv rtl/softmax_online.sv rtl/exp_lut.sv rtl/accum.sv rtl/finalize.sv rtl/kv_store_ddr.sv rtl/kv_plane_rd.sv rtl/kv_write.sv")
 
 fail=0
 for i in "${!NAMES[@]}"; do

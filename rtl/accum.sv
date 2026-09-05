@@ -73,11 +73,16 @@ module accum #(
     localparam int T_W    = W_W + CENT_BITS;                  // ... * centroid
     localparam int TERM_W = T_W - ACC_SHIFT;
     localparam int GROUPS = D / LANES;
-    // accept -> w, w -> the four terms, terms -> acc.  Three stages, so the
-    // valid that gates the accumulator write is avld[1], not avld[2]: `a_w`
-    // and `a_term` are single registers overwritten every cycle, and gating
-    // one stage too late reads a LATER token's term.
-    localparam int ADD_LAT = 2;
+    // accept -> w, w -> the four terms, terms -> the SELECTED term, that -> acc.
+    // The valid that gates a stage is `avld[stage-1]`: `a_w` and `a_term` are
+    // single registers overwritten every cycle, and gating one stage too late
+    // reads a LATER token's term.
+    //
+    // The select is its own stage.  Folding the 64 4:1 muxes into the same
+    // cycle as the 33-bit saturating add put 13 endpoints at -0.2 ns once four
+    // lanes were placed, and the mux is NOT part of the loop -- only the add
+    // is -- so splitting it costs a cycle of latency and keeps II=1.
+    localparam int ADD_LAT = 3;
 
     localparam logic signed [ACC_WIDTH-1:0] A_HI = {1'b0, {(ACC_WIDTH-1){1'b1}}};
     localparam logic signed [ACC_WIDTH-1:0] A_LO = {1'b1, {(ACC_WIDTH-1){1'b0}}};
@@ -101,23 +106,41 @@ module accum #(
     logic [D*VAL_BITS-1:0] a_codes [0:ADD_LAT-1];
     logic signed [W_W-1:0] a_w;
     logic signed [TERM_W-1:0] a_term [0:NC-1];
+    logic signed [TERM_W-1:0] a_mterm [0:D-1];
 
-    // -- the SCALE sequencer ------------------------------------------------
-    logic scaling;
-    logic [$clog2(GROUPS+1)-1:0] sgrp;
+    // -- the SCALE sequencer, in TWO stages ---------------------------------
+    //
+    // Stage A selects a group of `LANES` accumulator words; stage B multiplies
+    // them by the factor and writes them back. One cycle where there was one
+    // multiply, and the reason is PLACED timing, not arithmetic: `sgrp` fans
+    // out across all 64 accumulators, and reading through that mux and then
+    // through a 48x16 product -- two cascaded DSPs -- in a single cycle routed
+    // to -0.550 ns inside `attn_top`, against +0.675 ns for this block alone.
+    // Splitting it puts a register directly on the DSP's A input, which is
+    // where the cascade wants one.
+    //
+    // The arithmetic is untouched: the same operand, the same factor, the same
+    // truncating shift, so every golden in `tb_softmax_accum` holds. What
+    // changes is the COST -- 9 cycles per event where it was 8 -- and that is
+    // a measured number, reported by `out_scale_cycles` and carried in
+    // `AttentionConfig.rescale_cycles`, never one this file asserts.
+    logic scaling, s_wb;
+    logic [$clog2(GROUPS+1)-1:0] sgrp, sgrp_b;
     logic [PROB_BITS-1:0] sfactor;
+    logic signed [ACC_WIDTH-1:0] s_operand [0:LANES-1];
 
     wire pipe_busy = (avld != '0);
     // A SCALE is accepted only into an empty pipe; an ADD is accepted whenever
-    // no rescale is running.
-    assign op_ready = !scaling && (!op_scale || !pipe_busy);
+    // no rescale is running -- and the writeback stage counts as running, or
+    // an ADD would reach `acc` in the same cycle the fold writes it back.
+    assign op_ready = !scaling && !s_wb && (!op_scale || !pipe_busy);
 
     wire take = op_valid && op_ready;
 
     always_ff @(posedge clk) begin
         if (!rstn || start) begin
             for (int i = 0; i < D; i++) acc[i] <= '0;
-            avld <= '0; scaling <= 1'b0; sgrp <= '0;
+            avld <= '0; scaling <= 1'b0; s_wb <= 1'b0; sgrp <= '0;
             out_overflows <= '0; out_scale_cycles <= '0;
             tok_done <= 1'b0; scale_done <= 1'b0;
         end else begin
@@ -138,12 +161,18 @@ module accum #(
                     $signed(T_W'($signed(CENTROIDS[c*CENT_BITS +: CENT_BITS]))))
                     >>> ACC_SHIFT);
 
-            // -- stage 3: 64 muxes, 64 saturating adds ----------------------
+            // -- stage 3: 64 muxes ------------------------------------------
+            if (avld[ADD_LAT-2])
+                for (int ch = 0; ch < D; ch++) begin
+                    code = a_codes[ADD_LAT-2][ch*VAL_BITS +: VAL_BITS];
+                    a_mterm[ch] <= a_term[code];
+                end
+
+            // -- stage 4: 64 saturating adds --------------------------------
             if (avld[ADD_LAT-1]) begin
                 for (int ch = 0; ch < D; ch++) begin
-                    code = a_codes[ADD_LAT-1][ch*VAL_BITS +: VAL_BITS];
                     sum  = $signed({acc[ch][ACC_WIDTH-1], acc[ch]}) +
-                           (ACC_WIDTH+1)'($signed(a_term[code]));
+                           (ACC_WIDTH+1)'($signed(a_mterm[ch]));
                     if (sum > (ACC_WIDTH+1)'(A_HI)) begin
                         acc[ch] <= A_HI; out_overflows <= out_overflows + 1'b1;
                     end else if (sum < (ACC_WIDTH+1)'(A_LO)) begin
@@ -154,23 +183,35 @@ module accum #(
                 tok_done <= 1'b1;
             end
 
-            // -- the rescale -------------------------------------------------
+            // -- the rescale, stage A: select ---------------------------------
+            s_wb <= 1'b0;
             if (take && op_scale) begin
                 scaling <= 1'b1; sgrp <= '0; sfactor <= op_factor;
             end else if (scaling) begin
-                out_scale_cycles <= out_scale_cycles + 1'b1;
-                for (int l = 0; l < LANES; l++) begin
-                    ch = sgrp * LANES + l;
-                    acc[ch] <= ACC_WIDTH'(
-                        ($signed({{PROB_BITS{acc[ch][ACC_WIDTH-1]}}, acc[ch]})
-                         * $signed({1'b0, sfactor})) >>> PROB_FRAC);
-                end
-                if (sgrp == GROUPS-1) begin
-                    scaling <= 1'b0;
-                    scale_done <= 1'b1;
-                end
+                for (int l = 0; l < LANES; l++)
+                    s_operand[l] <= acc[sgrp * LANES + l];
+                sgrp_b <= sgrp;
+                s_wb   <= 1'b1;
+                if (sgrp == GROUPS-1) scaling <= 1'b0;
                 sgrp <= sgrp + 1'b1;
             end
+
+            // -- the rescale, stage B: multiply and write back -----------------
+            //
+            // Stage A is reading the NEXT group while this writes the previous
+            // one, and the two groups are disjoint by construction, so there is
+            // no cycle in which a channel is both read and written.
+            if (s_wb)
+                for (int l = 0; l < LANES; l++) begin
+                    ch = sgrp_b * LANES + l;
+                    acc[ch] <= ACC_WIDTH'(
+                        ($signed({{PROB_BITS{s_operand[l][ACC_WIDTH-1]}},
+                                  s_operand[l]})
+                         * $signed({1'b0, sfactor})) >>> PROB_FRAC);
+                end
+
+            if (scaling || s_wb) out_scale_cycles <= out_scale_cycles + 1'b1;
+            if (s_wb && sgrp_b == GROUPS-1) scale_done <= 1'b1;
         end
     end
 

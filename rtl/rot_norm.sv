@@ -67,7 +67,13 @@ module rot_norm #(
     logic [$clog2(STEPS):0] step;
     logic busy;
     logic [2*IN_BITS-1:0] prod [0:LANES-1];
+    // The SELECTED lanes, registered.  `step` fans out across all 64 words of
+    // `held` and the squarers are DSPs, so reading through that mux and into
+    // the multiply in one cycle left 20 endpoints at -0.011 ns once the whole
+    // block was placed.  One more cycle on a unit that runs once per token.
+    logic signed [IN_BITS-1:0] lane_q [0:LANES-1];
     logic p_valid, p_first, p_last;
+    logic q_valid, q_first, q_last;
     logic [SQ_W-1:0] acc, tree, sum_next;
     logic [RAD_W-1:0] mean;
     logic mean_valid;
@@ -93,8 +99,10 @@ module rot_norm #(
             lane_x[l] = held[(step*LANES + l)*IN_BITS +: IN_BITS];
 
     always_ff @(posedge clk) if (advance) begin
-        for (int l = 0; l < LANES; l++)
-            prod[l] <= lane_x[l] * lane_x[l];
+        for (int l = 0; l < LANES; l++) begin
+            lane_q[l] <= lane_x[l];
+            prod[l]   <= lane_q[l] * lane_q[l];
+        end
         if (p_valid) begin
             acc <= sum_next;
             if (p_last) mean <= RAD_W'(sum_next >> LOG2D);   // D is 2**LOG2D
@@ -146,6 +154,7 @@ module rot_norm #(
     always_ff @(posedge clk) begin
         if (!rstn) begin
             busy <= 1'b0; step <= '0; sq_valid <= '0;
+            q_valid <= 1'b0; q_first <= 1'b0; q_last <= 1'b0;
             p_valid <= 1'b0; p_first <= 1'b0; p_last <= 1'b0; mean_valid <= 1'b0;
         end else if (advance) begin
             if (!busy) begin
@@ -156,9 +165,14 @@ module rot_norm #(
                 step <= step + 1'b1;
                 if (acc_done) busy <= 1'b0;
             end
-            p_valid <= busy;
-            p_first <= busy && (step == 0);
-            p_last  <= acc_done;
+            // Two stages, matching the select-then-square pipe above: these
+            // mark what `prod` holds, and `prod` is now one cycle further back.
+            q_valid <= busy;
+            q_first <= busy && (step == 0);
+            q_last  <= acc_done;
+            p_valid <= q_valid;
+            p_first <= q_first;
+            p_last  <= q_last;
             mean_valid <= p_valid && p_last;
             sq_valid <= {sq_valid[ROOT_W-2:0], mean_valid};
         end
