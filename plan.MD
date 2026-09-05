@@ -1915,3 +1915,132 @@ J1 is **unpopulated** — UG1267 Table 1-2, so PS DDR4 is the only DRAM).
 Weights dominate DDR traffic at every context below ~50k tokens, which is why the
 projections stay on the host. Above ctx 8k the KV cache exceeds URAM, which is why
 it lives in DDR. Those two facts together define the split.
+
+---
+
+## State, and what to do next
+
+*Written at the end of the session that did steps 13 and most of 14. Everything
+below is either measured on hardware or explicitly marked as not yet run.*
+
+### Where the spine actually is
+
+`1 → 3 → 11 → 12 → 13 → 14 → 15`. Steps 1–13 are **done and measured on the
+board**. Step 14 is **half done**: the DMA and the transport are built and the
+DMA half is hardware-verified; the Ethernet half has never run. Step 15 has not
+started, but its instrument now exists.
+
+### Built this session and NEVER RUN — do this first
+
+Three things are in the repository, compile, pass every host-side check, and
+have not touched hardware once:
+
+1. **The A53's raw-Ethernet server** (`sw/attn_eth.c`, `serve_eth()` in
+   `sw/attn_main.c`). Written against the BSP headers without ever compiling
+   against them — the Vitis build is where the first API mistakes will surface.
+2. **The GEM3-enabled bitstream.** `gem3` carried `status = "disabled"` in the
+   generated device tree, so Ethernet was never wired up at all;
+   `create_bd_attn_dma.tcl` now enables ENET3 on MIO 64..75 with MDIO on
+   76..77. That build was still routing when the session ended.
+3. **All-sixteen-layers, no-prefill inference** (`host/fpga_layers.py`,
+   `experiments/fpga_infer.py`, `experiments/fpga_ppl.py`). Verified on the
+   `--cpu-only` control, which generates coherent text; the board path is
+   unrun.
+
+**The order to bring them up:**
+
+```
+xsdb host/run_attn_server.tcl        # NOT run_attn_a53.tcl -- that halts the A53
+```
+
+Watch the UART for, in this order: `ALL TESTS PASSED`, then
+`ETH: PHY at MDIO <n>`, then `ETH: link up at 1000 Mb/s`, then
+`ETH SERVER READY`. If the PHY scan finds nothing or the link stays down it
+falls back to the JTAG mailbox and says so — that path works but costs ~0.25 s
+a round trip, so sixteen layers is about 4 s a token.
+
+```
+sudo <venv>/bin/python -m kernel.experiments.fpga_infer --eth enp4s0 --tokens 24
+sudo <venv>/bin/python -m kernel.experiments.fpga_ppl  --eth enp4s0 --tokens 256
+```
+
+`enp4s0` is the board link — 192.168.10.1/24, gigabit, not the machine's
+default route. Raw sockets need `CAP_NET_RAW`, hence `sudo` with the venv's
+interpreter by path.
+
+### What the all-layer design changes, and why it was worth redoing
+
+The first working inference ran ONE layer against a cache the HOST had built in
+numpy and pushed over JTAG. Two things were wrong with that:
+
+- every throughput figure was one layer's measurement multiplied by sixteen,
+  which is an extrapolation wearing a measurement's clothes;
+- the block's write master was exercised for four tokens of a test case and
+  nothing else, because the rows it scanned were rows numpy had written.
+
+Now the block serves all sixteen layers from sixteen caches, and **there is no
+prefill**: the prompt's tokens go through the same one-token-at-a-time path a
+generated token takes, so every row of every cache is written by the block
+itself. A 200-token run is 3,200 decode steps and 3,200 rows the host never
+wrote. Sixteen caches cost sixteen base addresses and no hardware, because
+`cache_base` already travels with every step.
+
+### Step 15, which is now assessable and was not before
+
+Its exit criterion is "measured bytes, cycles and throughput move as
+`config.py` predicts". Until this session `config.py` answered 58.8 B/cycle
+where the board sustains 45.6 — it took `min(DDR supply, interface)` and had no
+term for the datapath retiring one row per cycle. It now predicts the six
+measured contexts to under 1% at long context. **`experiments/fpga_ppl.py` is
+the other half**: perplexity of the same WikiText passage, baseline against
+every-layer-on-the-FPGA, on one checkpoint.
+
+The `KEY_BITS`/`VAL_BITS` sweep still needs a synthesis run per format
+(~1 hour each), because the widths are RTL parameters. 4b/4b is a 68-byte row
+needing five ports the PS does not have — a prediction this plan already makes,
+and the build would confirm it by failing.
+
+### The one performance item left
+
+**0.129 cycles per row that nothing explains.** It is not starving and it is
+not the one-row-per-cycle floor; it is 11% of the scan at long context, worth
+about 6 tok/s at ctx 32k, and it is labelled as measured-but-not-understood in
+`config.py` rather than dressed up as a burst-boundary story. The probe
+infrastructure to chase it exists: vary burst length and outstanding depth in
+`kv_store_ddr` and re-measure.
+
+### Three corrections this session made to this document
+
+Recorded where they were made, not quietly fixed:
+
+1. **The reciprocal precision ceiling** (limit 9). `recip = 2**16/T` gave two
+   quantisation levels at ctx 32,768 and **zero at 131,072**, and the error was
+   a lottery — 0.2% at powers of two, 25% at ctx 24,576. Every context this
+   project had ever tested is a power of two. Bit-exactness could not catch it
+   because the model and the RTL were wrong together. Fixed by normalising the
+   divide; 1e-7% at every context, no ceiling.
+2. **The throughput table divides by supply where demand binds.** It uses
+   14.7 GB/s, measured with four synthetic engines and no consumer; the engine
+   can only eat 13.0 GB/s. **ctx 32,768 is 52 tok/s, not 65.**
+3. **The starve trend.** Step 13 read three monotone points as falling and step
+   14 extrapolated the reversal to 3–4% at 32k. Measured, it plateaus at
+   0.018 cyc/row and 1.5%. Two guesses, wrong in opposite directions, which is
+   the argument for the probe.
+
+### Things a fresh session should not have to rediscover
+
+- **A silent numpy fallback is this project's most dangerous failure mode.** The
+  numpy kernel produces the same text as the board, so "board idle" and "board
+  correct" are indistinguishable from the output. It has already happened once:
+  patching `attn.forward` on the INSTANCE does nothing, because
+  `KernelAttention` assigns `__call__ = forward` at class scope and Python
+  resolves dunders on the type. `fpga_layers.py` patches `type(attn)` and raises
+  rather than falling back.
+- **`mwr` over xsdb prints nothing whether it worked or not.** A cache image
+  "pushed in 0.6 s" meant a local file had been written. Both `attn_jtag.py`
+  paths now verify.
+- **`mrd` returns nothing when xsdb is driven from a pipe** — a TCL REPL echoes
+  results only to a terminal. Reads must be `puts [mrd ...]`.
+- **`reset_run synth_1` does not reset a block design'"'"'s out-of-context child
+  runs**, so an RTL edit can rebuild the previous netlist and report the
+  previous numbers to the digit.
