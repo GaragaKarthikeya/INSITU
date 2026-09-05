@@ -299,3 +299,90 @@ def check_the_ddr_measurement_is_the_number_in_the_plan():
 def check_cache_bandwidth_rejects_a_dead_configuration():
     raises(ValueError, lambda: CacheBandwidth(CacheConfig(ddr_gbps=0.0), 250.0).cost(64),
            "zero bandwidth")
+
+
+# --------------------------------------------------------------------------
+# the scan model, against the board
+# --------------------------------------------------------------------------
+
+# (ctx+1, scan cycles per step, starve cycles per step) at 8 KV heads, 52-byte
+# rows, 250 MHz. `results/step14_dma_f250.log` for the first four -- bit-exact
+# runs -- and `results/step14_longctx_probe.log` for 16k and 32k, which are
+# address-pattern probes with a PRNG cache and no checked answer.
+BOARD_SCAN = [
+    (65, 2059, 64),
+    (257, 3805, 89),
+    (1025, 10295, 77),
+    (8193, 76666, 1326),
+    (16385, 151168, 2422),
+    (32769, 300760, 4809),
+]
+
+
+def check_the_scan_model_reproduces_the_board():
+    """`config.py` must predict what the hardware did, or step 15 is unassessable.
+
+    Step 15's exit criterion is "measured bytes, cycles and throughput move as
+    `config.py` predicts". Before this the model answered 58.8 B/cycle where the
+    board sustains 45.6 -- it took the minimum of the DDR supply and the
+    interface, and had no term for the fact that `PARALLEL_KV = 1` retires one
+    row per cycle. It was 29% optimistic, which is exactly how `plan.MD`'s
+    throughput table came to be 1.15-1.25x optimistic.
+    """
+    from kernel.config import CacheConfig
+
+    c = CacheConfig()
+    errs = {}
+    for tokens, cycles, _starve in BOARD_SCAN:
+        got = c.scan_cycles(8, tokens)
+        errs[tokens] = abs(got - cycles) / cycles
+        assert errs[tokens] < 0.06, (tokens, got, cycles, errs[tokens])
+    # Four of the six land inside 0.5%. ctx 1,025 is the worst at 5.1%, and it
+    # is worst for a reason worth keeping rather than fitting away: `starve_per_
+    # row` is one constant set to the SATURATED rate, 0.0183, which is right
+    # from ctx 8k out and overstates ctx 1,025's measured 0.0094. A second
+    # parameter would close it and would be four numbers fitted to six points.
+    # The long contexts are the ones the design is judged at, so the constant is
+    # chosen to be right there.
+    assert errs[32769] < 0.01, errs
+    assert errs[8193] < 0.01, errs
+    assert max(errs.values()) < 0.06, errs
+
+
+def check_the_engine_and_not_the_dram_is_what_bounds_the_scan():
+    """The term the model was missing, stated as the property it implies.
+
+    One row per cycle at 52 B and 250 MHz is 13.0 GB/s. The DRAM delivers 14.7
+    and the four ports carry 16.0, so neither of them is the limit and no
+    amount of either makes the scan faster.
+    """
+    from kernel.config import CacheConfig
+
+    c = CacheConfig()
+    assert c.bound_by(250.0, row_bytes=52) == "engine"
+    assert abs(c.bytes_per_cycle(250.0, row_bytes=52) - 52.0) < 1e-9
+    # Without the row width the old answer stands, and it is the DRAM figure --
+    # kept so a caller that genuinely wants the supply still gets it.
+    assert c.bound_by(250.0) == "dram"
+    assert abs(c.bytes_per_cycle(250.0) - 58.83) < 0.05
+    # A narrower row moves the bound: at 3b/2b the row is 44 B and the engine
+    # is still what binds, which is the claim step 15's sweep rests on.
+    assert c.bound_by(250.0, row_bytes=44) == "engine"
+
+
+def check_the_predicted_throughput_matches_the_board_at_long_context():
+    """The number the project is judged on, end to end, from the model alone.
+
+    16 layers of Llama 3.2 1B at ctx 32,768: the board did 1,203 us a layer and
+    52 tok/s. If the model cannot reproduce that it cannot be used to choose a
+    cache format, which is the whole of step 15.
+    """
+    from kernel.config import CacheConfig
+
+    c = CacheConfig()
+    for tokens, measured_us, measured_toks in ((8193, 307, 204),
+                                               (32769, 1203, 52)):
+        us = c.scan_cycles(8, tokens) / 250.0
+        assert abs(us - measured_us) / measured_us < 0.05, (tokens, us, measured_us)
+        toks = 1e6 / (16 * us)
+        assert abs(toks - measured_toks) / measured_toks < 0.06, (toks, measured_toks)

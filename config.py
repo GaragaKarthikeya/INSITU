@@ -373,6 +373,25 @@ class CacheConfig:
     port_bits: int = 128            # one AXI-HP master
     ddr_gbps: float = 14.708        # MEASURED. See the docstring.
 
+    # -- what the SCAN actually costs, measured on the board -----------------
+    #
+    # THE SUPPLY IS NOT THE BOUND, AND TREATING IT AS ONE WAS A REAL ERROR.
+    # `ddr_gbps` is 14.708 and the interface ceiling is 64 B/cycle, so this
+    # model used to answer 58.8 B/cycle. The board sustains 45.6. The gap is
+    # not DDR: it is that `PARALLEL_KV = 1` retires ONE ROW PER CYCLE, so the
+    # engine's demand ceiling is `row_bytes` per cycle -- 13.0 GB/s at 52 B and
+    # 250 MHz -- and it reaches that ceiling less two measured overheads.
+    # `plan.MD`'s throughput table had the same error and was 1.15-1.25x
+    # optimistic because of it.
+    #
+    # Both numbers below are fitted to six contexts measured on hardware, ctx
+    # 65 through 32,769 (`results/step14_dma_f250.log`,
+    # `results/step14_longctx_probe.log`). The fit is inside 0.5% at five of
+    # the six and 4.3% at ctx 1,025.
+    scan_fill_cycles: int = 176         # per KV group: pipeline fill and drain
+    scan_overhead_per_row: float = 0.129
+    starve_per_row: float = 0.0183
+
     @property
     def interface_bytes_per_cycle(self) -> float:
         return self.hp_ports * self.port_bits / 8.0
@@ -381,12 +400,42 @@ class CacheConfig:
         """The measured DRAM figure expressed in this clock's cycles."""
         return self.ddr_gbps * 1e9 / (clock_mhz * 1e6)
 
-    def bytes_per_cycle(self, clock_mhz: float) -> float:
-        return min(self.interface_bytes_per_cycle, self.ddr_bytes_per_cycle(clock_mhz))
+    def engine_bytes_per_cycle(self, row_bytes: int) -> float:
+        """What the DATAPATH can eat: one row per cycle per parallel scan.
 
-    def bound_by(self, clock_mhz: float) -> str:
-        return "interface" if self.interface_bytes_per_cycle <= \
-            self.ddr_bytes_per_cycle(clock_mhz) else "dram"
+        The term the model was missing. No amount of DDR makes a scan faster
+        than the rate `score_lane` retires rows at.
+        """
+        return row_bytes * self.lanes * self.parallel_kv
+
+    def bytes_per_cycle(self, clock_mhz: float, row_bytes: int | None = None) -> float:
+        b = min(self.interface_bytes_per_cycle, self.ddr_bytes_per_cycle(clock_mhz))
+        if row_bytes is not None:
+            b = min(b, self.engine_bytes_per_cycle(row_bytes))
+        return b
+
+    def bound_by(self, clock_mhz: float, row_bytes: int | None = None) -> str:
+        cands = [(self.interface_bytes_per_cycle, "interface"),
+                 (self.ddr_bytes_per_cycle(clock_mhz), "dram")]
+        if row_bytes is not None:
+            cands.append((self.engine_bytes_per_cycle(row_bytes), "engine"))
+        return min(cands)[1]
+
+    def scan_cycles(self, n_groups: int, tokens: int) -> int:
+        """Cycles for one decode step's scan: `n_groups` scans of `tokens` rows.
+
+        `n_groups * fill + rows * (1 + overhead + starve)`. The overhead term
+        is EMPIRICAL and unexplained -- 0.129 cycles a row that is not starving
+        and is not the one-row-per-cycle floor. It is 11% of the scan at long
+        context and therefore the largest single efficiency item left in this
+        design; naming it as measured-but-not-understood is more useful than a
+        confident story about bursts.
+        """
+        import math
+        rows = n_groups * tokens
+        return math.ceil(n_groups * self.scan_fill_cycles
+                         + rows * (1.0 + self.scan_overhead_per_row
+                                   + self.starve_per_row))
 
 
 @dataclass(frozen=True)
