@@ -78,6 +78,13 @@ static u8 tx_buf[FRAME_MAX] __attribute__((aligned(BD_ALIGN)));
 static u8 host_mac[6];
 static int host_known;
 
+/* Counted and printed, because a silent receiver and a receiver that drops
+ * everything look identical from the far end. `rx_any` is every frame the MAC
+ * accepted; `rx_ours` is those with our ethertype. If the first is climbing
+ * and the second is not, the filter or the ethertype is wrong -- which is a
+ * different bug from a dead link, and the UART should say which. */
+static u32 rx_any, rx_ours, tx_frames;
+
 /* --------------------------------------------------------------------------
  * PHY
  *
@@ -224,12 +231,22 @@ int attn_eth_recv(u8 *dst, int max)
 
     int taken = 0;
     const u8 *f = (const u8 *)addr;
+    rx_any++;
+    if (rx_any <= 4)
+        xil_printf("ETH: rx #%u len %u type %04x from "
+                   "%02x:%02x:%02x:%02x:%02x:%02x\r\n",
+                   (unsigned)rx_any, (unsigned)len,
+                   (unsigned)((f[12] << 8) | f[13]),
+                   f[6], f[7], f[8], f[9], f[10], f[11]);
     /* 12 bytes of MAC, 2 of ethertype. Anything else on the wire -- and on a
      * direct cable there should be nothing -- is dropped here. */
     if (len > 14 && ((f[12] << 8) | f[13]) == ATTN_ETHERTYPE) {
+        rx_ours++;
         if (!host_known) {
             memcpy(host_mac, f + 6, 6);      /* reply to whoever asked */
             host_known = 1;
+            xil_printf("ETH: host is %02x:%02x:%02x:%02x:%02x:%02x\r\n",
+                       f[6], f[7], f[8], f[9], f[10], f[11]);
         }
         taken = (int)len - 14;
         if (taken > max) taken = max;
@@ -288,10 +305,18 @@ int attn_eth_send(const u8 *payload, int len)
     if (!guard)
         return -1;
     XEmacPs_BdRingFree(txr, 1, bd);
+    tx_frames++;
     return len;
 }
 
 void attn_eth_forget_host(void)
 {
     host_known = 0;
+}
+
+void attn_eth_stats(u32 *any, u32 *ours, u32 *tx)
+{
+    if (any)  *any  = rx_any;
+    if (ours) *ours = rx_ours;
+    if (tx)   *tx   = tx_frames;
 }

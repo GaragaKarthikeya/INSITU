@@ -656,10 +656,23 @@ static void serve_eth(void)
 
     xil_printf("ETH SERVER READY\r\n");
 
+    u32 spin = 0;
     for (;;) {
         int n = attn_eth_recv(eth_frame, sizeof(eth_frame));
-        if (n <= (int)ATTN_FRAG_HDR_BYTES)
+        if (n <= (int)ATTN_FRAG_HDR_BYTES) {
+            /* A heartbeat, so an idle server is visibly idle rather than
+             * indistinguishable from a hung one. Every ~30 s of spinning. */
+            if (++spin >= 200000000u) {
+                u32 ra = 0, ro = 0, tf = 0;
+                attn_eth_stats(&ra, &ro, &tf);
+                xil_printf("ETH: waiting. rx %u (%u ours), tx %u, served %u\r\n",
+                           (unsigned)ra, (unsigned)ro, (unsigned)tf,
+                           (unsigned)served);
+                spin = 0;
+            }
             continue;
+        }
+        spin = 0;
 
         attn_frag_hdr fh;
         memcpy(&fh, eth_frame, ATTN_FRAG_HDR_BYTES);

@@ -16,4 +16,9 @@ int  attn_eth_recv(u8 *dst, int max);
 int  attn_eth_send(const u8 *payload, int len);
 
 void attn_eth_forget_host(void);
+
+/* Frames the MAC accepted, those with our ethertype, and those sent. A
+ * receiver that drops everything and one that receives nothing look the same
+ * from the far end; these tell them apart. */
+void attn_eth_stats(u32 *any, u32 *ours, u32 *tx);
 #endif

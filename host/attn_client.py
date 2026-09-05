@@ -148,7 +148,18 @@ class RawEthClient(_Base):
         parts: dict[int, bytes] = {}
         nfrag = None
         while nfrag is None or len(parts) < nfrag:
-            frame = self.sock.recv(2048)
+            try:
+                frame = self.sock.recv(2048)
+            except socket.timeout:
+                # A bare TimeoutError is consistent with six different faults
+                # and distinguishes none of them.
+                raise TimeoutError(
+                    f"no reply from {':'.join(f'{b:02x}' for b in self.peer)} "
+                    f"on {self.iface} after {len(parts)} of "
+                    f"{nfrag if nfrag else '?'} fragments.\n"
+                    f"Run the probe, which says WHICH fault this is:\n"
+                    f"  sudo <venv>/bin/python -m kernel.host.eth_probe "
+                    f"--eth {self.iface}") from None
             body = frame[14:]
             if len(body) < self.FRAG_HDR.size:
                 continue
