@@ -106,12 +106,13 @@ module finalize #(
             initial $fatal(1, "OUT_BITS cannot hold the widest quotient product");
     endgenerate
 
-    typedef enum logic [1:0] {IDLE, DIV, MUL, DONE} state_t;
+    typedef enum logic [2:0] {IDLE, NORM, DIV, MUL, DONE} state_t;
     state_t st;
 
     logic [D*ACC_WIDTH-1:0] acc_h;
     logic [L_WIDTH-1:0]     l_h;
     logic [RECIP_BITS-1:0]  q;
+    logic [RECIP_BITS-1:0]  divisor_r;
     logic [REM_W-1:0]       rem;
     logic [$clog2(RECIP_BITS):0] dstep;
     logic [$clog2(GROUPS)+1:0]   mstep;
@@ -120,6 +121,16 @@ module finalize #(
     // `l`'s leading one. A priority encoder, and the only new logic the
     // normalisation costs on the divisor side. There is no `l_too_big` any
     // more: normalising removed the ceiling that made it necessary.
+    //
+    // IT GETS ITS OWN STATE, BECAUSE IT WAS THE CRITICAL PATH.
+    // `l_h` is constant for the whole divide, so this encoder and the shifter
+    // under it were being recomputed on all 32 iterations to produce the same
+    // number -- and in series with the remainder's compare-and-subtract, which
+    // routed to 13 logic levels and WNS +0.024 ns. Synthesis will not hoist it
+    // out: `divisor` feeds `rem`, so it is inside the loop as written. `NORM`
+    // takes it out by hand, at one cycle per query head at the end of a
+    // T-cycle scan. Read from the routed report, not guessed -- the first
+    // attempt split the output barrel shifter instead and bought 0.002 ns.
     logic [$clog2(L_WIDTH)-1:0] lead;
     always_comb begin
         lead = '0;
@@ -147,7 +158,7 @@ module finalize #(
     // SEEDED at 2**(RECIP_BITS-1) rather than at 0 -- which is the alignment
     // step, skipped rather than iterated.
     wire [REM_W-1:0] rem_shifted = {rem[REM_W-2:0], 1'b0};
-    wire fits = rem_shifted >= {1'b0, divisor};
+    wire fits = rem_shifted >= {1'b0, divisor_r};
 
     assign in_ready = (st == IDLE);
     assign out_valid = (st == DONE);
@@ -162,6 +173,13 @@ module finalize #(
             case (st)
                 IDLE: if (in_valid) begin
                     acc_h <= in_acc; l_h <= in_l;
+                    st <= NORM;
+                end
+
+                // The encoder, the normaliser and the output shift, once.
+                NORM: begin
+                    divisor_r <= divisor;
+                    oshift_h  <= oshift;
                     // Seeded, not zeroed: a restoring divide producing an
                     // n-bit quotient starts with the dividend's bits ABOVE the
                     // low n, and this dividend is the single bit 2**NUM_SHIFT.
@@ -170,33 +188,34 @@ module finalize #(
                     // produce nothing but that alignment -- are skipped.
                     q <= '0; rem <= REM_W'(1) << (NUM_SHIFT - RECIP_BITS);
                     dstep <= '0;
-                    st <= DIV;
-                end
-                DIV: begin
                     // A zero denominator answers zero and skips the 32
                     // iterations rather than producing that answer the slow
                     // way. There is no "too wide" case any more: `divisor` is
                     // `l` normalised, so it is always exactly RECIP_BITS.
                     if (l_h == '0) begin
-                        q <= '0; oshift_h <= oshift;
                         mstep <= '0; mvld <= 1'b0; st <= MUL;
-                    end else begin
-                        rem <= fits ? (rem_shifted - {1'b0, divisor}) : rem_shifted;
-                        q   <= {q[RECIP_BITS-2:0], fits};
-                        dstep <= dstep + 1'b1;
-                        if (dstep == RECIP_BITS-1) begin
-                            mstep <= '0; mvld <= 1'b0; st <= MUL;
-                            oshift_h <= oshift;
-                        end
+                    end else
+                        st <= DIV;
+                end
+
+                // One restoring step per cycle, on the REGISTERED divisor:
+                // nothing but the remainder's compare-and-subtract is in this
+                // loop now.
+                DIV: begin
+                    rem <= fits ? (rem_shifted - {1'b0, divisor_r}) : rem_shifted;
+                    q   <= {q[RECIP_BITS-2:0], fits};
+                    dstep <= dstep + 1'b1;
+                    if (dstep == RECIP_BITS-1) begin
+                        mstep <= '0; mvld <= 1'b0; st <= MUL;
                     end
                 end
                 MUL: begin
                     mvld <= (mstep < GROUPS);
                     mstep <= mstep + 1'b1;
-                    // Three drain cycles: the fold is select, multiply,
-                    // shift, then write back. The shift became a stage when
-                    // the divide was normalised -- see below.
-                    if (mstep == GROUPS + 3) st <= DONE;
+                    // Four drain cycles: select, multiply, shift coarse,
+                    // shift fine, write back. The shift became two stages
+                    // when the divide was normalised -- see below.
+                    if (mstep == GROUPS + 4) st <= DONE;
                 end
                 DONE: if (out_ready) st <= IDLE;
             endcase
@@ -222,10 +241,11 @@ module finalize #(
     //
     // The arithmetic is untouched, so every golden holds; the divide costs one
     // more cycle, once per query head at the END of a T-cycle scan.
-    logic [$clog2(GROUPS)+1:0] mstep_d, mstep_d2, mstep_d3;
-    logic mvld_d, mvld_d2;
+    logic [$clog2(GROUPS)+1:0] mstep_d, mstep_d2, mstep_d3, mstep_d4;
+    logic mvld_d, mvld_d2, mvld_d3;
     logic signed [ACC_WIDTH-1:0] sel [0:LANES-1];
     logic signed [PROD_W-1:0] prod [0:LANES-1];
+    logic signed [PROD_W-1:0] shc  [0:LANES-1];
     logic signed [PROD_W-1:0] shp  [0:LANES-1];
     // `mstep` runs two past the last group so the pipe drains; clamping the
     // read index keeps those cycles from part-selecting off the end of `acc_h`
@@ -236,39 +256,57 @@ module finalize #(
     always_ff @(posedge clk) begin
         if (!rstn) begin
             range_error <= 1'b0;
-            mstep_d <= '0; mstep_d2 <= '0; mstep_d3 <= '0;
-            mvld_d <= 1'b0; mvld_d2 <= 1'b0;
+            mstep_d <= '0; mstep_d2 <= '0; mstep_d3 <= '0; mstep_d4 <= '0;
+            mvld_d <= 1'b0; mvld_d2 <= 1'b0; mvld_d3 <= 1'b0;
         end else begin
         if (st == IDLE && in_valid) range_error <= 1'b0;
         mstep_d  <= mstep;
         mstep_d2 <= mstep_d;
         mstep_d3 <= mstep_d2;
+        mstep_d4 <= mstep_d3;
         mvld_d   <= mvld;
         mvld_d2  <= mvld_d;
+        mvld_d3  <= mvld_d2;
         for (int i = 0; i < LANES; i++)
             sel[i] <= $signed(acc_h[(rgrp*LANES + i)*ACC_WIDTH +: ACC_WIDTH]);
         for (int i = 0; i < LANES; i++)
             prod[i] <= $signed(PROD_W'(sel[i])) * $signed({1'b0, q});
-        // THE SHIFT IS ITS OWN STAGE, AND THAT IS THE NORMALISATION'S BILL.
+        // THE SHIFT IS TWO STAGES, AND THAT IS THE NORMALISATION'S BILL.
         //
         // It used to be `>>> RECIP_FRAC`, a constant, which is free wiring.
         // Normalising made it `>>> oshift_h` -- a 65-bit variable arithmetic
-        // shift, a real barrel shifter -- and in the same cycle as the range
-        // compare and the output write it took this block to WNS -0.028 ns out
-        // of context, against the +0.863 ns step 9 recorded. Registering it
-        // is the same fix, for the same reason, as the SELECT stage above; it
-        // recovers +0.022, which is positive and thin, and the full-system
-        // build is what actually decides -- step 12's lesson was that out of
-        // context is the misleading measurement.
+        // shift over a range of 47, so a six-level barrel -- and in the same
+        // cycle as the range compare and the output write it took this block
+        // from the +0.863 ns step 9 recorded to **-0.028 ns**. Giving it a
+        // register of its own recovered only +0.022: still the critical path,
+        // and thin enough that `attn_top`, which closed at +0.082 ns in the
+        // full system, would very likely have gone negative on it.
+        //
+        // The barrel is also SPLIT here -- by eights, then by the remainder.
+        // `(x >>> a) >>> b == x >>> (a+b)` for an arithmetic shift, because
+        // sign extension is idempotent, which is the only reason splitting is
+        // legal at all.
+        //
+        // BUT IT WAS NOT THE FIX, AND THE RECORD SHOULD SAY SO. Splitting it
+        // bought 0.002 ns: +0.022 to +0.024. The critical path was somewhere
+        // else entirely -- the priority encoder inside the divide loop, see
+        // `NORM` -- and taking that out took the block to +1.443 ns, past the
+        // +0.863 it had before any of this. The split is KEPT because it costs
+        // one cycle per query head at the end of a T-cycle scan and removes a
+        // six-level barrel from the output path, where the full system's
+        // routing is worse than out of context. It is insurance, not the
+        // repair.
         //
         // It also stops the range check from being a second and third shifter:
         // the comparison now reads the registered result rather than
         // recomputing it twice more.
         for (int i = 0; i < LANES; i++)
-            shp[i] <= prod[i] >>> oshift_h;
-        if (mvld_d2) begin
+            shc[i] <= prod[i] >>> {oshift_h[$clog2(L_WIDTH)+1:3], 3'b000};
+        for (int i = 0; i < LANES; i++)
+            shp[i] <= shc[i] >>> oshift_h[2:0];
+        if (mvld_d3) begin
             for (int i = 0; i < LANES; i++) begin
-                out_vec[(mstep_d3*LANES + i)*OUT_BITS +: OUT_BITS] <=
+                out_vec[(mstep_d4*LANES + i)*OUT_BITS +: OUT_BITS] <=
                     OUT_BITS'(shp[i]);
                 if (!(shp[i] >= -(PROD_W'(1) << (SEAM_BITS-1)) &&
                       shp[i] < (PROD_W'(1) << (SEAM_BITS-1))))
