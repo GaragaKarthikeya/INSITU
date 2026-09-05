@@ -409,6 +409,125 @@ static int run_case(const attn_case_t *c, int use_dma)
     return fails;
 }
 
+/* --------------------------------------------------------------------------
+ * The long-context probe: address pattern only, NOT a correctness result.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * Step 14 found that per-group starve goes 8.0, 8.8, 9.6 and then 154.5 cycles
+ * at ctx 8,192 -- 16x for an 8x context. Two components, not one: a fixed round
+ * trip per group that amortises, and a per-row term that does not. Only the
+ * second scales, and the question the whole 32k headline rests on is whether it
+ * keeps climbing.
+ *
+ * Answering it bit-exactly needs a 16.9 MB cache image in the ELF and an
+ * O(T^2) numpy prefill. Neither is needed to measure an ADDRESS PATTERN. So
+ * the A53 fills DDR itself and the block scans it, and NOTHING here is
+ * compared against a golden -- the answers are wrong by construction and are
+ * never looked at.
+ *
+ * WHAT THE SYNTHETIC IMAGE BIASES, AND IN WHICH DIRECTION
+ * ------------------------------------------------------
+ * The scan is not quite data-independent: a new running maximum costs the
+ * online softmax a rescale, and a rescale is 15 cycles of bubble. Those bubbles
+ * hand DDR extra slack. A pseudo-random image produces a different number of
+ * them than real activations do, so `cyc/row` here is not the real one.
+ *
+ * `starve` is the number this is for, and the bias runs the safe way: fewer
+ * bubbles means less slack, so a scan with few rescales STRESSES the memory
+ * harder. `probe8192` runs alongside the bit-exact ctx-8,192 case for exactly
+ * this reason -- if the two disagree wildly, these numbers mean nothing.
+ * -------------------------------------------------------------------------- */
+typedef struct { const char *name; unsigned ctx; unsigned steps; } probe_t;
+
+static const probe_t probes[] = {
+    { "probe8192",   8192, 4 },     /* the control: same ctx as a checked case */
+    { "probe16384", 16384, 4 },
+    { "probe32768", 32768, 4 },
+};
+
+static unsigned round_up(unsigned x, unsigned a) { return (x + a - 1) / a * a; }
+
+static int run_probe(const probe_t *pr, const attn_case_t *token_src)
+{
+    /* The layout, as `hw/ddr_layout.py` computes it: every plane takes the
+     * WIDEST plane's span, because `attn_top` walks them as
+     * `cache_base + p*plane_span` with one register. */
+    unsigned cap    = pr->ctx + pr->steps;
+    unsigned span   = round_up(cap * 16u, 4096u);
+    unsigned stride = 4u * span;
+    u64      bytes  = (u64)8u * stride;
+
+    xil_printf("--- %s [DMA, TIMING ONLY -- answers not checked]: "
+               "%u tokens, span %u, stride %u, image %u KB\r\n",
+               pr->name, pr->ctx, span, stride, (unsigned)(bytes >> 10));
+
+    /* Fill it. The content is irrelevant to the address pattern; it is not
+     * zeroed because an all-zero cache makes every score identical, which is
+     * the one input guaranteed to produce no rescales at all. */
+    {
+        u32 *p = (u32 *)CACHE_BASE, r = 0x1234567u;
+        for (u64 i = 0; i < bytes / 4; i++) {
+            r = r * 1103515245u + 12345u;
+            p[i] = r;
+        }
+        Xil_DCacheFlushRange((UINTPTR)CACHE_BASE, bytes);
+    }
+
+    wr(REG_MODE, 1);
+    u64 tot_scan = 0, tot_rows = 0, tot_starve = 0, tot_us = 0;
+    for (unsigned s = 0; s < pr->steps; s++) {
+        XTime t0, t1;
+        u32 st, guard = 100000000;
+
+        memcpy(dma_tx, token_src->ingress, TOKEN_BYTES);
+        Xil_DCacheFlushRange((UINTPTR)dma_tx, TOKEN_BYTES);
+        Xil_DCacheFlushRange((UINTPTR)dma_rx, RESULT_BYTES);
+
+        wr(REG_NTOK,    pr->ctx + 1 + s);
+        wr(REG_BASE_LO, (u32)CACHE_BASE);
+        wr(REG_BASE_HI, (u32)(CACHE_BASE >> 32));
+        wr(REG_STRIDE,  stride);
+        wr(REG_SPAN,    span);
+
+        XTime_GetTime(&t0);
+        if (XAxiDma_SimpleTransfer(&dma, (UINTPTR)dma_rx, RESULT_BYTES,
+                                   XAXIDMA_DEVICE_TO_DMA) != XST_SUCCESS) return 1;
+        if (XAxiDma_SimpleTransfer(&dma, (UINTPTR)dma_tx, TOKEN_BYTES,
+                                   XAXIDMA_DMA_TO_DEVICE) != XST_SUCCESS) return 1;
+        wr(REG_CTRL, 1);
+        do { st = rd(REG_CTRL); } while (!(st & ST_DONE) && --guard);
+        if (!guard) { xil_printf("    hung at step %u\r\n", s); return 1; }
+        while ((XAxiDma_Busy(&dma, XAXIDMA_DEVICE_TO_DMA) ||
+                XAxiDma_Busy(&dma, XAXIDMA_DMA_TO_DEVICE)) && --guard) { }
+        XTime_GetTime(&t1);
+
+        u32 scan = rd(REG_SCAN_CYC), starve = rd(REG_STARVE);
+        u64 rows = 8ull * (pr->ctx + 1 + s);
+        u32 us = (u32)(((t1 - t0) * 1000000ULL) / COUNTS_PER_SECOND);
+        u32 mbps = scan ? (u32)((rows * 52ull * PL_HZ_NOMINAL) / scan / 1000000ULL) : 0;
+        xil_printf("  step %u  ctx %6u  scan %7u cyc  %5u MB/s  starve %5u  "
+                   "run %5u us\r\n", s, pr->ctx + 1 + s, (unsigned)scan,
+                   (unsigned)mbps, (unsigned)starve, (unsigned)us);
+        tot_scan += scan; tot_rows += rows; tot_starve += starve; tot_us += us;
+    }
+
+    /* Per-group starve is the number step 14 asked for: the fixed round trip
+     * shows up here as a constant and the per-row term as growth. */
+    u32 cpr100 = (u32)((tot_scan * 100) / tot_rows);
+    u32 permille = (u32)((tot_starve * 1000) / tot_scan);
+    u32 per_grp10 = (u32)((tot_starve * 10) / (8ull * pr->steps));
+    u32 per_row10k = (u32)((tot_starve * 10000) / tot_rows);
+    xil_printf("  %s TOTAL: %u.%02u cyc/row, %u MB/s, starve %u.%u%% of the scan, "
+               "%u.%u cyc/group, %u.%04u cyc/row\r\n",
+               pr->name, (unsigned)(cpr100 / 100), (unsigned)(cpr100 % 100),
+               (unsigned)((tot_rows * 52ull * PL_HZ_NOMINAL) / tot_scan / 1000000ULL),
+               (unsigned)(permille / 10), (unsigned)(permille % 10),
+               (unsigned)(per_grp10 / 10), (unsigned)(per_grp10 % 10),
+               (unsigned)(per_row10k / 10000), (unsigned)(per_row10k % 10000));
+    return 0;
+}
+
 int main(void)
 {
     int fails = 0;
@@ -473,6 +592,16 @@ int main(void)
     }
     if (!dma_ok)
         xil_printf("!!! the DMA did not initialise; only the AXI-Lite path ran\r\n");
+
+    /* The long-context probe. Last, so a failure here cannot cost the
+     * bit-exact results above -- and it overwrites the cache region, which is
+     * why nothing after it may assume the image is still there. */
+    if (dma_ok && attn_n_cases > 0) {
+        xil_printf("=== long-context probe: address pattern only ===\r\n");
+        for (unsigned i = 0; i < sizeof(probes) / sizeof(probes[0]); i++)
+            if (run_probe(&probes[i], &attn_cases[0]))
+                xil_printf("!!! %s did not complete\r\n", probes[i].name);
+    }
 
     xil_printf("=== %s ===\r\n", fails ? "FAILURES PRESENT" : "ALL TESTS PASSED");
     Xil_DCacheDisable();
