@@ -46,11 +46,23 @@ class _Base:
             raise RuntimeError(f"result is {len(body)} B, expected {P.RESULT_BYTES}")
         return body, h
 
+    # The board reassembles into a buffer sized for a TOKEN -- 64 +
+    # ATTN_TOKEN_BYTES = 9,280 bytes -- and silently drops any fragment that
+    # would run past it. A load bigger than that never completes, never
+    # replies, and times out with "0 of ? fragments", which says nothing about
+    # the actual limit. So the host does the splitting.
+    LOAD_CHUNK = 8192
+
     def load(self, image: bytes, cache_base: int) -> None:
-        self._seq = getattr(self, "_seq", 0) + 1
-        h, _ = self._exchange(P.load_request(image, cache_base, seq=self._seq))
-        if h["status"] != P.OK:
-            raise RuntimeError(f"load returned {h['status']}")
+        for off in range(0, len(image), self.LOAD_CHUNK):
+            part = image[off:off + self.LOAD_CHUNK]
+            self._seq = getattr(self, "_seq", 0) + 1
+            h, _ = self._exchange(
+                P.load_request(part, cache_base + off, seq=self._seq))
+            if h["status"] != P.OK:
+                raise RuntimeError(
+                    f"load of {len(part)} B at {cache_base + off:#x} returned "
+                    f"{h['status']} ({P.STATUS_NAME.get(h['status'], '?')})")
 
     # `JtagClient` calls it `load_cache`; the name is aliased rather than
     # picked, so a caller can hold any transport without knowing which.

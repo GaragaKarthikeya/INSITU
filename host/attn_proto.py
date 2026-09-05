@@ -32,6 +32,9 @@ CMD_LOAD = 2
 
 BEAT = 64
 TOKEN_BYTES = 9216
+# The board's reassembly buffer holds one token; a larger request is dropped
+# fragment by fragment and never answered. `RawEthClient.load` splits to fit.
+MAX_PAYLOAD = 9216
 RESULT_BYTES = 6144
 
 OK, EBADMAGIC, EBADVER, EBADCMD, EBADLEN, ETIMEOUT, EDMA, ERANGE = range(8)

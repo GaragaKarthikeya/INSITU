@@ -35,6 +35,11 @@
 #define ATTN_CMD_STEP 1             /* one decode step: payload is the token */
 #define ATTN_CMD_LOAD 2             /* write payload into the cache at cache_base */
 
+/* The board reassembles a message into a buffer sized for one token, so a
+ * request's payload cannot exceed this. A CMD_LOAD larger than it is dropped
+ * fragment by fragment and never answered -- the host splits instead. */
+#define ATTN_MAX_PAYLOAD  9216
+
 #define ATTN_BEAT       64          /* bytes per 512-bit beat */
 #define ATTN_TOKEN_BYTES  9216      /* 8 groups x 6 vectors x 3 beats x 64 B */
 #define ATTN_RESULT_BYTES 6144      /* 2,048 lanes x 24 b */
