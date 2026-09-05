@@ -245,6 +245,7 @@ int attn_eth_init(void)
         XEmacPs_Bd *bd;
         if (XEmacPs_BdRingAlloc(rxr, 1, &bd) != XST_SUCCESS) return -1;
         XEmacPs_BdSetAddressRx(bd, (UINTPTR)rx_buf[i]);
+        XEmacPs_BdClearRxNew(bd);
         Xil_DCacheInvalidateRange((UINTPTR)rx_buf[i], FRAME_MAX);
         if (XEmacPs_BdRingToHw(rxr, 1, bd) != XST_SUCCESS) return -1;
     }
@@ -349,9 +350,28 @@ int attn_eth_recv(u8 *dst, int max)
     XEmacPs_BdRingFree(rxr, 1, bd);
     if (XEmacPs_BdRingAlloc(rxr, 1, &bd) == XST_SUCCESS) {
         XEmacPs_BdSetAddressRx(bd, addr);
+        /* CLEARING "NEW" IS THE CALLER'S JOB, AND FORGETTING IT IS AN INFINITE
+         * LOOP RATHER THAN A DROPPED FRAME.
+         *
+         * Bit 0 of an RX descriptor's address word means "the GEM has filled
+         * this buffer". The CPU clears it to hand ownership back.
+         * `XEmacPs_BdSetAddressRx` deliberately PRESERVES the low bits (it
+         * masks the address in), and `XEmacPs_BdRingToHw` never touches them
+         * -- `RXBUF_NEW_MASK` does not appear in any of the driver's .c files.
+         *
+         * Left set, the GEM will not reuse the buffer, `BdRingFromHwRx`
+         * reports it complete again on the very next call, and the same frame
+         * is delivered forever. The board served the same request 948,353
+         * times and saturated the link at 300 Mb/s; from the host it looked
+         * like a hang eight layers in. */
+        XEmacPs_BdClearRxNew(bd);
         Xil_DCacheInvalidateRange(addr, FRAME_MAX);
         XEmacPs_BdRingToHw(rxr, 1, bd);
         bd_flush_one(bd);          /* THIS descriptor only -- see above */
+    } else {
+        /* Silently losing a descriptor drains the ring one frame at a time and
+         * ends in a receiver that has simply stopped. */
+        xil_printf("ETH: rx ring exhausted -- a descriptor leaked\r\n");
     }
     return taken;
 }
