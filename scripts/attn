@@ -5,6 +5,7 @@
 #   ./scripts/attn infer --tokens 24 --trace # all layers, live, on the board
 #   ./scripts/attn ppl   --tokens 256        # perplexity, board vs baseline
 #   ./scripts/attn infer --cpu-only          # the control: no board, no sudo
+#   ./scripts/attn diff                      # board's cache bytes vs the host's
 #   ./scripts/attn reset                     # reprogram and stop
 #
 # WHY THIS DOES SO MUCH
@@ -34,6 +35,7 @@ case "$cmd" in
   probe) mod=kernel.host.eth_probe;         board=1; args=(--eth "$IFACE") ;;
   infer) mod=kernel.experiments.fpga_infer; board=1; args=(--eth "$IFACE") ;;
   ppl)   mod=kernel.experiments.fpga_ppl;   board=1; args=(--eth "$IFACE") ;;
+  diff)  mod=kernel.experiments.cache_diff;  board=1; args=() ;;
   reset) mod=""; board=2; args=() ;;
   *) sed -n '2,8p' "$SELF"; exit 2 ;;
 esac
