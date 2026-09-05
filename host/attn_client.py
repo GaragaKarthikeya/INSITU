@@ -127,6 +127,20 @@ class RawEthClient(_Base):
         self.sock.bind((iface, P.ETHERTYPE))
         self.sock.settimeout(timeout)
         self.src = self.sock.getsockname()[4][:6]
+        # AN AF_PACKET SOCKET SEES ITS OWN TRANSMISSIONS.
+        # `eth_probe` proved it: five pings sent, ten frames of our ethertype
+        # observed. Without this the receive loop reassembles the REQUEST it
+        # just sent as if it were the reply -- and a request parsed as a
+        # response is not obviously wrong, because the magic matches and the
+        # `version` field lands where `status` is read.
+        try:
+            self.sock.setsockopt(socket.SOL_PACKET, 23, 1)   # PACKET_IGNORE_OUTGOING
+            self._ignore_outgoing = True
+        except OSError:
+            self._ignore_outgoing = False    # pre-4.20 kernel; the MAC filter covers it
+        self.rx_frames = 0
+        self.rx_dropped_self = 0
+        self.rx_dropped_seq = 0
 
     def close(self):
         self.sock.close()
@@ -163,8 +177,15 @@ class RawEthClient(_Base):
             body = frame[14:]
             if len(body) < self.FRAG_HDR.size:
                 continue
+            self.rx_frames += 1
+            # BY SOURCE MAC, always -- PACKET_IGNORE_OUTGOING is a recent
+            # kernel's convenience and this is the property that must hold.
+            if frame[6:12] != self.peer:
+                self.rx_dropped_self += 1
+                continue
             rseq, frag, nf = self.FRAG_HDR.unpack_from(body)
             if rseq != seq:
+                self.rx_dropped_seq += 1
                 continue            # a straggler from an earlier request
             nfrag = nf
             parts[frag] = body[self.FRAG_HDR.size:]

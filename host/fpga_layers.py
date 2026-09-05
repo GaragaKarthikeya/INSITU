@@ -40,6 +40,8 @@ and become the layer output.
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 
 from ..hw.ddr_layout import DdrLayout
@@ -52,13 +54,15 @@ class FpgaLayers:
 
     def __init__(self, model, client, layers, capacity: int,
                  cache_base: int = 0x10000000, verify: bool = True,
-                 quiet: bool = False):
+                 quiet: bool = False, trace: bool = False):
         from ..adapters.torch_llama import graft
 
         self.client = client
         self.capacity = capacity
         self.verify = verify
         self.quiet = quiet
+        self.trace = trace
+        self.wire_s = 0.0
         self.layers = list(layers)
 
         graft(model, layers=self.layers, capacity=capacity)
@@ -129,9 +133,20 @@ class FpgaLayers:
             n_tokens = kern.cache.length + 1
 
             vs = collect(kern, row)
+            t0 = time.time()
             got, c = outer.client.step(vs.ingress_bytes(), n_tokens, base,
                                        outer.head_stride, outer.plane_span)
+            dt = time.time() - t0
             outer.steps += 1
+            outer.wire_s += dt
+            if outer.trace:
+                print(f"    L{L:<2} tok {n_tokens:<4} {dt * 1000:7.1f} ms wire, "
+                      f"{c.get('dev_us', 0):5d} us device")
+            elif dt > 0.25:
+                # A step should be a few milliseconds. Anything near the socket
+                # timeout means frames are being lost or ignored, and saying so
+                # per-step localises it to a layer and a token.
+                print(f"    slow: L{L} token {n_tokens} took {dt * 1000:.0f} ms")
             outer.dev_us += c.get("dev_us", 0)
             outer.scan_cycles += c.get("scan_cycles", 0)
             outer.starve_cycles += c.get("starve_cycles", 0)
@@ -179,6 +194,15 @@ class FpgaLayers:
                          f"{self.disagree} different")
         lines.append(f"  device time: {self.dev_us / 1000:.1f} ms total, "
                      f"{self.dev_us / self.steps:.0f} us/step")
+        lines.append(f"  wire time:   {self.wire_s * 1000:.0f} ms total, "
+                     f"{self.wire_s / self.steps * 1000:.1f} ms/step "
+                     f"({self.dev_us / 1000 / max(self.wire_s * 1000, 1e-9) * 100:.1f}% "
+                     f"of it is the block)")
+        c = self.client
+        if getattr(c, "rx_frames", None) is not None:
+            lines.append(f"  frames seen {c.rx_frames}, dropped as ours "
+                         f"{c.rx_dropped_self}, dropped by seq {c.rx_dropped_seq}"
+                         f"{'' if getattr(c, '_ignore_outgoing', False) else ' (no PACKET_IGNORE_OUTGOING)'}")
         lines.append(f"  scan: {self.scan_cycles} cycles, "
                      f"{self.starve_cycles} starving "
                      f"({100.0 * self.starve_cycles / max(self.scan_cycles, 1):.2f}%)")

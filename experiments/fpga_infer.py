@@ -67,6 +67,8 @@ def main(argv=None) -> int:
     ap.add_argument("--jtag", action="store_true")
     ap.add_argument("--cpu-only", action="store_true")
     ap.add_argument("--timeout", type=float, default=5.0)
+    ap.add_argument("--trace", action="store_true",
+                    help="print every board round trip, layer by layer")
     ap.add_argument("--no-verify", action="store_true",
                     help="skip the per-step comparison against numpy")
     ap.add_argument("--device", default="auto",
@@ -106,7 +108,8 @@ def main(argv=None) -> int:
         fpga = None
     else:
         fpga = FpgaLayers(model, client, layers, capacity,
-                          cache_base=CACHE_BASE, verify=not a.no_verify)
+                          cache_base=CACHE_BASE, verify=not a.no_verify,
+                          trace=a.trace)
         print(f"{len(layers)} layers on the board, capacity {capacity}, "
               f"{fpga.layer_stride} B each, {fpga.bytes_used / 1e6:.1f} MB of DDR "
               f"from {CACHE_BASE:#x}")
