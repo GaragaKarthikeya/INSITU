@@ -1416,12 +1416,22 @@ engines and no consumer. The engine's DEMAND is capped at 13.0 GB/s by the
 datapath — one row per cycle, 52 B — and the measured 10.4 GB/s at ctx 1,024 is
 that ceiling less the fill and drain above. Demand-limited, not supply-limited.
 
-The falsifiable form of step 1's gate is the **starve fraction**, and it is
-**falling**: 3.1% → 1.8% → 0.7% across the three contexts. The absolute count
-barely moves — 64, 70, 76 cycles per step — because it is a fixed DDR round
-trip paid once per group and then amortised over a longer scan. A supply that
-could not keep up would stall a proportional share of every scan and the
-fraction would be flat or rising. It is neither.
+The falsifiable form of step 1's gate is the **starve fraction**, and across
+these three contexts it **falls**: 3.1% → 1.8% → 0.7%. The absolute count
+barely moves — 64, 70, 76 cycles per step — which reads as a fixed DDR round
+trip paid once per group and then amortised over a longer scan.
+
+> **CORRECTED BY STEP 14, AND THE CORRECTION MATTERS.** The paragraph that
+> stood here concluded "a supply that could not keep up would stall a
+> proportional share of every scan and the fraction would be flat or rising; it
+> is neither." At **ctx 8,192 the fraction rises again, to 1.6%**, and the
+> per-group starve goes from 9.6 cycles to **154.5** — 16× for an 8× context.
+> Three points that happened to be monotone were read as a trend, and the trend
+> was an artifact of never having measured past ctx 1,024. What the four points
+> actually show is TWO components: a fixed per-group round trip, which does
+> amortise, and a **per-row** term that does not — 0.0094 cyc/row at ctx 1,025
+> against 0.0189 at ctx 8,193. The conclusion that the engine is fed survives;
+> the reasoning that got there did not. See step 14.
 
 ### The transport is the step, and that is the measurement step 14 needs
 
@@ -1537,6 +1547,75 @@ Not done:
   client instead of to numpy, with the GPU running the rest of the model. That
   is what the exit criterion's tok/s comes from, so **step 14 is not closed and
   no end-to-end throughput is claimed yet.**
+
+### On the board: 32 steps, four contexts, both paths, all bit-exact
+
+`results/step14_dma_f250.log`. Every case runs twice — once through the
+AXI-Lite buffers, once through the DMA — and both are checked against the
+goldens, so the fast path agreeing with the slow one is not what passes it.
+**This is also the first hardware run of the normalised divide**, so every
+golden in it is new.
+
+**The DMA removes the transport, and the shorter the context the more it
+matters.**
+
+| ctx | AXI-Lite µs/step | DMA µs/step | speedup | transport, AXI-Lite → DMA |
+|---|---|---|---|---|
+| 64 | 400 | **30** | 13.3× | 367 → 3 µs |
+| 256 | 408 | **36** | 11.2× | 367 → 3 µs |
+| 1,024 | 433 | **64** | 6.8× | 367 → 4.5 µs |
+| 8,192 | 699 | **330** | 2.1× | 367 → 5 µs |
+
+Step 13's 366 µs is now ~5 µs and does not grow with context, because the
+transfer overlaps the scan instead of bracketing it — `read` is 0 µs in every
+DMA row, and that is not a missing measurement but a transfer that finished
+inside the run. At ctx 64 the step is now 30 µs against a 27 µs block: the
+shim has stopped being the measurement.
+
+**The scan keeps converging on one row per cycle: 3.86 → 1.85 → 1.25 → 1.17.**
+At ctx 8,192 the engine sustains **11.1 GB/s**, 85% of the 13.0 GB/s its
+datapath can consume, and the remaining 15% is the per-group fill plus starve.
+
+**Where that leaves the headline number, honestly.** At ctx 8,192 one layer's
+attention is **325 µs** on the DMA path. Over Llama 3.2 1B's 16 layers that is
+**5.20 ms/token, or 192 tok/s** — against the **234 tok/s** the table below
+predicts. The 18% gap is not mysterious and is not measurement noise: the table
+assumes the scan retires one row per cycle at the full 14.7 GB/s, and the
+hardware retires 1.17 rows-worth of cycles per row at 11.1 GB/s.
+
+**And the starve number is the one to carry forward.** Per group it is 8.0,
+8.8, 9.6 and then **154.5** cycles at ctx 8,192. As a share of the scan it
+falls, falls, falls and then rises — 3.1%, 1.8%, 0.7%, **1.6%**. Two
+components, not one: a fixed round trip per group, and a per-row term that
+roughly doubled between ctx 1,024 and 8,192 (0.0094 → 0.0189 cyc/row). Only
+the second scales, and only long contexts show it. **Extrapolated to ctx
+32,768 it is 3–4% of the scan** — still small, still worth measuring rather
+than assuming, and the reason step 15 should not quote a 32k number it has not
+run.
+
+**A measurement artifact worth naming so nobody chases it.** The implied PL
+clock reads 226–249 MHz and the low readings are all in DMA mode at short
+context. It is integer-µs truncation: at ctx 64 the DMA step is 27 µs, so ±1 µs
+is ±3.7%. The ctx-8,192 rows, where the step is 325 µs, read 248–249 MHz. The
+clock did not move; the ruler got shorter.
+
+**The DMA costs a little starve, consistently.** 292 against 256 at ctx 64, 386
+against 308 at ctx 1,024, 5,058 against 4,943 at ctx 8,192 — a few percent more
+in every case. HPC0 is a separate port but not a separate DRAM, so the token
+transfer does contend with the scan for the controller. It is small enough to
+note and not to act on.
+
+Full system, `xczu7ev-ffvc1156-2-e`, routed:
+
+| | WNS | WHS | FF |
+|---|---|---|---|
+| `attn_bd_wrapper` @ 250 MHz, PS + DMA + normalised divide | **+0.161 ns** | +0.010 ns | 143,181 |
+| `attn_bd_wrapper` @ 250 MHz, PS master (step 13) | +0.082 ns | +0.009 ns | 123,990 |
+| `attn_bd_wrapper` @ 250 MHz, JTAG master (step 12) | +0.006 ns | +0.010 ns | 135,143 |
+
+The margin went UP while the design grew by a DMA, a smartconnect, a coherent
+port and two pipeline stages — because taking the priority encoder out of the
+divide loop bought more than all of that cost.
 
 **Step 15 — the result.** Perplexity from a run where attention genuinely
 executed on the FPGA, then sweep `KEY_BITS`/`VAL_BITS`.
