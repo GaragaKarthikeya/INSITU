@@ -27,6 +27,18 @@
 # one interconnect serialises them at the crossbar, and the whole design is
 # sized against four ports delivering 16.0 GB/s.
 #
+# GEM3 IS ENABLED HERE, AND IT WAS NOT BEFORE
+# -------------------------------------------
+# The ZCU104's RJ45 hangs off GEM3 on MIO 64..75 with MDIO on 76..77, and the
+# board preset did NOT turn it on -- the generated device tree carried
+# `gem3: ethernet@ff0e0000 { status = "disabled" }`, so there was no MIO
+# routing and no `psu_init` for it. Nothing in the PL changes; this is PS
+# peripheral configuration, which is baked into the platform, so enabling it
+# costs a full rebuild.
+#
+# Step 14's transport needs it: raw Ethernet at ~35 us of round trip against
+# JTAG's quarter of a second.
+#
 # THE DMA IS HERE BECAUSE STEP 13 MEASURED WHY
 # --------------------------------------------
 # 366 us of every 433 us decode step was the A53 pushing 15 KB through the
@@ -74,6 +86,10 @@ foreach {k v} [list \
     PSU__MAXIGP0__DATA_WIDTH              32 \
     PSU__USE__S_AXI_GP0                   1 \
     PSU__SAXIGP0__DATA_WIDTH              128 \
+    PSU__ENET3__PERIPHERAL__ENABLE        1 \
+    PSU__ENET3__PERIPHERAL__IO            {MIO 64 .. 75} \
+    PSU__ENET3__GRP_MDIO__ENABLE          1 \
+    PSU__ENET3__GRP_MDIO__IO              {MIO 76 .. 77} \
     PSU__USE__M_AXI_GP1                   0 \
     PSU__USE__S_AXI_GP2                   1 \
     PSU__USE__S_AXI_GP3                   1 \

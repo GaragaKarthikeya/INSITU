@@ -158,8 +158,22 @@ def main(argv=None) -> int:
         attn._advance_hf_cache(kwargs.get("past_key_values"), x)
         return (o if squeeze else o.unsqueeze(0)), None
 
-    attn.forward = board_forward
-    attn.__call__ = board_forward
+    # PATCH THE TYPE, NOT THE INSTANCE.
+    #
+    # `KernelAttention` sets `__call__ = forward` at class scope, and Python
+    # resolves dunder methods on the TYPE -- so `attn(...)` ignores an instance
+    # attribute called `__call__` entirely and keeps calling the original. The
+    # first run of this script produced perfectly good text with the board
+    # untouched, and the only thing that said so was the agreement counter
+    # reading 0/0. `type(attn)` is safe to modify: `KernelAttention.__new__`
+    # builds a fresh subclass per instance.
+    cls = type(attn)
+
+    def _bound(self, hidden_states, *args, **kwargs):
+        return board_forward(hidden_states, *args, **kwargs)
+
+    cls.forward = _bound
+    cls.__call__ = _bound
 
     print(f"generating {a.tokens} tokens"
           + ("" if client else " (numpy only, --cpu-only)"))
@@ -178,6 +192,16 @@ def main(argv=None) -> int:
     print(tok.decode(text_ids, skip_special_tokens=True))
     print("=" * 70)
     if client:
+        # A SILENT FALLBACK IS THE WORST OUTCOME HERE. The numpy kernel produces
+        # the same text, so a run where the board was never asked looks exactly
+        # like a run where it worked -- that is what happened the first time.
+        if agree + disagree == 0:
+            print("!!! THE BOARD WAS NEVER ASKED. The text above is the host's.")
+            client.quit()
+            return 2
+        if agree + disagree != a.tokens:
+            print(f"!!! only {agree + disagree} of {a.tokens} tokens reached "
+                  f"the board")
         print(f"tokens on the FPGA: {agree} agreed with the host, {disagree} did not")
         print(f"device time: {dev_us} us total, {dev_us / max(a.tokens, 1):.0f} us/token "
               f"(the block itself)")

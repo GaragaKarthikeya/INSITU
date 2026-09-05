@@ -121,13 +121,29 @@ class JtagClient:
     def _connect(self):
         self.x.cmd("connect")
         self.x.cmd('targets -set -nocase -filter {name =~ "*A53*#0*"}')
+        # A round trip before anything depends on one. `mwr` prints nothing
+        # whether it worked or not, so without this the first evidence that the
+        # link is dead is a step that times out several seconds later -- or, as
+        # happened here, a cache image "pushed" in 0.6 s that never arrived.
+        probe = self.mbx + 0x20
+        for pattern in (0x5A5AA5A5, 0xA5A55A5A):
+            self._wr_words(probe, [pattern])
+            got = self._rd_words(probe, 1)[0]
+            if got != pattern:
+                raise XsdbError(
+                    f"JTAG round trip failed at {probe:#x}: wrote {pattern:#010x}, "
+                    f"read {got:#010x}. Is the board programmed and the A53 running?")
 
     # -- memory --------------------------------------------------------------
     def _wr_words(self, addr: int, words: list[int]) -> None:
         self.x.cmd(f"mwr -force {addr:#x} {{{' '.join(str(w) for w in words)}}}")
 
     def _rd_words(self, addr: int, n: int) -> list[int]:
-        out = self.x.cmd(f"mrd -force {addr:#x} {n}")
+        # `puts [mrd ...]`, NOT bare `mrd`. A TCL REPL echoes each command's
+        # result only when its input is a terminal; driven from a pipe it
+        # prints nothing at all, so a bare `mrd` returns an empty string and
+        # every read looks like a board that answered with silence.
+        out = self.x.cmd(f"puts [mrd -force {addr:#x} {n}]")
         vals = []
         for line in out.strip().split("\n"):
             if ":" not in line:
@@ -155,6 +171,16 @@ class JtagClient:
     def load_cache(self, image: bytes, cache_base: int) -> None:
         """The image, once, before decoding. Megabytes, so this is the slow part."""
         self._wr_bin(cache_base, image)
+        # Verified, because `mwr -bin -file` reports nothing. The LAST words
+        # are checked rather than the first: a transfer that starts and dies
+        # part way is the failure a head-of-buffer check cannot see.
+        tail = len(image) - 16
+        want = list(struct.unpack("<4I", image[tail:tail + 16]))
+        got = self._rd_words(cache_base + tail, 4)
+        if got != want:
+            raise XsdbError(
+                f"the cache image did not land: at +{tail:#x} wrote "
+                f"{[f'{w:#010x}' for w in want]}, read {[f'{g:#010x}' for g in got]}")
 
     def step(self, token: bytes, n_tokens: int, cache_base: int,
              head_stride: int, plane_span: int, timeout: float = 30.0):
