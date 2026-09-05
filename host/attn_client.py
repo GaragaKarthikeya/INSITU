@@ -133,11 +133,15 @@ class RawEthClient(_Base):
         # just sent as if it were the reply -- and a request parsed as a
         # response is not obviously wrong, because the magic matches and the
         # `version` field lands where `status` is read.
+        # SOL_PACKET is 263 and PACKET_IGNORE_OUTGOING is 23. Neither is
+        # exposed by every Python build, so they are written as numbers, and
+        # the guard catches AttributeError as well as OSError -- an older
+        # kernel refuses the option and an older Python has no name for it.
         try:
-            self.sock.setsockopt(socket.SOL_PACKET, 23, 1)   # PACKET_IGNORE_OUTGOING
+            self.sock.setsockopt(getattr(socket, "SOL_PACKET", 263), 23, 1)
             self._ignore_outgoing = True
-        except OSError:
-            self._ignore_outgoing = False    # pre-4.20 kernel; the MAC filter covers it
+        except (OSError, AttributeError):
+            self._ignore_outgoing = False    # the MAC filter below is the real guard
         self.rx_frames = 0
         self.rx_dropped_self = 0
         self.rx_dropped_seq = 0
