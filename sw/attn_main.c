@@ -702,6 +702,18 @@ static void serve_eth(void)
         if (msg_len < sizeof(rq)) continue;
         memcpy(&rq, eth_msg, sizeof(rq));
 
+        /* The first few requests, as PARSED. Two wrong guesses about this
+         * path have already cost a rebuild each; what the board actually
+         * decoded is cheaper than another theory. */
+        if (served < 3)
+            xil_printf("ETH: req seq %u frags %u/%u msg %u B | magic %08x "
+                       "ver %u cmd %u payload %u ntok %u stride %u span %u\r\n",
+                       (unsigned)fh.seq, (unsigned)have, (unsigned)want,
+                       (unsigned)msg_len, (unsigned)rq.magic,
+                       (unsigned)rq.version, (unsigned)rq.cmd,
+                       (unsigned)rq.payload, (unsigned)rq.n_tokens,
+                       (unsigned)rq.head_stride, (unsigned)rq.plane_span);
+
         attn_resp_hdr rs;
         memset(&rs, 0, sizeof(rs));
         rs.magic = ATTN_MAGIC;
