@@ -311,23 +311,30 @@ class AttentionConfig:
 
     MEASURED, not estimated. `tb_softmax_accum` counts the bubbles directly --
     a score sitting in the input FIFO with no pop -- over 39 rescale events
-    across two stimulus sets, and gets **12 cycles each**, not the 1 an earlier
+    across two stimulus sets, and gets **15 cycles each**, not the 1 an earlier
     draft assumed. A new maximum must not move while tokens computed against
     the old one are in flight, so the event is: drain the three-stage exp pipe,
     three more cycles to compute the factor from it, issue the SCALE, and wait
     while `accum` folds 64 channels through 8 multipliers.
 
-    It was 11 until step 11 placed and routed `attn_top`. `accum`'s fold was
-    one cycle -- select a group of 8 channels through a mux driven by all 64,
-    then a 48x16 product -- and that path routed to -0.550 ns at 250 MHz with
-    four lanes on the die, against +0.675 ns for the block alone. The fold is
-    now two stages, so an event costs one cycle more. The arithmetic did not
-    move: the goldens are unchanged and the bench still checks every one.
+    It was 11 until the design was placed and routed. Every increase since is
+    a pipeline stage bought to reach 250 MHz, and none of them touched the
+    arithmetic -- the goldens are unchanged and the bench still checks every
+    one:
+
+    * 11 -> 12: `accum`'s rescale fold split into select, then multiply.
+    * 12 -> 14: both of `accum`'s wide products -- 32x20 for the terms and
+      48x16 for the fold -- registered between the multiply and the cascade
+      adder. Each is wider than one DSP48 and maps to a PAIR, which does not
+      reach 250 MHz without that register; it is the DSP's own MREG, and
+      Vivado infers it only if the RTL has one there.
+    * 14 -> 15: `a_w` registered before the term multiply, so two multipliers
+      are not in series in one cycle.
 
     It does not change any conclusion, and that is worth stating plainly. New
     maxima are logarithmically rare -- about ln T + 0.577 -- so at a context of
-    32,768 this is 11 events and 132 cycles against a 32,786-cycle scan:
-    **0.40%**, against the 0.27% the 8-cycle estimate gave. The rescale is
+    32,768 this is 11 events and 165 cycles against a 32,786-cycle scan:
+    **0.50%**, against the 0.27% the 8-cycle estimate gave. The rescale is
     still nearly free and the hazard still shrinks as context grows.
 
     `score_latency` covers S0..S10, score through softmax. `score_lane.sv`
@@ -337,7 +344,7 @@ class AttentionConfig:
 
     lanes: int = 4                  # query heads in a group, in parallel
     score_latency: int = 11         # 8 in score_lane + 3 in the exp pipe
-    rescale_cycles: int = 12        # measured; see the docstring
+    rescale_cycles: int = 15        # measured; see the docstring
 
 
 @dataclass(frozen=True)

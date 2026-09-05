@@ -196,18 +196,31 @@ module attn_top #(
            .out_ready(1'b1), .out_codes(encv_codes));
 
     // -------------------------------------------------------- the cache
-    // REGISTERED, not combinational.  `grp * head_stride` is a 49-bit product
-    // and the plane readers add their own offset to it, so driving this
-    // straight from `grp` puts a 16-level carry chain between two flops and
-    // routed to -0.049 ns at 250 MHz.  `grp` settles at the end of a group's
-    // egress and the base is not read until that group's scan starts, hundreds
-    // of cycles later, so a cycle of latency here costs nothing at all.
-    logic [N_PORTS*AW-1:0] head_base, head_base_c;
-    always_comb
-        for (int p = 0; p < N_PORTS; p++)
-            head_base_c[p*AW +: AW] = cache_base + AW'(grp) * AW'(head_stride)
-                                                 + AW'(p) * AW'(plane_span);
-    always_ff @(posedge clk) head_base <= head_base_c;
+    // INCREMENTAL, not a multiply, and registered.
+    //
+    // `cache_base + grp*head_stride + p*plane_span` is a 49-bit product and two
+    // 49-bit adds. Registering it kept that arithmetic between two flops and it
+    // stayed on the critical path -- 16 levels of carry from a counter that
+    // changes once per group. There is no reason to multiply: the group index
+    // only ever advances by one, so the base only ever advances by
+    // `head_stride`. One 49-bit add per plane, once per group, hundreds of
+    // cycles before anything reads it.
+    logic [N_PORTS*AW-1:0] head_base;
+
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            head_base <= '0;
+        end else if (start) begin
+            for (int p = 0; p < N_PORTS; p++)
+                head_base[p*AW +: AW] <= cache_base + AW'(p) * AW'(plane_span);
+        end else if (st == S_EGRESS && m_valid && m_ready
+                     && egr_beat == NBEAT_EGR-1 && grp != KV_HEADS-1) begin
+            // The group that is about to start reads this; the group that just
+            // finished is done with it.
+            for (int p = 0; p < N_PORTS; p++)
+                head_base[p*AW +: AW] <= head_base[p*AW +: AW] + AW'(head_stride);
+        end
+    end
 
     logic scan_start, store_busy, row_valid, row_ready;
     logic [ROW_BYTES*8-1:0] row_data;
@@ -237,7 +250,19 @@ module attn_top #(
     logic [GROUPS-1:0] sm_ready, sm_lovf;
     logic [GROUPS-1:0] fin_valid, fin_ready, fin_out_valid, fin_range, fin_got;
     logic [GROUPS-1:0] tok_done;
+    // A REGISTERED write enable per lane, not the FSM state.
+    //
+    // `q_vec` is 4 x 1,536 flops and decoding `st == S_QLOAD` into their clock
+    // enables put the state register on 6,144 CE pins -- the same shape as the
+    // egress register that cost -1.953 ns in the full system. One flop per lane
+    // drives them instead, and synthesis is free to replicate it.
+    (* max_fanout = 64 *)
+    logic [GROUPS-1:0] q_we;
     logic [VEC_BITS-1:0] q_vec [GROUPS];
+
+    always_ff @(posedge clk)
+        for (int i = 0; i < GROUPS; i++)
+            if (q_we[i]) q_vec[i] <= rvec;
     logic [D*OUT_BITS-1:0] fin_vec [GROUPS];
     logic [31:0] lane_ovf [GROUPS];
     logic [31:0] scan_count [GROUPS];
@@ -418,7 +443,7 @@ module attn_top #(
             nrm_in_valid <= 1'b0; nrm_out_ready <= 1'b0;
             enck_valid <= 1'b0; encv_valid <= 1'b0;
             wr_valid <= 1'b0; scan_start <= 1'b0;
-            q_valid <= '0; tab_commit <= '0; fin_valid <= '0;
+            q_valid <= '0; tab_commit <= '0; fin_valid <= '0; q_we <= '0;
             m_valid <= 1'b0; done <= 1'b0; grp <= '0; egr_beat <= '0;
             m_data <= '0;
         end else begin
@@ -426,6 +451,7 @@ module attn_top #(
             scan_start <= 1'b0;
             tab_commit <= '0;
             done <= 1'b0;
+            q_we <= '0;
 
             case (st)
                 S_IDLE: if (start) begin
@@ -453,6 +479,9 @@ module attn_top #(
                             nrm_out_ready <= 1'b1;
                             st <= S_NORM;
                         end else begin
+                            // The vector is latched by `q_we` on the way into
+                            // S_QLOAD, one cycle before `q_valid` is raised.
+                            q_we[vidx - 3'd2] <= 1'b1;
                             st <= S_QLOAD;
                         end
                     end
@@ -504,7 +533,6 @@ module attn_top #(
 
                 S_QLOAD: begin
                     q_valid[vidx - 3'd2] <= 1'b1;
-                    q_vec[vidx - 3'd2] <= rvec;
                     if (q_valid[vidx - 3'd2] && q_ready[vidx - 3'd2]) begin
                         q_valid[vidx - 3'd2] <= 1'b0;
                         st <= (vidx == 3'd5) ? S_COMMIT : S_RECV;

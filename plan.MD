@@ -1226,7 +1226,7 @@ Mirror the order that already worked in `systolic_zcu104`.
 round trip, so no throughput claim.
 *Exit:* one decode step bit-exact against the on-target CPU golden model.
 
-**Status: DONE, at 150 MHz.** `rtl/attn_ctrl.sv`, `tb/tb_attn_ctrl.sv`,
+**Status: DONE, at 250 MHz.** `rtl/attn_ctrl.sv`, `tb/tb_attn_ctrl.sv`,
 `scripts/create_bd_attn.tcl`, `scripts/build_attn_bit.tcl`,
 `scripts/jtag_ps_init.sh`, `scripts/jtag_attn.tcl`.
 
@@ -1242,32 +1242,63 @@ against itself.
 ### cache image loaded: 6784 words over 1696 beats, token 64 blanked
 ### token loaded and verified: 2304 words
 ### done after 1 polls, status 00000002
-### starve 00000033  clips 00000000  overflows 00000000
+### starve 00000040  clips 00000000  overflows 00000000
 ### all 1536 words match out.online.hex
 ```
 
-51 starve cycles, no score saturated, no accumulator channel wrapped, and no
-channel escaped the 24-bit seam.
+64 starve cycles, no score saturated, no accumulator channel wrapped, and no
+channel escaped the 24-bit seam. (At 150 MHz the same run starves for 51
+cycles: the DDR round trip is a fixed number of nanoseconds, so it is more
+cycles at a faster clock. It is paid once per scan.)
 
-**THE CLOCK IS 150 MHz AND THAT IS A REAL RESULT, NOT A ROUNDING.** The full
-system missed 250 MHz: **WNS −1.953 ns** with 49,557 failing endpoints, against
-`attn_top`'s +0.053 ns out of context. Step 12 claims correctness and not a
-rate, so a slower clock costs it nothing — but a bitstream that misses timing
-is worse than useless *for correctness*, because it produces wrong answers that
-are indistinguishable from datapath bugs. 150 MHz closes at **+0.552 ns** and
-the answer it returns is the one the model computes.
+**250 MHz IN THE FULL SYSTEM, AND IT TOOK SEVEN FIXES TO GET THERE.** The first
+attempt missed by **−1.953 ns** with 49,557 failing endpoints, against
+`attn_top`'s +0.053 ns out of context. A 150 MHz build was taken first and
+passed on the board — correctness owes nothing to the clock — but a bitstream
+that misses timing is worse than useless *for* correctness, because it produces
+wrong answers indistinguishable from datapath bugs. So the timing was closed
+rather than worked around.
 
-**What the full system found that out-of-context could not.** The failing path
-was `attn_top`'s own doing: a 6,144-bit `egr` register, loaded from `fin_vec`
-and shifted 512 bits per beat, which put the FSM state on the enable of every
-one of those flops — 5.6 ns of route against 0.226 ns of logic. Out of context
-the placer clusters it and the problem is invisible; with the PS, five
-smartconnects and a debug bridge on the die it cannot. It was also redundant:
-`fin_vec` already held the result. Indexing into it with a 12:1 mux instead of
-shifting a copy of it removed **5,981 flops and 4,418 LUTs** and is what makes
-150 MHz close with room. Whether it also closes 250 MHz in the full system is
-open, and is step 13's problem — the fabric changes there anyway when the PS
-replaces the JTAG bridge.
+**Out of context was the misleading measurement.** The core sat at +0.008 ns
+with a whole die to spread across; every path that killed the system was one
+the placer could hide there. The fixes were found by reading the routed report
+after each build, never guessed:
+
+| # | path | fix |
+|---|---|---|
+| 1 | FSM state → 6,144 `egr` flop enables (5.6 ns route, 0.226 ns logic) | the register was a second copy of `fin_vec`; index into it with a 12:1 mux instead |
+| 2 | `grp` → 49-bit `grp*head_stride` → plane address adders | the group index only ever advances by one, so the base only ever advances by `head_stride`: one add, no multiplier |
+| 3 | `accum`'s 4 terms → 64 channel muxes | `max_fanout` so synthesis replicates the registers |
+| 4 | `softmax_online`'s 48×16 rescale of `l` | product registered, shift the cycle after |
+| 5 | `a_w` (a DSP output) → four more DSPs | registered between them, so two multipliers are not in series |
+| 6 | 64 channels each incrementing one overflow counter → 64 conditions on its clock enable | a registered popcount, folded in a cycle later |
+| 7 | FSM state → 6,144 `q_vec` flop enables | a registered per-lane write enable, replicable |
+
+**Fixes 4, 5 and the two products inside `accum` are one lesson.** `a_w *
+centroid` is 32×20 and `acc * factor` is 48×16; both are wider than a DSP48 and
+map to a cascaded PAIR, which does not reach 250 MHz without a register between
+the multiply and the cascade adder. That register is the DSP's own MREG and
+Vivado infers it **only if the RTL has one there**. Until they were added the
+core sat at +0.008, +0.043, +0.018 — noise around a floor — because the limit
+was inside the multiplier and every fix around it just exposed the next one.
+
+**Fixes 1 and 7 are the other lesson**, and it is the same bug twice: a control
+register decoded into the clock enable of thousands of flops. It never shows up
+out of context and it is the first thing to break when the placer runs out of
+room.
+
+None of it is arithmetic. Same operands, same truncating shifts, same goldens,
+twelve benches green after every single change. What moved is
+`AttentionConfig.rescale_cycles`, **11 → 15**, measured by `tb_softmax_accum`
+and asserted nowhere: at ctx 32,768 that is 0.50% of a scan against 0.40%.
+
+**The margin is +0.006 ns, and that is thin enough to say out loud.** It meets
+setup at the slow corner with hold at +0.010, and the board returns the right
+2,048 numbers — but 0.15% of a period is not margin, it is a coin that landed
+face up. A different placement seed or a hotter die could miss. Step 13 changes
+this fabric anyway when the PS replaces the JTAG bridge, and if it comes back
+negative the answer is the same as it was here: read the routed report, fix the
+path it names.
 
 **The shim is addressed memory, not a FIFO window.** 9,216 B in and 6,144 B
 out, both readable back. A push-here/pop-there pair of magic addresses is
@@ -1303,15 +1334,25 @@ read back with single-word reads, which have no ordering to get wrong. A
 readback check cannot catch that class of error on its own, because writing and
 reading with the same wrong transform agrees with itself.
 
-Full system, `xczu7ev-ffvc1156-2-e`, placed:
+Full system, `xczu7ev-ffvc1156-2-e`, routed:
 
-| | WNS | LUT | FF | DSP | BRAM | URAM |
-|---|---|---|---|---|---|---|
-| `attn_bd_wrapper` @ 150 MHz | **+0.552 ns** | 100,784 (43.7%) | 127,771 | 252 | 2.5 | 0 |
-| `attn_bd_wrapper` @ 250 MHz | −1.953 ns | 105,202 | 133,752 | 252 | 2.5 | 0 |
+| | WNS | WHS | FF |
+|---|---|---|---|
+| `attn_bd_wrapper` @ 250 MHz, seven fixes | **+0.006 ns** | +0.010 ns | 135,143 |
+| `attn_bd_wrapper` @ 150 MHz, one fix | +0.552 ns | +0.010 ns | 127,771 |
+| `attn_bd_wrapper` @ 250 MHz, as first built | **−1.953 ns** | +0.010 ns | 133,752 |
 
-The 250 MHz row is the design *before* the egress fix, which is why its flop
-count is higher; it is kept because it is the measurement that found the bug.
+The last row is the design before any of this, kept because it is the
+measurement that found the first bug. Utilisation at 250 MHz is 105k LUT
+(45.7%), 252 DSP (14.6%), 2.5 BRAM and **zero URAM** — the on-chip memory
+budget is essentially unspent.
+
+**A build-flow trap worth its own line.** `reset_run synth_1` does not reset a
+block design's out-of-context child runs, so an edit to `attn_top.sv` rebuilt
+the PREVIOUS netlist and reported the previous utilisation to the digit and the
+previous WNS to the picosecond. Nothing in the log says so. `build_attn_bit.tcl`
+now resets every child run and prints the flop count, so a stale DCP shows up as
+a number that did not move.
 
 144 Python checks green (this step added none); `./scripts/regress.sh`
 green on all twelve benches, `tb_attn_ctrl` being the twelfth; `scripts/jtag_attn.tcl` reports `JTAG_ATTN_PASSED` on the

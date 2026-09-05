@@ -73,7 +73,17 @@ module accum #(
     localparam int T_W    = W_W + CENT_BITS;                  // ... * centroid
     localparam int TERM_W = T_W - ACC_SHIFT;
     localparam int GROUPS = D / LANES;
-    // accept -> w, w -> the four terms, terms -> the SELECTED term, that -> acc.
+    // accept -> w, w -> the PRODUCTS, products -> the four terms, terms -> the
+    // SELECTED term, that -> acc.
+    //
+    // `a_w * centroid` is 32x20 and `acc * factor` is 48x16: both are wider
+    // than one DSP48 and map to a cascaded PAIR, which does not reach 250 MHz
+    // without a register between the multiply and the cascade adder. That
+    // register is the DSP's own MREG and Vivado infers it only if the RTL has
+    // one there -- so the product is registered separately from the shift.
+    // This is why the block's paths kept reappearing at ~4.0 ns however often
+    // the surrounding logic was split: the limit was inside the multiplier,
+    // not around it.
     // The valid that gates a stage is `avld[stage-1]`: `a_w` and `a_term` are
     // single registers overwritten every cycle, and gating one stage too late
     // reads a LATER token's term.
@@ -82,7 +92,7 @@ module accum #(
     // cycle as the 33-bit saturating add put 13 endpoints at -0.2 ns once four
     // lanes were placed, and the mux is NOT part of the loop -- only the add
     // is -- so splitting it costs a cycle of latency and keeps II=1.
-    localparam int ADD_LAT = 3;
+    localparam int ADD_LAT = 5;
 
     localparam logic signed [ACC_WIDTH-1:0] A_HI = {1'b0, {(ACC_WIDTH-1){1'b1}}};
     localparam logic signed [ACC_WIDTH-1:0] A_LO = {1'b1, {(ACC_WIDTH-1){1'b0}}};
@@ -103,9 +113,26 @@ module accum #(
 
     // -- the ADD pipe -------------------------------------------------------
     logic [ADD_LAT-1:0] avld;
+    // Same argument: one code word selects all 64 muxes.
+    (* max_fanout = 8 *)
     logic [D*VAL_BITS-1:0] a_codes [0:ADD_LAT-1];
-    logic signed [W_W-1:0] a_w;
+    logic signed [W_W-1:0] a_w, a_w_q;
+    // Overflow is COUNTED a cycle later, as a popcount.
+    //
+    // Each of the 64 channels incrementing one counter directly makes 64
+    // conditions fan into that counter's clock enable, and it showed up on the
+    // critical path -- diagnostic logic pacing a datapath. The count is only
+    // read at the end of a scan, so a cycle of lag costs nothing and the total
+    // is identical.
+    logic [D-1:0] ovf_bits;
+    logic [$clog2(D+1)-1:0] ovf_n;
+    // The four possible products fan out to all 64 channel muxes, which is 64
+    // loads on every bit of every term and the reason this was the critical
+    // path at +0.008 ns. Synthesis is told to replicate the registers rather
+    // than route one copy across the block; the arithmetic is untouched.
+    (* max_fanout = 8 *)
     logic signed [TERM_W-1:0] a_term [0:NC-1];
+    logic signed [T_W-1:0]    a_prod [0:NC-1];      // the raw product, MREG
     logic signed [TERM_W-1:0] a_mterm [0:D-1];
 
     // -- the SCALE sequencer, in TWO stages ---------------------------------
@@ -124,23 +151,25 @@ module accum #(
     // changes is the COST -- 9 cycles per event where it was 8 -- and that is
     // a measured number, reported by `out_scale_cycles` and carried in
     // `AttentionConfig.rescale_cycles`, never one this file asserts.
-    logic scaling, s_wb;
-    logic [$clog2(GROUPS+1)-1:0] sgrp, sgrp_b;
+    logic scaling, s_wb, s_wb2;
+    logic [$clog2(GROUPS+1)-1:0] sgrp, sgrp_b, sgrp_c;
     logic [PROB_BITS-1:0] sfactor;
     logic signed [ACC_WIDTH-1:0] s_operand [0:LANES-1];
+    logic signed [ACC_WIDTH+PROB_BITS-1:0] s_prod [0:LANES-1];
 
     wire pipe_busy = (avld != '0);
     // A SCALE is accepted only into an empty pipe; an ADD is accepted whenever
     // no rescale is running -- and the writeback stage counts as running, or
     // an ADD would reach `acc` in the same cycle the fold writes it back.
-    assign op_ready = !scaling && !s_wb && (!op_scale || !pipe_busy);
+    assign op_ready = !scaling && !s_wb && !s_wb2 && (!op_scale || !pipe_busy);
 
     wire take = op_valid && op_ready;
 
     always_ff @(posedge clk) begin
         if (!rstn || start) begin
             for (int i = 0; i < D; i++) acc[i] <= '0;
-            avld <= '0; scaling <= 1'b0; s_wb <= 1'b0; sgrp <= '0;
+            avld <= '0; scaling <= 1'b0; s_wb <= 1'b0; s_wb2 <= 1'b0; sgrp <= '0;
+            ovf_bits <= '0;
             out_overflows <= '0; out_scale_cycles <= '0;
             tok_done <= 1'b0; scale_done <= 1'b0;
         end else begin
@@ -153,35 +182,49 @@ module accum #(
             for (int i = 1; i < ADD_LAT; i++) a_codes[i] <= a_codes[i-1];
 
             // -- stage 1: w = v_norm * p ------------------------------------
-            a_w <= $signed(op_vnorm) * $signed({1'b0, op_p});
+            //
+            // Registered again before the term multiply: `a_w` is a DSP output
+            // feeding four more DSPs, and driving them directly put two
+            // multipliers in series in one cycle.
+            a_w   <= $signed(op_vnorm) * $signed({1'b0, op_p});
+            a_w_q <= a_w;
 
-            // -- stage 2: the four possible products, each truncated ---------
+            // -- stage 2: the four products, registered before the shift -----
             for (int c = 0; c < NC; c++)
-                a_term[c] <= TERM_W'(($signed(T_W'(a_w)) *
-                    $signed(T_W'($signed(CENTROIDS[c*CENT_BITS +: CENT_BITS]))))
-                    >>> ACC_SHIFT);
+                a_prod[c] <= $signed(T_W'(a_w_q)) *
+                    $signed(T_W'($signed(CENTROIDS[c*CENT_BITS +: CENT_BITS])));
 
-            // -- stage 3: 64 muxes ------------------------------------------
+            // -- stage 3: truncate to the accumulator's format ---------------
+            for (int c = 0; c < NC; c++)
+                a_term[c] <= TERM_W'(a_prod[c] >>> ACC_SHIFT);
+
+            // -- stage 4: 64 muxes ------------------------------------------
             if (avld[ADD_LAT-2])
                 for (int ch = 0; ch < D; ch++) begin
                     code = a_codes[ADD_LAT-2][ch*VAL_BITS +: VAL_BITS];
                     a_mterm[ch] <= a_term[code];
                 end
 
-            // -- stage 4: 64 saturating adds --------------------------------
+            // -- stage 5: 64 saturating adds --------------------------------
+            ovf_bits <= '0;
             if (avld[ADD_LAT-1]) begin
                 for (int ch = 0; ch < D; ch++) begin
                     sum  = $signed({acc[ch][ACC_WIDTH-1], acc[ch]}) +
                            (ACC_WIDTH+1)'($signed(a_mterm[ch]));
                     if (sum > (ACC_WIDTH+1)'(A_HI)) begin
-                        acc[ch] <= A_HI; out_overflows <= out_overflows + 1'b1;
+                        acc[ch] <= A_HI; ovf_bits[ch] <= 1'b1;
                     end else if (sum < (ACC_WIDTH+1)'(A_LO)) begin
-                        acc[ch] <= A_LO; out_overflows <= out_overflows + 1'b1;
+                        acc[ch] <= A_LO; ovf_bits[ch] <= 1'b1;
                     end else
                         acc[ch] <= ACC_WIDTH'(sum);
                 end
                 tok_done <= 1'b1;
             end
+
+            // -- stage 6: fold the saturation flags into the counter ---------
+            ovf_n = '0;
+            for (int ch = 0; ch < D; ch++) ovf_n = ovf_n + {{($clog2(D+1)-1){1'b0}}, ovf_bits[ch]};
+            if (|ovf_bits) out_overflows <= out_overflows + 32'(ovf_n);
 
             // -- the rescale, stage A: select ---------------------------------
             s_wb <= 1'b0;
@@ -196,22 +239,30 @@ module accum #(
                 sgrp <= sgrp + 1'b1;
             end
 
-            // -- the rescale, stage B: multiply and write back -----------------
+            // -- the rescale, stage B: multiply (registered) -------------------
             //
-            // Stage A is reading the NEXT group while this writes the previous
-            // one, and the two groups are disjoint by construction, so there is
-            // no cycle in which a channel is both read and written.
+            // 48x16 is a cascaded DSP pair, so the product gets its own cycle
+            // exactly as the term products above do.
             if (s_wb)
+                for (int l = 0; l < LANES; l++)
+                    s_prod[l] <= $signed({{PROB_BITS{s_operand[l][ACC_WIDTH-1]}},
+                                          s_operand[l]}) * $signed({1'b0, sfactor});
+            s_wb2  <= s_wb;
+            sgrp_c <= sgrp_b;
+
+            // -- the rescale, stage C: shift and write back --------------------
+            //
+            // Stage A reads the group after next while this writes the previous
+            // one; they are disjoint by construction, so no channel is read and
+            // written in the same cycle.
+            if (s_wb2)
                 for (int l = 0; l < LANES; l++) begin
-                    ch = sgrp_b * LANES + l;
-                    acc[ch] <= ACC_WIDTH'(
-                        ($signed({{PROB_BITS{s_operand[l][ACC_WIDTH-1]}},
-                                  s_operand[l]})
-                         * $signed({1'b0, sfactor})) >>> PROB_FRAC);
+                    ch = sgrp_c * LANES + l;
+                    acc[ch] <= ACC_WIDTH'(s_prod[l] >>> PROB_FRAC);
                 end
 
-            if (scaling || s_wb) out_scale_cycles <= out_scale_cycles + 1'b1;
-            if (s_wb && sgrp_b == GROUPS-1) scale_done <= 1'b1;
+            if (scaling || s_wb || s_wb2) out_scale_cycles <= out_scale_cycles + 1'b1;
+            if (s_wb2 && sgrp_c == GROUPS-1) scale_done <= 1'b1;
         end
     end
 

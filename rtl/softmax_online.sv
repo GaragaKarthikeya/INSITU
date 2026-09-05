@@ -136,10 +136,26 @@ module softmax_online #(
     // every running sum.
     wire [L_WIDTH+PROB_BITS-1:0] l_scaled = ({{PROB_BITS{1'b0}}, l} * exp_p);
 
+    // The 48x16 rescale of `l` is TWO cycles: the product is registered, and
+    // the shift into `l` happens the cycle after. Multiply, shift and the mux
+    // into `l` in one cycle was the block's critical path standalone -- as this
+    // file's own header predicted -- and the last one left in `attn_top` at
+    // +0.043 ns.
+    //
+    // The factor does not exist any earlier than the cycle it is used: it is
+    // the exp pipe's output, and `push_fac` only starts the lookup. So the
+    // extra cycle goes AFTER. It is free: the SCALE op reaches `accum` on the
+    // original cycle, `accum` spends nine cycles folding 64 channels, and the
+    // next ADD cannot retire for LAT cycles after pops resume -- so nothing
+    // reads `l` in between.
+    logic l_pend;
+    logic [L_WIDTH+PROB_BITS-1:0] l_prod;
+
     always_ff @(posedge clk) begin
         if (!rstn || start) begin
             wptr <= '0; rptr <= '0;
             m <= SCORE_LO; l <= '0;
+            l_pend <= 1'b0; l_prod <= '0;
             growing <= 1'b0; fac_pushed <= 1'b0;
             ivld <= '0; ifac <= '0;
             hw_max_fill <= '0; l_overflow <= 1'b0;
@@ -167,9 +183,16 @@ module softmax_online #(
                 // The op retiring this cycle updates `l` in the same order it
                 // updates `acc`, so a SCALE lands on the l that all earlier
                 // ADDs have already reached.
+                // The pending product lands first: an ADD cannot retire in the
+                // cycle after a SCALE (the pipe was drained to issue it), so
+                // these never both write `l`.
+                l_pend <= 1'b0;
+                if (l_pend) l <= L_WIDTH'(l_prod >> PROB_FRAC);
+
                 if (ivld[LAT-1]) begin
                     if (ifac[LAT-1]) begin
-                        l <= L_WIDTH'(l_scaled >> PROB_FRAC);
+                        l_prod <= l_scaled;
+                        l_pend <= 1'b1;
                         m <= g_score;
                         growing <= 1'b0;
                         fac_pushed <= 1'b0;
