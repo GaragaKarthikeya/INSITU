@@ -69,14 +69,13 @@ static XEmacPs emac;
  * This is the same discipline the KV image needs, and the same bug if missed:
  * correct hardware, stale memory.
  *
- * THE RING'S SEPARATION IS THE ALIGNMENT, NOT sizeof(XEmacPs_Bd).
- * A descriptor is 8 bytes and `XEMACPS_BD_ALIGNMENT` is 64, so
- * `XEmacPs_BdRingCreate` spaces them 64 bytes apart -- eight times what the
- * struct occupies. Sizing this array as `count * sizeof(Bd) * 2` allocated a
- * quarter of what the ring needs, and the ring then ran off the end of it into
- * the transmit ring and the frame buffers. `XEmacPs_BdRingMemCalc` is the
- * driver's own answer and is used here rather than arithmetic that looks
- * right. */
+ * `XEmacPs_BdRingMemCalc` sizes these rather than hand arithmetic. (An earlier
+ * comment here claimed the hand-rolled size was four times too small and that
+ * this was why the receiver was dead. It was not: the board reports
+ * `rings 1024+256 B for 64+16 descriptors`, and the hand-rolled array was
+ * 2,048 bytes -- larger than needed. The real fault was cache, below. The
+ * driver's own macro is kept because it cannot be wrong, not because the old
+ * one was.) */
 #define RXBD_BYTES  XEmacPs_BdRingMemCalc(XEMACPS_BD_ALIGNMENT, RXBD_COUNT)
 #define TXBD_BYTES  XEmacPs_BdRingMemCalc(XEMACPS_BD_ALIGNMENT, TXBD_COUNT)
 
@@ -91,6 +90,22 @@ static u8 tx_buf[FRAME_MAX] __attribute__((aligned(BD_ALIGN)));
 
 static u8 host_mac[6];
 static int host_known;
+
+/* THE DRIVER DOES NO CACHE MAINTENANCE ON DESCRIPTORS. `xemacps_bdring.c`
+ * contains no `Xil_DCache*` call of any kind -- every flush and invalidate is
+ * the caller's job. The A53 writes descriptors into cached DDR, the GEM reads
+ * DDR without coherency, and so it sees whatever was in memory before the
+ * cache lines were written back: zeros. It then owns no receive buffers and
+ * accepts no frames, which is precisely the `rx 0 (0 ours)` this reported with
+ * the PHY up and the link negotiated at 1 Gb/s.
+ *
+ * The rings are 1,024 and 256 bytes, so flushing or invalidating the whole of
+ * one is a handful of cache lines and is done rather than tracking which
+ * descriptor moved. */
+static void bd_flush_rx(void)  { Xil_DCacheFlushRange((UINTPTR)rx_bd_space, RXBD_BYTES); }
+static void bd_inval_rx(void)  { Xil_DCacheInvalidateRange((UINTPTR)rx_bd_space, RXBD_BYTES); }
+static void bd_flush_tx(void)  { Xil_DCacheFlushRange((UINTPTR)tx_bd_space, TXBD_BYTES); }
+static void bd_inval_tx(void)  { Xil_DCacheInvalidateRange((UINTPTR)tx_bd_space, TXBD_BYTES); }
 
 /* Counted and printed, because a silent receiver and a receiver that drops
  * everything look identical from the far end. `rx_any` is every frame the MAC
@@ -209,6 +224,9 @@ int attn_eth_init(void)
         return -1;
     }
 
+    bd_flush_rx();
+    bd_flush_tx();
+
     /* Hand every receive buffer to the hardware. */
     for (int i = 0; i < RXBD_COUNT; i++) {
         XEmacPs_Bd *bd;
@@ -217,6 +235,9 @@ int attn_eth_init(void)
         Xil_DCacheInvalidateRange((UINTPTR)rx_buf[i], FRAME_MAX);
         if (XEmacPs_BdRingToHw(rxr, 1, bd) != XST_SUCCESS) return -1;
     }
+    /* The descriptors the GEM is about to fetch. Without this it fetches the
+     * pre-`ToHw` contents and owns nothing. */
+    bd_flush_rx();
 
     /* TIE OFF THE QUEUES THIS DESIGN DOES NOT USE.
      *
@@ -274,6 +295,9 @@ int attn_eth_recv(u8 *dst, int max)
     XEmacPs_BdRing *rxr = &XEmacPs_GetRxRing(&emac);
     XEmacPs_Bd *bd;
 
+    /* The GEM marks a descriptor used by writing DDR; this side must not read
+     * that through a stale cache line. */
+    bd_inval_rx();
     if (XEmacPs_BdRingFromHwRx(rxr, 1, &bd) == 0)
         return 0;
 
@@ -313,6 +337,7 @@ int attn_eth_recv(u8 *dst, int max)
         XEmacPs_BdSetAddressRx(bd, addr);
         Xil_DCacheInvalidateRange(addr, FRAME_MAX);
         XEmacPs_BdRingToHw(rxr, 1, bd);
+        bd_flush_rx();
     }
     return taken;
 }
@@ -349,11 +374,16 @@ int attn_eth_send(const u8 *payload, int len)
     XEmacPs_BdSetLast(bd);
     if (XEmacPs_BdRingToHw(txr, 1, bd) != XST_SUCCESS)
         return -1;
+    bd_flush_tx();
     XEmacPs_Transmit(&emac);
 
     /* Polled: wait for the descriptor to come back before reusing `tx_buf`. */
     u32 guard = 10000000;
-    while (XEmacPs_BdRingFromHwTx(txr, 1, &bd) == 0 && --guard) { }
+    while (guard) {
+        bd_inval_tx();
+        if (XEmacPs_BdRingFromHwTx(txr, 1, &bd) != 0) break;
+        guard--;
+    }
     if (!guard)
         return -1;
     XEmacPs_BdRingFree(txr, 1, bd);
