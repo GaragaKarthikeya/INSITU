@@ -58,7 +58,8 @@ print("### creating application")
 client.create_app_component(name=APP, platform=xpfm, domain=DOMAIN)
 app = client.get_component(name=APP)
 app.import_files(from_loc=os.path.join(ROOT, "sw"),
-                 files=["attn_main.c", "attn_vectors.c", "attn_vectors.h"])
+                 files=["attn_main.c", "attn_vectors.c", "attn_vectors.h",
+                        "attn_server.h"])
 app.build()
 
 elf = None

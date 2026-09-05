@@ -70,6 +70,7 @@
 #include "xaxidma.h"
 
 #include "attn_vectors.h"
+#include "attn_server.h"
 
 /* Pinned by `scripts/create_bd_attn_ps.tcl`, exactly as the JTAG design pinned
  * it, so this constant and that script are the same number in two files and
@@ -528,6 +529,106 @@ static int run_probe(const probe_t *pr, const attn_case_t *token_src)
     return 0;
 }
 
+/* --------------------------------------------------------------------------
+ * The mailbox server: real inference, with the host in charge.
+ *
+ * The host runs the other fifteen layers and this runs one layer's attention,
+ * per token, live. It never returns -- the session ends when the host writes
+ * MBX_REQ_QUIT or simply stops the processor.
+ *
+ * Everything the host wrote is INVALIDATED before it is read and everything
+ * written back is FLUSHED, because JTAG reaches DDR without going through
+ * these caches. The doorbell is invalidated on every poll: cached, it reads
+ * zero forever while the new value sits in memory a metre away.
+ * -------------------------------------------------------------------------- */
+static void serve(void)
+{
+    volatile u32 *m = (volatile u32 *)MBX_BASE;
+    u8 *tok = (u8 *)(MBX_BASE + MBX_TOKEN_OFF);
+    u8 *res = (u8 *)(MBX_BASE + MBX_RESULT_OFF);
+    u32 served = 0;
+
+    /* Clear it before announcing readiness, so a doorbell left over from a
+     * previous session cannot be mistaken for a request in this one. */
+    for (unsigned i = 0; i < MBX_CTRL_BYTES / 4; i++) m[i] = 0;
+    Xil_DCacheFlushRange((UINTPTR)m, MBX_CTRL_BYTES);
+    xil_printf("SERVER READY mailbox %08x token +%04x result +%04x\r\n",
+               (unsigned)MBX_BASE, MBX_TOKEN_OFF, MBX_RESULT_OFF);
+
+    for (;;) {
+        u32 db;
+        do {
+            Xil_DCacheInvalidateRange((UINTPTR)m, MBX_CTRL_BYTES);
+            db = m[MBX_DOORBELL];
+        } while (db == MBX_IDLE);
+
+        if (db == MBX_REQ_QUIT) {
+            xil_printf("SERVER QUIT after %u steps\r\n", (unsigned)served);
+            return;
+        }
+        if (db != MBX_REQ_STEP) {
+            m[MBX_STATUS] = MBX_ERR; m[MBX_DOORBELL] = MBX_IDLE;
+            Xil_DCacheFlushRange((UINTPTR)m, MBX_CTRL_BYTES);
+            continue;
+        }
+
+        u32 ntok = m[MBX_NTOK], stride = m[MBX_STRIDE], span = m[MBX_SPAN];
+        u32 blo = m[MBX_BASE_LO], bhi = m[MBX_BASE_HI], seq = m[MBX_SEQ];
+
+        /* The token came in over JTAG; the DMA is about to read it. */
+        Xil_DCacheInvalidateRange((UINTPTR)tok, TOKEN_BYTES);
+        Xil_DCacheFlushRange((UINTPTR)res, RESULT_BYTES);
+
+        XTime t0, t1;
+        u32 st = 0, guard = 100000000, ok = 1;   /* st: read below even if the DMA never armed */
+        XTime_GetTime(&t0);
+
+        wr(REG_MODE, 1);
+        wr(REG_NTOK, ntok);
+        wr(REG_BASE_LO, blo);
+        wr(REG_BASE_HI, bhi);
+        wr(REG_STRIDE, stride);
+        wr(REG_SPAN, span);
+
+        if (XAxiDma_SimpleTransfer(&dma, (UINTPTR)res, RESULT_BYTES,
+                                   XAXIDMA_DEVICE_TO_DMA) != XST_SUCCESS) ok = 0;
+        if (ok && XAxiDma_SimpleTransfer(&dma, (UINTPTR)tok, TOKEN_BYTES,
+                                         XAXIDMA_DMA_TO_DEVICE) != XST_SUCCESS) ok = 0;
+        if (ok) {
+            wr(REG_CTRL, 1);
+            do { st = rd(REG_CTRL); } while (!(st & ST_DONE) && --guard);
+            if (!guard) ok = 0;
+            while (ok && (XAxiDma_Busy(&dma, XAXIDMA_DEVICE_TO_DMA) ||
+                          XAxiDma_Busy(&dma, XAXIDMA_DMA_TO_DEVICE)) && --guard) { }
+            if (!guard) ok = 0;
+        }
+        XTime_GetTime(&t1);
+
+        /* The DMA wrote `res` through HPC0, so the A53's view of it may be
+         * stale even though the memory is right. */
+        Xil_DCacheInvalidateRange((UINTPTR)res, RESULT_BYTES);
+
+        m[MBX_SCAN_CYC] = rd(REG_SCAN_CYC);
+        m[MBX_BUSY_CYC] = rd(REG_BUSY_CYC);
+        m[MBX_STARVE]   = rd(REG_STARVE);
+        m[MBX_CLIPS]    = rd(REG_CLIPS);
+        m[MBX_OVF]      = rd(REG_OVF);
+        m[MBX_FLAGS]    = st & (ST_RANGE | ST_NORMSAT);
+        m[MBX_DEV_US]   = (u32)(((t1 - t0) * 1000000ULL) / COUNTS_PER_SECOND);
+        m[MBX_SEQ]      = seq;
+        m[MBX_NSTEPS]   = ++served;
+        m[MBX_STATUS]   = ok ? MBX_ACK : MBX_ERR;
+
+        /* The result FIRST, then the doorbell. The host polls the doorbell, so
+         * a doorbell that became visible before the data it announces would
+         * hand back the previous token's answer. */
+        Xil_DCacheFlushRange((UINTPTR)res, RESULT_BYTES);
+        Xil_DCacheFlushRange((UINTPTR)m, MBX_CTRL_BYTES);
+        m[MBX_DOORBELL] = MBX_IDLE;
+        Xil_DCacheFlushRange((UINTPTR)m, MBX_CTRL_BYTES);
+    }
+}
+
 int main(void)
 {
     int fails = 0;
@@ -604,6 +705,12 @@ int main(void)
     }
 
     xil_printf("=== %s ===\r\n", fails ? "FAILURES PRESENT" : "ALL TESTS PASSED");
+
+    /* Self-test done; hand the board to the host. `serve()` does not return
+     * until the host says so, so everything above is what a session reports
+     * before real inference starts. */
+    if (dma_ok)
+        serve();
     Xil_DCacheDisable();
     return 0;
 }
