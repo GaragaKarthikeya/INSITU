@@ -301,6 +301,14 @@ static int run_case(const attn_case_t *c, int use_dma)
         return 1;
     }
 
+    /* ZEROED FIRST. The long-context probe leaves 16.9 MB of pseudo-random
+     * bytes at this address, and a case whose image is shorter than that -- or
+     * a live run, whose image is nothing at all -- would otherwise scan rows
+     * that were never written by anybody. "Nothing reads a row that was not
+     * written this run" is a claim about the block's indices, and leaving
+     * garbage under it means a mistake there reads plausible noise instead of
+     * zeros. */
+    memset((void *)CACHE_BASE, 0, c->image_bytes);
     memcpy((void *)CACHE_BASE, c->image, c->image_bytes);
     Xil_DCacheFlushRange((UINTPTR)CACHE_BASE, c->image_bytes);
 
@@ -543,15 +551,71 @@ static int run_probe(const probe_t *pr, const attn_case_t *token_src)
  * these caches. The doorbell is invalidated on every poll: cached, it reads
  * zero forever while the new value sits in memory a metre away.
  * -------------------------------------------------------------------------- */
-static void serve(void)
+/* One mailbox request, if one is waiting. Factored out of `serve()` so the
+ * Ethernet loop can service it too: a board that answers only one transport
+ * cannot be used as a control against the other. */
+static void serve_one_mailbox(void)
 {
     volatile u32 *m = (volatile u32 *)MBX_BASE;
     u8 *tok = (u8 *)(MBX_BASE + MBX_TOKEN_OFF);
     u8 *res = (u8 *)(MBX_BASE + MBX_RESULT_OFF);
-    u32 served = 0;
+    static u32 served_mbx;
 
-    /* Clear it before announcing readiness, so a doorbell left over from a
-     * previous session cannot be mistaken for a request in this one. */
+    u32 ntok = m[MBX_NTOK], stride = m[MBX_STRIDE], span = m[MBX_SPAN];
+    u32 blo = m[MBX_BASE_LO], bhi = m[MBX_BASE_HI], seq = m[MBX_SEQ];
+
+    Xil_DCacheInvalidateRange((UINTPTR)tok, TOKEN_BYTES);
+    Xil_DCacheFlushRange((UINTPTR)res, RESULT_BYTES);
+
+    XTime t0, t1;
+    u32 st = 0, guard = 100000000, ok = 1;
+    XTime_GetTime(&t0);
+
+    wr(REG_MODE, 1);
+    wr(REG_NTOK, ntok);
+    wr(REG_BASE_LO, blo);
+    wr(REG_BASE_HI, bhi);
+    wr(REG_STRIDE, stride);
+    wr(REG_SPAN, span);
+
+    if (XAxiDma_SimpleTransfer(&dma, (UINTPTR)res, RESULT_BYTES,
+                               XAXIDMA_DEVICE_TO_DMA) != XST_SUCCESS) ok = 0;
+    if (ok && XAxiDma_SimpleTransfer(&dma, (UINTPTR)tok, TOKEN_BYTES,
+                                     XAXIDMA_DMA_TO_DEVICE) != XST_SUCCESS) ok = 0;
+    if (ok) {
+        wr(REG_CTRL, 1);
+        do { st = rd(REG_CTRL); } while (!(st & ST_DONE) && --guard);
+        while (ok && guard && (XAxiDma_Busy(&dma, XAXIDMA_DEVICE_TO_DMA) ||
+                               XAxiDma_Busy(&dma, XAXIDMA_DMA_TO_DEVICE)) && --guard) { }
+        if (!guard) ok = 0;
+    }
+    XTime_GetTime(&t1);
+    Xil_DCacheInvalidateRange((UINTPTR)res, RESULT_BYTES);
+
+    m[MBX_SCAN_CYC] = rd(REG_SCAN_CYC);
+    m[MBX_BUSY_CYC] = rd(REG_BUSY_CYC);
+    m[MBX_STARVE]   = rd(REG_STARVE);
+    m[MBX_CLIPS]    = rd(REG_CLIPS);
+    m[MBX_OVF]      = rd(REG_OVF);
+    m[MBX_FLAGS]    = st & (ST_RANGE | ST_NORMSAT);
+    m[MBX_DEV_US]   = (u32)(((t1 - t0) * 1000000ULL) / COUNTS_PER_SECOND);
+    m[MBX_SEQ]      = seq;
+    m[MBX_NSTEPS]   = ++served_mbx;
+    m[MBX_STATUS]   = ok ? MBX_ACK : MBX_ERR;
+
+    /* The result FIRST, then the doorbell: a doorbell visible before the data
+     * it announces hands back the previous token's answer. */
+    Xil_DCacheFlushRange((UINTPTR)res, RESULT_BYTES);
+    Xil_DCacheFlushRange((UINTPTR)m, MBX_CTRL_BYTES);
+    m[MBX_DOORBELL] = MBX_IDLE;
+    Xil_DCacheFlushRange((UINTPTR)m, MBX_CTRL_BYTES);
+}
+
+/* The JTAG mailbox on its own, when Ethernet did not come up. */
+static void serve(void)
+{
+    volatile u32 *m = (volatile u32 *)MBX_BASE;
+
     for (unsigned i = 0; i < MBX_CTRL_BYTES / 4; i++) m[i] = 0;
     Xil_DCacheFlushRange((UINTPTR)m, MBX_CTRL_BYTES);
     xil_printf("SERVER READY mailbox %08x token +%04x result +%04x\r\n",
@@ -565,7 +629,7 @@ static void serve(void)
         } while (db == MBX_IDLE);
 
         if (db == MBX_REQ_QUIT) {
-            xil_printf("SERVER QUIT after %u steps\r\n", (unsigned)served);
+            xil_printf("SERVER QUIT\r\n");
             return;
         }
         if (db != MBX_REQ_STEP) {
@@ -573,61 +637,7 @@ static void serve(void)
             Xil_DCacheFlushRange((UINTPTR)m, MBX_CTRL_BYTES);
             continue;
         }
-
-        u32 ntok = m[MBX_NTOK], stride = m[MBX_STRIDE], span = m[MBX_SPAN];
-        u32 blo = m[MBX_BASE_LO], bhi = m[MBX_BASE_HI], seq = m[MBX_SEQ];
-
-        /* The token came in over JTAG; the DMA is about to read it. */
-        Xil_DCacheInvalidateRange((UINTPTR)tok, TOKEN_BYTES);
-        Xil_DCacheFlushRange((UINTPTR)res, RESULT_BYTES);
-
-        XTime t0, t1;
-        u32 st = 0, guard = 100000000, ok = 1;   /* st: read below even if the DMA never armed */
-        XTime_GetTime(&t0);
-
-        wr(REG_MODE, 1);
-        wr(REG_NTOK, ntok);
-        wr(REG_BASE_LO, blo);
-        wr(REG_BASE_HI, bhi);
-        wr(REG_STRIDE, stride);
-        wr(REG_SPAN, span);
-
-        if (XAxiDma_SimpleTransfer(&dma, (UINTPTR)res, RESULT_BYTES,
-                                   XAXIDMA_DEVICE_TO_DMA) != XST_SUCCESS) ok = 0;
-        if (ok && XAxiDma_SimpleTransfer(&dma, (UINTPTR)tok, TOKEN_BYTES,
-                                         XAXIDMA_DMA_TO_DEVICE) != XST_SUCCESS) ok = 0;
-        if (ok) {
-            wr(REG_CTRL, 1);
-            do { st = rd(REG_CTRL); } while (!(st & ST_DONE) && --guard);
-            if (!guard) ok = 0;
-            while (ok && (XAxiDma_Busy(&dma, XAXIDMA_DEVICE_TO_DMA) ||
-                          XAxiDma_Busy(&dma, XAXIDMA_DMA_TO_DEVICE)) && --guard) { }
-            if (!guard) ok = 0;
-        }
-        XTime_GetTime(&t1);
-
-        /* The DMA wrote `res` through HPC0, so the A53's view of it may be
-         * stale even though the memory is right. */
-        Xil_DCacheInvalidateRange((UINTPTR)res, RESULT_BYTES);
-
-        m[MBX_SCAN_CYC] = rd(REG_SCAN_CYC);
-        m[MBX_BUSY_CYC] = rd(REG_BUSY_CYC);
-        m[MBX_STARVE]   = rd(REG_STARVE);
-        m[MBX_CLIPS]    = rd(REG_CLIPS);
-        m[MBX_OVF]      = rd(REG_OVF);
-        m[MBX_FLAGS]    = st & (ST_RANGE | ST_NORMSAT);
-        m[MBX_DEV_US]   = (u32)(((t1 - t0) * 1000000ULL) / COUNTS_PER_SECOND);
-        m[MBX_SEQ]      = seq;
-        m[MBX_NSTEPS]   = ++served;
-        m[MBX_STATUS]   = ok ? MBX_ACK : MBX_ERR;
-
-        /* The result FIRST, then the doorbell. The host polls the doorbell, so
-         * a doorbell that became visible before the data it announces would
-         * hand back the previous token's answer. */
-        Xil_DCacheFlushRange((UINTPTR)res, RESULT_BYTES);
-        Xil_DCacheFlushRange((UINTPTR)m, MBX_CTRL_BYTES);
-        m[MBX_DOORBELL] = MBX_IDLE;
-        Xil_DCacheFlushRange((UINTPTR)m, MBX_CTRL_BYTES);
+        serve_one_mailbox();
     }
 }
 
@@ -654,10 +664,31 @@ static void serve_eth(void)
     u32 cur_seq = 0xFFFFFFFFu, have = 0, want = 0, msg_len = 0;
     u32 served = 0;
 
-    xil_printf("ETH SERVER READY\r\n");
+    {   /* Clear the mailbox here as well: this loop serves it, and a doorbell
+         * left over from a previous session would otherwise be executed with
+         * whatever geometry happened to be in the control block. */
+        volatile u32 *mb = (volatile u32 *)MBX_BASE;
+        for (unsigned i = 0; i < MBX_CTRL_BYTES / 4; i++) mb[i] = 0;
+        Xil_DCacheFlushRange((UINTPTR)mb, MBX_CTRL_BYTES);
+    }
+    xil_printf("ETH SERVER READY (mailbox served too)\r\n");
 
     u32 spin = 0;
     for (;;) {
+        /* THE MAILBOX IS STILL SERVED WHILE ETHERNET IS UP.
+         * Entering serve_eth() used to mean the JTAG doorbell was never polled
+         * again, so `--jtag` could not be used as a control against `--eth` --
+         * the comparison that would have told us in one run whether a wrong
+         * answer was the transport or the block. Two transports, one loop. */
+        {
+            volatile u32 *mb = (volatile u32 *)MBX_BASE;
+            Xil_DCacheInvalidateRange((UINTPTR)mb, MBX_CTRL_BYTES);
+            if (mb[MBX_DOORBELL] == MBX_REQ_STEP) {
+                serve_one_mailbox();
+                continue;
+            }
+        }
+
         int n = attn_eth_recv(eth_frame, sizeof(eth_frame));
         if (n <= (int)ATTN_FRAG_HDR_BYTES) {
             /* A heartbeat, so an idle server is visibly idle rather than
@@ -680,6 +711,9 @@ static void serve_eth(void)
         u32 blen = (u32)n - ATTN_FRAG_HDR_BYTES;
 
         if (fh.seq != cur_seq) {          /* a new message begins */
+            /* A host that died mid-request leaves fragments behind. Starting
+             * fresh on any new sequence number is what stops that partial
+             * message from being completed by the NEXT run's fragments. */
             cur_seq = fh.seq;
             have = 0;
             want = fh.nfrag;

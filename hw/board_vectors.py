@@ -63,7 +63,17 @@ from .vectors import collect, pack_lanes
 #
 # 4 steps is the smallest number that distinguishes the three ways a write path
 # can be wrong: right row (1 would pass), right plane (2), right stride (3+).
-CASES = (("ctx64", 64, 4), ("ctx256", 256, 4), ("ctx1024", 1024, 4),
+# ("fresh", 0, 6) IS THE ONE THAT MATTERS FOR LIVE INFERENCE.
+#
+# Every other case preloads a cache and then runs a few steps on the end of it,
+# so the block always scans a long context and the rows it wrote itself are a
+# handful at the tail. Real inference starts EMPTY: the first step scans one
+# row, the second scans two, and every row it reads was written by the block a
+# step earlier. `tb_attn` runs T = 65, the preloaded cases T >= 1021 and the
+# probe T >= 8193 -- so T = 1..6 is a regime nothing in this project has ever
+# executed, and it is the regime a decode run begins in.
+CASES = (("fresh", 0, 6),
+         ("ctx64", 64, 4), ("ctx256", 256, 4), ("ctx1024", 1024, 4),
          ("ctx8192", 8192, 4))
 
 IN_WORDS = 2304          # 8 groups x 6 vectors x 3 beats x 16 words
