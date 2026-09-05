@@ -177,3 +177,112 @@ def check_the_wrong_size_token_is_refused_before_it_reaches_the_wire():
         except ValueError:
             continue
         raise AssertionError(f"a {n}-byte token was accepted")
+
+
+# --------------------------------------------------------------------------
+# the mock, and the client that will talk to the board
+# --------------------------------------------------------------------------
+
+def _table():
+    from kernel.host.attn_mock import Table
+    from kernel.hw.board_vectors import build_case
+    return Table([build_case(32, 3)]), build_case(32, 3)
+
+
+def check_a_step_survives_the_round_trip_through_the_mock():
+    """The transport returns the golden the board would have to return.
+
+    Not a claim about attention -- the mock answers from `board_vectors`'
+    own table. It is a claim that the bytes the host builds arrive as the
+    bytes the core would consume, which is the half that has no other test.
+    """
+    from kernel.host.attn_mock import serve_one
+
+    table, case = _table()
+    ing = case["ingress"].tobytes()
+    gold = case["golden"].tobytes()
+    for i, n in enumerate(case["n_tokens"]):
+        tok = ing[i * P.TOKEN_BYTES:(i + 1) * P.TOKEN_BYTES]
+        req = P.step_request(tok, int(n), 0x10000000, case["head_stride"],
+                             case["plane_span"], seq=100 + i)
+        h, body = P.parse_response(serve_one(table, req))
+        assert h["status"] == P.OK, h
+        assert h["seq"] == 100 + i
+        assert body == gold[i * P.RESULT_BYTES:(i + 1) * P.RESULT_BYTES]
+
+
+def check_the_mock_refuses_what_the_board_would_have_to_refuse():
+    """Every rejection path, so none of them is a silent success."""
+    from kernel.host.attn_mock import serve_one
+
+    table, case = _table()
+    tok = case["ingress"].tobytes()[:P.TOKEN_BYTES]
+    good = P.step_request(tok, int(case["n_tokens"][0]), 0, case["head_stride"],
+                          case["plane_span"], seq=1)
+
+    def status(buf):
+        return P.parse_response(serve_one(table, buf))[0]["status"]
+
+    assert status(good) == P.OK
+    assert status(b"\x00" * 4) == P.EBADLEN
+    assert status(b"\xff\xff\xff\xff" + good[4:]) == P.EBADMAGIC
+    assert status(good[:4] + b"\x09\x00" + good[6:]) == P.EBADVER
+    assert status(good[:6] + b"\x7f\x00" + good[8:]) == P.EBADCMD
+    # The geometry travels with the token and must match it: right bytes, wrong
+    # stride is a wrong answer on real hardware.
+    bad_stride = P.step_request(tok, int(case["n_tokens"][0]), 0,
+                                case["head_stride"] + 4096, case["plane_span"])
+    assert status(bad_stride) == P.EBADLEN
+    # A token the table never saw means the payload was mangled in transit.
+    assert status(P.step_request(bytes(P.TOKEN_BYTES), int(case["n_tokens"][0]),
+                                 0, case["head_stride"], case["plane_span"])) \
+        == P.ETIMEOUT
+
+
+def check_the_client_and_the_mock_agree_over_a_real_socket():
+    """Through an actual TCP connection, because a stream can split anywhere.
+
+    `serve_one` is a function and cannot get framing wrong. The socket path
+    can: a `recv` that returns half a header is normal on a real network and
+    is the classic way a protocol that works on loopback fails on a wire.
+    """
+    import threading
+
+    from kernel.host.attn_client import TcpClient
+    from kernel.host.attn_mock import Server
+
+    table, case = _table()
+    srv = Server(("127.0.0.1", 0), table)
+    port = srv.server_address[1]
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        ing = case["ingress"].tobytes()
+        gold = case["golden"].tobytes()
+        with TcpClient("127.0.0.1", port, timeout=20.0) as c:
+            assert c.ping()["status"] == P.OK
+            for i, n in enumerate(case["n_tokens"]):
+                tok = ing[i * P.TOKEN_BYTES:(i + 1) * P.TOKEN_BYTES]
+                body, h = c.step(tok, int(n), 0x10000000,
+                                 case["head_stride"], case["plane_span"])
+                assert body == gold[i * P.RESULT_BYTES:(i + 1) * P.RESULT_BYTES]
+                assert h["seq"] == i + 2      # ping took 1
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def check_the_client_rejects_a_reply_to_the_wrong_request():
+    """A stale reply is otherwise indistinguishable from a wrong answer."""
+    from kernel.host.attn_client import _Base
+
+    class Stale(_Base):
+        def _exchange(self, req):
+            return P.parse_response(P.response(P.OK, bytes(P.RESULT_BYTES), seq=999))
+
+    try:
+        Stale().step(bytes(P.TOKEN_BYTES), 1, 0, 0, 0)
+    except RuntimeError as e:
+        assert "seq" in str(e), e
+        return
+    raise AssertionError("a reply to seq 999 was accepted")
