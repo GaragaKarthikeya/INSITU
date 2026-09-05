@@ -167,8 +167,32 @@ class DdrLayout:
         return len(self.planes)
 
     def plane_span(self, p: int) -> int:
-        """Bytes one plane occupies for one head, rounded up to a page."""
-        raw = self.capacity * self.planes[p].width
+        """Bytes one plane occupies for one head. The SAME for every plane.
+
+        EVERY PLANE GETS THE WIDEST PLANE'S SPAN, AND THAT IS THE HARDWARE'S
+        CONSTRAINT SPEAKING
+        ------------------------------------------------------------------
+        The obvious map gives each plane exactly the pages its own width needs
+        -- at capacity 1,025 that is 20,480 B for the three code planes and
+        8,192 B for the 4-byte norms. `attn_top.sv` cannot address it. Its
+        address generator is one register, `plane_span`, and it walks the four
+        planes as `cache_base + p * plane_span`, because per-plane bases were a
+        49-bit multiply on the path that missed 250 MHz by 1.953 ns (step 12,
+        fix 2). Four spans means four base registers the host has to load, or a
+        multiplier back on that path.
+
+        So the norms plane is padded out to the code planes' span. It costs
+        address space and nothing else: the padding sits after the last token
+        of the plane, the port reads 4 B/token sequentially from the base as
+        before, and no read is ever issued to it. At capacity 32,769 that is
+        16.9 MB against 13.8 MB, in a 2 GB DDR.
+
+        Nothing about this shows up at capacity 65 -- there all four planes
+        round to one page anyway, which is why every vector set and every bench
+        in this project agreed with a layout the hardware could not have read.
+        `check_every_plane_has_the_same_span` is what says so at other sizes.
+        """
+        raw = max(self.capacity * pl.width for pl in self.planes)
         return (raw + PAGE - 1) // PAGE * PAGE
 
     def plane_base(self, head: int, p: int) -> int:

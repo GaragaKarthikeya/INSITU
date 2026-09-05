@@ -123,6 +123,8 @@ module attn_top #(
     output logic            bready,
 
     // -- what the run measured, never assumed -----------------------------
+    output logic [31:0] scan_cycles,          // cycles spent in S_SCAN, all 8 groups
+    output logic [31:0] busy_cycles,          // cycles from `start` to `done`
     output logic [31:0] starve_cycles,        // rows the scan waited on DDR
     output logic [31:0] clip_count,           // scores that saturated
     output logic [31:0] overflow_count,       // accumulator channels that wrapped
@@ -399,16 +401,32 @@ module attn_top #(
         (egr_beat == NBEAT_EGR-1) ? '0 : egr_beat + 1'b1;
 
     // -------------------------------------------------------- counters
+    //
+    // `scan_cycles` and `busy_cycles` are what a device-side time is MADE of,
+    // and they are counted here rather than by the host for a reason step 13
+    // depends on: the PS reads a millisecond-scale wall clock across a bus it
+    // shares, so it can time a decode step but it cannot time the SCAN inside
+    // one. The DDR bandwidth claim is `8 x n_tokens x row_bytes` over
+    // `scan_cycles`, and every term in it has to come from the same clock the
+    // reads were issued on.
+    //
+    // Both are free-running while the step is in flight and both are cleared
+    // by `start`, so a host that reads them after `done` reads the step it
+    // just ran and not a sum over the session.
     always_ff @(posedge clk) begin
         if (!rstn) begin
             clip_count <= '0;
+            scan_cycles <= '0; busy_cycles <= '0;
             range_error <= 1'b0; norm_saturated <= 1'b0;
         end else begin
             if (start) begin
                 clip_count <= '0;
+                scan_cycles <= '0; busy_cycles <= '0;
                 range_error <= 1'b0; norm_saturated <= 1'b0;
             end else begin
                 clip_count <= clip_count + 32'(clips_now);
+                if (st == S_SCAN) scan_cycles <= scan_cycles + 1'b1;
+                if (busy)         busy_cycles <= busy_cycles + 1'b1;
                 if (rot_out_valid && rot_out_ready && rot_range) range_error <= 1'b1;
                 if (nrm_out_valid && nrm_out_ready && nrm_sat) norm_saturated <= 1'b1;
                 for (int i = 0; i < GROUPS; i++)

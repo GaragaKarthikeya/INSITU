@@ -212,6 +212,7 @@ module attn_ctrl #(
     logic s_valid, s_ready, m_valid, m_ready, m_last;
     logic [BEAT_BITS-1:0] s_data, m_data;
     logic [31:0] starve_cycles, clip_count, overflow_count;
+    logic [31:0] scan_cycles, busy_cycles;
     logic range_error, norm_saturated;
 
     attn_top #(.BEAT_BITS(BEAT_BITS), .DW(DW), .AW(AW), .IDW(IDW),
@@ -223,6 +224,7 @@ module attn_ctrl #(
           .arqos, .arvalid, .arready, .rid, .rdata, .rresp, .rlast, .rvalid, .rready,
           .awid, .awaddr, .awlen, .awsize, .awburst, .awcache, .awprot, .awvalid,
           .awready, .wdata, .wstrb, .wlast, .wvalid, .wready, .bresp, .bvalid, .bready,
+          .scan_cycles, .busy_cycles,
           .starve_cycles, .clip_count, .overflow_count, .range_error, .norm_saturated);
 
     // ---------------- the feeder ----------------
@@ -397,6 +399,11 @@ module attn_ctrl #(
                     8'h24: s_axi_rdata <= overflow_count;
                     8'h28: s_axi_rdata <= 32'(IN_W);
                     8'h2C: s_axi_rdata <= 32'(OUT_W);
+                    // The step's own clock. `busy_cycles` is start-to-done and
+                    // `scan_cycles` is the part of it that reads DDR, which is
+                    // the only one a bandwidth number may be divided by.
+                    8'h30: s_axi_rdata <= scan_cycles;
+                    8'h34: s_axi_rdata <= busy_cycles;
                     default: s_axi_rdata <= 32'hDEAD_BEEF;
                 endcase
             end else if (s_axi_rvalid && s_axi_rready) begin

@@ -351,6 +351,26 @@ module tb_attn_ctrl;
         $display("  %0d heads read back over AXI-Lite, %0d polls, %0d starve cycles",
                  HEADS, polls, rv);
 
+        // -- the step's own clock, which step 13 divides a bandwidth by --------
+        //
+        // The host is the A53 by then, and it reads a wall clock over a bus it
+        // shares -- so it can time a step but not the scan inside one. These
+        // two registers are the only device-side time that means anything, and
+        // they are checked here for the property the C code assumes: the scan
+        // is a proper part of a busy window that is longer than the polling
+        // loop could ever resolve.
+        begin
+            logic [31:0] scan_c, busy_c;
+            axi_read(17'h30, scan_c);
+            axi_read(17'h34, busy_c);
+            $display("  scan %0d cycles, busy %0d", scan_c, busy_c);
+            check(scan_c >= KVH*T,
+                  $sformatf("scan_cycles %0d covers the %0d rows", scan_c, KVH*T));
+            check(busy_c > scan_c,
+                  "busy_cycles is the whole step and the scan is part of it");
+            check(scan_c >= rv, "starve cycles are scan cycles");
+        end
+
         // -- the output window is re-readable ----------------------------------
         //
         // A JTAG read that has to be repeated must return the same word. A

@@ -141,7 +141,53 @@ def check_the_norm_plane_is_not_padded_to_a_beat():
     lay = DdrLayout.for_quant(QuantConfig(key_bits=4, value_bits=2), 64, 8, 4096)
     norms = lay.planes[-1]
     assert norms.width == 4
-    assert lay.plane_span(3) == 4096 * 4          # tight, not 4096 * 16
+    # The property is the STRIDE WITHIN the plane, not the plane's total span:
+    # consecutive tokens are 4 B apart, so the port reads 4 B/token and the
+    # engine stays at 52 B/cycle. The span itself is padded to the widest
+    # plane's, which the hardware requires and which no port ever reads into --
+    # see `DdrLayout.plane_span` and `check_every_plane_has_the_same_span`.
+    for t in range(4):
+        assert lay.token_addr(0, 3, t + 1) - lay.token_addr(0, 3, t) == 4
     assert lay.bytes_per_cycle == 52
     padded = sum(BEAT_BYTES for _ in lay.planes)
     assert padded == 64, padded
+
+
+def check_every_plane_has_the_same_span():
+    """`attn_top.sv` walks the planes as `cache_base + p * plane_span`.
+
+    One span register, because per-plane bases put a 49-bit multiply on the
+    path that missed 250 MHz by 1.953 ns. So a layout whose four planes have
+    four different spans is one the hardware cannot address -- and at capacity
+    65, where every plane rounds to a single page anyway, that is invisible.
+    Every vector set in this project is built at capacity 65. This is the check
+    that runs at the sizes step 13 actually loads.
+    """
+    from kernel.config import QuantConfig
+    q = QuantConfig(key_bits=4, value_bits=2)
+    for cap in (65, 257, 1025, 2049, 4097, 32769):
+        lay = DdrLayout.for_quant(q, 64, 8, cap)
+        spans = [lay.plane_span(p) for p in range(lay.n_ports)]
+        assert len(set(spans)) == 1, (cap, spans)
+        # And the one span really is what the RTL's arithmetic produces.
+        for h in range(lay.n_kv_heads):
+            for p in range(lay.n_ports):
+                assert lay.plane_base(h, p) == (
+                    lay.base + h * spans[0] * lay.n_ports + p * spans[0]), (cap, h, p)
+        # Padding is only ever after the last token, so no read reaches it.
+        assert spans[0] >= cap * max(pl.width for pl in lay.planes)
+
+
+def check_the_span_is_the_narrowest_that_holds_the_widest_plane():
+    """Padding costs address space, and it must not cost more than it has to.
+
+    A span rounded to the widest plane's need and no further: at capacity
+    32,769 that is 16.9 MB against the 13.8 MB a four-span map would take, in a
+    2 GB DDR. A span rounded to, say, the next power of two would be 33.6 MB
+    for nothing.
+    """
+    from kernel.config import QuantConfig
+    lay = DdrLayout.for_quant(QuantConfig(key_bits=4, value_bits=2), 64, 8, 32769)
+    widest = max(pl.width for pl in lay.planes)
+    need = 32769 * widest
+    assert lay.plane_span(0) - need < 4096, (lay.plane_span(0), need)

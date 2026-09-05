@@ -89,6 +89,7 @@ module tb_attn;
     logic [DW/8-1:0] wstrb;
 
     logic [31:0] starve_cycles, clip_count, overflow_count;
+    logic [31:0] scan_cycles, busy_cycles;
     logic range_error, norm_saturated;
 
     attn_top dut (
@@ -100,6 +101,7 @@ module tb_attn;
         .arqos, .arvalid, .arready, .rid, .rdata, .rresp, .rlast, .rvalid, .rready,
         .awid, .awaddr, .awlen, .awsize, .awburst, .awcache, .awprot, .awvalid,
         .awready, .wdata, .wstrb, .wlast, .wvalid, .wready, .bresp, .bvalid, .bready,
+        .scan_cycles, .busy_cycles,
         .starve_cycles, .clip_count, .overflow_count, .range_error, .norm_saturated);
 
     task check(input logic cond, input string what);
@@ -288,6 +290,23 @@ module tb_attn;
                  HEADS, D, cycles, KVH*T);
         $display("  starve %0d, clips %0d, overflows %0d, range_error %0d, norm_sat %0d",
                  starve_cycles, clip_count, overflow_count, range_error, norm_saturated);
+        $display("  scan %0d cycles, busy %0d (bench measured %0d)",
+                 scan_cycles, busy_cycles, cycles);
+        // The counters step 13 divides a bandwidth by. `busy_cycles` is
+        // checked against the bench's OWN clock rather than against itself:
+        // a counter that only agrees with the design it lives in would report
+        // a confident number for a step that never happened.
+        check(busy_cycles >= cycles - 2 && busy_cycles <= cycles + 2,
+              $sformatf("busy_cycles %0d tracks the bench's %0d", busy_cycles, cycles));
+        // Eight groups, KVH*T rows, one row per cycle at best -- so the scan
+        // can never be shorter than the rows it read, and it is what the
+        // starve cycles are a part of.
+        check(scan_cycles >= KVH*T,
+              $sformatf("scan_cycles %0d covers the %0d rows", scan_cycles, KVH*T));
+        check(scan_cycles < busy_cycles,
+              "the scan is a proper part of the step, not the whole of it");
+        check(scan_cycles >= starve_cycles,
+              "starve cycles are scan cycles");
         check(!range_error, "no channel escaped the 24-bit seam");
         check(clip_count == 0, "no score saturated at these widths");
         check(writes == KVH*NP, "one AXI write per plane per head, and no more");
