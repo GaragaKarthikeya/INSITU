@@ -94,8 +94,13 @@ static XEmacPs emac;
  * 2,048 bytes -- larger than needed. The real fault was cache, below. The
  * driver's own macro is kept because it cannot be wrong, not because the old
  * one was.) */
-#define RXBD_BYTES  XEmacPs_BdRingMemCalc(BD_SEP, RXBD_COUNT)
-#define TXBD_BYTES  XEmacPs_BdRingMemCalc(BD_SEP, TXBD_COUNT)
+/* `XEmacPs_BdRingMemCalc` sizes for the descriptors alone and NOT for the
+ * separation the alignment forces: at BD_SEP = 64 it answered 1,024 bytes for
+ * 64 descriptors that occupy 4,096. The ring then runs off the end of the
+ * array. The bring-up line printing "1024 B for 64 descriptors at 64 B each"
+ * is what caught it -- three numbers that cannot all be true. */
+#define RXBD_BYTES  (RXBD_COUNT * BD_SEP)
+#define TXBD_BYTES  (TXBD_COUNT * BD_SEP)
 
 static u8 rx_bd_space[RXBD_BYTES] __attribute__((aligned(BD_ALIGN)));
 static u8 tx_bd_space[TXBD_BYTES] __attribute__((aligned(BD_ALIGN)));

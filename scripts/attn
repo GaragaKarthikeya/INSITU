@@ -43,6 +43,10 @@ for a in "$@"; do
   case "$a" in --cpu-only) board=0; args=() ;; --jtag) args=() ;; esac
 done
 
+# sudo resets PATH even with -E, so Vitis has to be sourced on THIS side of it
+# or xsdb is missing for anything that drives JTAG.
+source /home/digital3/2026.1/Vitis/settings64.sh 2>/dev/null || true
+
 cd "$PARENT"
 if [ "$board" = 0 ]; then exec "$VENV" -m "$mod" "$@"; fi
 if [ "$(id -u)" != 0 ]; then exec sudo -E "$SELF" "$cmd" "$@"; fi
