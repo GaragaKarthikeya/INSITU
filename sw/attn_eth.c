@@ -56,6 +56,24 @@
 #define FRAME_MAX       1536
 #define BD_ALIGN        64
 
+/* ONE DESCRIPTOR PER CACHE LINE, AND THAT IS THE WHOLE POINT.
+ *
+ * A descriptor is 16 bytes and a cache line is 64, so at the driver's natural
+ * packing FOUR descriptors share a line. Cache maintenance has no finer
+ * granularity than a line, so flushing the one descriptor this side just
+ * modified also writes back STALE copies of its three neighbours -- erasing
+ * whatever the GEM had written into them in the meantime.
+ *
+ * That is the bug behind every receive failure in this file. The whole-ring
+ * flush destroyed all 64; the per-descriptor flush that replaced it still
+ * destroyed 3 at a time, which is why reception survived sixteen single-frame
+ * loads and died on the first request whose reply took five frames.
+ *
+ * `XEmacPs_BdRingCreate` spaces descriptors by whatever alignment it is given,
+ * so asking for 64 puts each on its own line and makes a single-descriptor
+ * flush mean exactly one descriptor. It costs 4 KB of BSS. */
+#define BD_SEP          64
+
 /* Our MAC. Locally administered (bit 1 of the first octet), so it cannot
  * collide with a real vendor's, and fixed so the host can address us without
  * discovery. */
@@ -76,8 +94,8 @@ static XEmacPs emac;
  * 2,048 bytes -- larger than needed. The real fault was cache, below. The
  * driver's own macro is kept because it cannot be wrong, not because the old
  * one was.) */
-#define RXBD_BYTES  XEmacPs_BdRingMemCalc(XEMACPS_BD_ALIGNMENT, RXBD_COUNT)
-#define TXBD_BYTES  XEmacPs_BdRingMemCalc(XEMACPS_BD_ALIGNMENT, TXBD_COUNT)
+#define RXBD_BYTES  XEmacPs_BdRingMemCalc(BD_SEP, RXBD_COUNT)
+#define TXBD_BYTES  XEmacPs_BdRingMemCalc(BD_SEP, TXBD_COUNT)
 
 static u8 rx_bd_space[RXBD_BYTES] __attribute__((aligned(BD_ALIGN)));
 static u8 tx_bd_space[TXBD_BYTES] __attribute__((aligned(BD_ALIGN)));
@@ -113,7 +131,8 @@ static int host_known;
  * INVALIDATE stays: it discards clean lines and can only lose data this side
  * has written and not flushed, which by construction never happens.
  * Whole-ring flush is kept only for setup, before the GEM is started. */
-static void bd_flush_one(void *bd) { Xil_DCacheFlushRange((UINTPTR)bd, 64); }
+/* Exactly one descriptor, which is exactly one cache line -- see BD_SEP. */
+static void bd_flush_one(void *bd) { Xil_DCacheFlushRange((UINTPTR)bd, BD_SEP); }
 static void bd_inval_rx(void)  { Xil_DCacheInvalidateRange((UINTPTR)rx_bd_space, RXBD_BYTES); }
 static void bd_inval_tx(void)  { Xil_DCacheInvalidateRange((UINTPTR)tx_bd_space, TXBD_BYTES); }
 static void bd_flush_all(void) {
@@ -224,7 +243,7 @@ int attn_eth_init(void)
 
     XEmacPs_BdClear(&tmpl);
     if (XEmacPs_BdRingCreate(rxr, (UINTPTR)rx_bd_space, (UINTPTR)rx_bd_space,
-                             XEMACPS_BD_ALIGNMENT, RXBD_COUNT) != XST_SUCCESS ||
+                             BD_SEP, RXBD_COUNT) != XST_SUCCESS ||
         XEmacPs_BdRingClone(rxr, &tmpl, XEMACPS_RECV) != XST_SUCCESS) {
         xil_printf("ETH: rx ring setup failed\r\n");
         return -1;
@@ -232,7 +251,7 @@ int attn_eth_init(void)
     XEmacPs_BdClear(&tmpl);
     XEmacPs_BdSetStatus(&tmpl, XEMACPS_TXBUF_USED_MASK);
     if (XEmacPs_BdRingCreate(txr, (UINTPTR)tx_bd_space, (UINTPTR)tx_bd_space,
-                             XEMACPS_BD_ALIGNMENT, TXBD_COUNT) != XST_SUCCESS ||
+                             BD_SEP, TXBD_COUNT) != XST_SUCCESS ||
         XEmacPs_BdRingClone(txr, &tmpl, XEMACPS_SEND) != XST_SUCCESS) {
         xil_printf("ETH: tx ring setup failed\r\n");
         return -1;
@@ -291,10 +310,11 @@ int attn_eth_init(void)
 
     XEmacPs_Start(&emac);
 
-    xil_printf("ETH: rings %u+%u B for %u+%u descriptors, %u queues\r\n",
+    xil_printf("ETH: rings %u+%u B for %u+%u descriptors at %u B each "
+               "(bd %u B), %u queues\r\n",
                (unsigned)RXBD_BYTES, (unsigned)TXBD_BYTES,
-               (unsigned)RXBD_COUNT, (unsigned)TXBD_COUNT,
-               (unsigned)emac.MaxQueues);
+               (unsigned)RXBD_COUNT, (unsigned)TXBD_COUNT, (unsigned)BD_SEP,
+               (unsigned)sizeof(XEmacPs_Bd), (unsigned)emac.MaxQueues);
     xil_printf("ETH: ready, MAC %02x:%02x:%02x:%02x:%02x:%02x, ethertype %04x\r\n",
                BOARD_MAC[0], BOARD_MAC[1], BOARD_MAC[2],
                BOARD_MAC[3], BOARD_MAC[4], BOARD_MAC[5],
