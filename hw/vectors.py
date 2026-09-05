@@ -665,9 +665,25 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
         from ..numerics.fixed import rshift
 
         real_acc, real_l = vs.final["acc"], vs.final["l"]
+        # THE CONSTRUCTED DENOMINATORS, AND WHAT THEY STRESS NOW
+        # ------------------------------------------------------
+        # These used to exist because the old fixed-Q16 divide gave every real
+        # row a 10-bit quotient in a four-value band, so only constructed rows
+        # reached its ceiling. The normalised divide has no such band -- every
+        # quotient is 31 bits -- so what these stress instead is the SHIFT, the
+        # degree of freedom normalising introduced: `lead` from 0 to
+        # `L_WIDTH-1`, and the `shr`/`shl` boundary at `RECIP_BITS-1 = 31`
+        # where the normaliser changes direction.
+        #
+        # The last three are the denominators of the contexts this rewrite was
+        # made for: `l = T * 2**15` at ctx 32,768, 131,072 and 1,048,576. The
+        # middle one is where the old divide returned zero and every output
+        # channel went with it.
         edge_l = np.array([0, 1, 2, 3, (1 << 15) - 1, 1 << 15, (1 << 16) - 1,
                            1 << 20, (1 << 31) - 1, 1 << 31, (1 << 32) - 1,
-                           1 << 33], dtype=np.int64)
+                           1 << 33, 1 << 40, (1 << 47) - 1,
+                           32768 * (1 << 15), 131072 * (1 << 15),
+                           1048576 * (1 << 15)], dtype=np.int64)
         hi, lo = (1 << (vs.fmt.acc_width - 1)) - 1, -(1 << (vs.fmt.acc_width - 1))
         rng = np.random.default_rng(0xF1A1)
         edge_acc = rng.integers(lo, hi, size=(edge_l.size, vs.model.head_dim),
@@ -678,8 +694,8 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
 
         fa = np.concatenate([real_acc, edge_acc])
         fl = np.concatenate([real_l, edge_l])
-        fr = reciprocal(fl, vs.fmt)
-        fo = rshift(fa * fr[..., None], vs.fmt.recip_frac)
+        fr, fsh = reciprocal(fl, vs.fmt)
+        fo = rshift(fa * fr[..., None], fsh[..., None])
 
         # The output is emitted at OUT_BITS, not at the seam's 24, because
         # `_finalize` does not clamp and the constructed rows overflow 24 bits
@@ -697,6 +713,9 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
                               [f"{int(x) & ((1 << 48) - 1):012x}" for x in fl]))
         written.append(_write(p("fin_recip.hex"),
                               [f"{int(x) & 0xFFFFFFFF:08x}" for x in fr]))
+        # The reciprocal is normalised, so the shift is per row and the bench
+        # cannot assume `recip_frac`. See `ops/attention.py::reciprocal`.
+        written.append(_write(p("fin_shift.hex"), [f"{int(x):02x}" for x in fsh]))
         written.append(_write(p("fin_out.hex"), [
             "".join(f"{int(x) & ((1 << OUT_BITS) - 1):012x}" for x in reversed(vec))
             for vec in fo]))

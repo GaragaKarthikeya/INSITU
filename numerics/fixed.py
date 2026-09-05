@@ -45,23 +45,42 @@ def _as_int(x) -> np.ndarray:
     return a.astype(INT, copy=False)
 
 
-def rshift(x, n: int, rounding: Rounding = "floor") -> np.ndarray:
-    """`x >> n` under the named rounding rule. `n == 0` is a no-op, not an error."""
+def rshift(x, n, rounding: Rounding = "floor") -> np.ndarray:
+    """`x >> n` under the named rounding rule. `n == 0` is a no-op, not an error.
+
+    `n` may be an ARRAY, broadcast against `x`. That exists for one caller:
+    `_finalize`'s reciprocal is normalised per row, so two query heads with
+    different denominators are shifted by different amounts in the same step.
+    A scalar `n` takes the same path it always did -- the array case is a
+    branch, not a reimplementation, so the scalar behaviour cannot drift.
+    """
     a = _as_int(x)
-    if n < 0:
-        raise ValueError(f"rshift by {n}: use lshift for a left shift, so direction is explicit")
-    if n == 0:
-        return a
+    if np.ndim(n) == 0:
+        if n < 0:
+            raise ValueError(f"rshift by {n}: use lshift for a left shift, so direction is explicit")
+        if n == 0:
+            return a
+    else:
+        n = _as_int(n)
+        if np.any(n < 0):
+            raise ValueError("rshift by a negative amount: use lshift, so direction is explicit")
+        # `1 << (n - 1)` is evaluated for every element including n == 0, where
+        # the shift is -1 and numpy's answer is undefined. The rounding modes
+        # below need the half, so n == 0 is handled by selecting it away rather
+        # than by an early return that an array cannot take.
+        safe = np.maximum(n, INT(1))
     if rounding == "floor":
         return a >> n
+    half = (INT(1) << (safe - 1)) if np.ndim(n) else (INT(1) << (n - 1))
     if rounding == "up":
-        return (a + (INT(1) << (n - 1))) >> n
+        q = (a + half) >> n
+        return np.where(n == 0, a, q) if np.ndim(n) else q
     if rounding == "even":
-        half = INT(1) << (n - 1)
         q = (a + half) >> n
         # A tie is exactly representable: the discarded bits are 100...0.
         tie = (a & ((INT(1) << n) - 1)) == half
-        return np.where(tie, q & ~INT(1), q)
+        q = np.where(tie, q & ~INT(1), q)
+        return np.where(n == 0, a, q) if np.ndim(n) else q
     raise ValueError(f"unknown rounding {rounding!r}; expected floor, even or up")
 
 

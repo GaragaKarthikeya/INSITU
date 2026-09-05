@@ -47,9 +47,50 @@ def check_exp_lut_rejects_negative():
 
 def check_reciprocal():
     l = np.array([1 << FMT.prob_frac, 3 << FMT.prob_frac, 0])
-    r = reciprocal(l, FMT) / (1 << FMT.recip_frac)
-    approx(r[:2], [1.0, 1.0 / 3.0], tol=1e-4, what="1/l")
-    assert r[2] == 0.0
+    r, sh = reciprocal(l, FMT)
+    # `out = (acc*recip) >> shift` realises `acc * 2**prob_frac / l`, so
+    # `recip / 2**shift` IS `2**prob_frac / l` -- which is 1.0 when l is unity
+    # in Q(prob_frac). The old fixed-Q form divided by `2**recip_frac` here.
+    approx(r[:2] / (2.0 ** sh[:2]), [1.0, 1.0 / 3.0], tol=1e-4, what="1/l")
+    assert r[2] == 0
+
+
+def check_the_reciprocal_holds_its_precision_at_every_context():
+    """The check that was missing, and the reason limit 9 went unnoticed.
+
+    The old fixed-Q16 divide was `2**16 / T` levels: 2 at ctx 32,768 and 0 at
+    131,072. Its error was the fractional part of `2**31/l`, which made it a
+    LOTTERY -- 0.2% at powers of two and 25% at ctx 24,576. Every context this
+    project tested was a power of two, so every measurement landed on a winning
+    ticket and nothing failed.
+
+    So this sweeps the unlucky contexts ON PURPOSE. `l = T * 2**15` is the
+    measured law: near-uniform attention makes every `p` near unity.
+    """
+    for T in (64, 1024, 4096, 16384, 20000, 24576, 32768, 49152, 65536,
+              131072, 262144, 1 << 22):
+        l = int(round(T * (1 << FMT.prob_frac) * 0.998))
+        r, sh = reciprocal(np.array([l]), FMT)
+        r, sh = int(r[0]), int(sh[0])
+        got = r / 2.0 ** sh
+        want = (1 << FMT.prob_frac) / l
+        assert abs(got - want) / want < 1e-6, (T, got, want)
+        # The quotient is normalised, so it is 31 bits WHATEVER the context --
+        # that is the property, not the error bound that follows from it.
+        assert 1 << 30 < r <= 1 << 31, (T, r)
+        # And `acc * recip` must stay inside 64 bits: acc is ACC_WIDTH signed.
+        assert r * (1 << (FMT.acc_width - 1)) < (1 << 63), (T, r)
+
+
+def check_the_reciprocal_shift_is_never_a_left_shift():
+    """`rshift` refuses a negative amount, and small `l` is the case that tries.
+
+    A masked position gives `l = 0` and a one-token context gives the smallest
+    real `l` there is; both must still produce a non-negative shift.
+    """
+    l = np.array([0, 1, 1 << FMT.prob_frac, (1 << 47) - 1])
+    _, sh = reciprocal(l, FMT)
+    assert np.all(sh >= 0), sh
 
 
 def check_scoring_on_codes_equals_scoring_on_the_reconstruction():

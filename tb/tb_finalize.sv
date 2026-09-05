@@ -9,14 +9,27 @@
 //
 // THE REAL DENOMINATORS DO NOT EXERCISE THE DIVIDER
 // -------------------------------------------------
-// All 32 heads end a 65-token scan with `l` near 65 * 32768, so `2**31 // l`
-// lands between 1,008 and 1,012 -- a four-value spread, every one of them a
-// 10-bit number. A divider that was wrong above 10 bits, or on a zero or a
-// one, would agree with every real head. So the last 12 rows are constructed:
-// l = 0, 1, 2, 3, 2**15-1, 2**15, 2**16-1, 2**20, 2**31-1, 2**31, 2**32-1 and
-// 2**33, which take the reciprocal across its whole range from 2**31 down to
-// zero. Channel 0 of each is a saturated accumulator and channel 1 its
-// negative, so the widest product this block can form is formed on every one.
+// All 32 heads end a 65-token scan with `l` near 65 * 32768, so all 32 land on
+// the same normalised quotient to within 0.25% and on the SAME shift. A
+// divider wrong at any other magnitude would agree with every real head. So
+// the last 17 rows are constructed.
+//
+// WHAT THEY STRESS IS THE SHIFT, NOT THE QUOTIENT'S WIDTH
+// -------------------------------------------------------
+// They used to span "the reciprocal's whole range from 2**31 down to zero",
+// which was the old fixed-Q16 divide: there the quotient's WIDTH tracked the
+// context, and that is precisely the defect the normalised divide removes.
+// Every quotient is now 31 bits. The degree of freedom is `lead`, the position
+// of `l`'s leading one, which sets both the normalising shift and the output
+// shift -- so the constructed rows sweep it from 0 to L_WIDTH-1 and sit on the
+// `shr`/`shl` boundary at 31 where the normaliser changes direction.
+//
+// The last three are the denominators of the contexts the rewrite was made
+// for: l = T * 2**15 at ctx 32,768, 131,072 and 1,048,576. At the middle one
+// the old divide returned zero and took every output channel with it.
+//
+// Channel 0 of each is a saturated accumulator and channel 1 its negative, so
+// the widest product this block can form is formed on every one.
 //
 // l = 0 IS NOT AN ERROR CASE
 // --------------------------
@@ -30,7 +43,7 @@ module tb_finalize;
     localparam int OB  = 48;
     localparam int RB  = 32;
     localparam int SEAM = 24;
-    localparam int N    = 44;      // 32 real heads + 12 constructed
+    localparam int N    = 49;      // 32 real heads + 17 constructed
     localparam int REAL = 32;
 
     logic clk = 0, rstn = 0;
@@ -39,6 +52,7 @@ module tb_finalize;
     logic [D*AW-1:0] g_acc   [0:N-1];
     logic [LW-1:0]   g_l     [0:N-1];
     logic [RB-1:0]   g_recip [0:N-1];
+    logic [7:0]      g_shift [0:N-1];
     logic [D*OB-1:0] g_out   [0:N-1];
 
     int errors = 0, seen = 0, range_seen = 0;
@@ -49,10 +63,11 @@ module tb_finalize;
     logic [LW-1:0] in_l;
     logic [D*OB-1:0] out_vec;
     logic [RB-1:0] out_recip;
+    logic [$clog2(LW)+1:0] out_shift;
 
     finalize dut (
         .clk, .rstn, .in_valid, .in_ready, .in_acc, .in_l,
-        .out_valid, .out_ready, .out_vec, .out_recip, .range_error);
+        .out_valid, .out_ready, .out_vec, .out_recip, .out_shift, .range_error);
 
     task check(input logic cond, input string what);
         if (!cond) begin
@@ -75,10 +90,12 @@ module tb_finalize;
     endfunction
 
     int cycles, cyc_min = 9999, cyc_max = 0;
+    int sh_min = 9999, sh_max = 0;
     initial begin
         $readmemh("tb/vectors/fin_acc.hex", g_acc);
         $readmemh("tb/vectors/fin_l.hex", g_l);
         $readmemh("tb/vectors/fin_recip.hex", g_recip);
+        $readmemh("tb/vectors/fin_shift.hex", g_shift);
         $readmemh("tb/vectors/fin_out.hex", g_out);
 
         in_valid = 0; out_ready = 1; in_acc = '0; in_l = '0;
@@ -100,6 +117,11 @@ module tb_finalize;
             check(out_recip === g_recip[r],
                   $sformatf("row %0d (l=%0d): recip %0d != %0d", r, g_l[r],
                             out_recip, g_recip[r]));
+            check(out_shift === g_shift[r],
+                  $sformatf("row %0d (l=%0d): shift %0d != %0d", r, g_l[r],
+                            out_shift, g_shift[r]));
+            if (out_shift < sh_min) sh_min = out_shift;
+            if (out_shift > sh_max) sh_max = out_shift;
             for (int ch = 0; ch < D; ch++)
                 check(out_vec[ch*OB +: OB] === g_out[r][ch*OB +: OB],
                       $sformatf("row %0d ch %0d: %0d != %0d", r, ch,
@@ -120,10 +142,18 @@ module tb_finalize;
 
         check(seen == N, "every row was finalized");
         check(range_seen > 0, "the constructed rows must overflow the seam");
+        // The normalising shift must actually have been swept, or the rows
+        // above stopped testing the thing they were rewritten to test.
+        check(sh_min <= 16 && sh_max >= 60,
+              $sformatf("shifts only spanned %0d..%0d", sh_min, sh_max));
         $display("  %0d rows (%0d real, %0d constructed), %0d..%0d cycles",
                  N, REAL, N-REAL, cyc_min, cyc_max);
-        $display("  reciprocals from %0d to %0d; %0d rows exceeded the 24-bit seam",
-                 g_recip[N-1], g_recip[REAL+1], range_seen);
+        // NOT a range: the normalised divide makes every quotient 31 bits, so
+        // what varies row to row is the SHIFT, not the reciprocal. Printing two
+        // reciprocals as "from X to Y" was true of the old fixed-Q16 divide and
+        // would now print the same number twice.
+        $display("  shifts %0d..%0d, reciprocals all %0d b; %0d rows exceeded the 24-bit seam",
+                 sh_min, sh_max, $clog2(g_recip[0]) + 1, range_seen);
 
         if (errors == 0) $display("=== tb_finalize: ALL TESTS PASSED ===");
         else $display("=== tb_finalize: %0d TESTS FAILED ===", errors);

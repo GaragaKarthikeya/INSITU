@@ -507,20 +507,24 @@ def check_the_finalize_goldens_are_the_kernels_own_two_lines():
     assert l.shape == (vs.model.num_heads,)
 
     # The end of the scan really is what `attend_online` returned.
-    out = rshift(acc * reciprocal(l, vs.fmt)[..., None], vs.fmt.recip_frac)
+    _r, _sh = reciprocal(l, vs.fmt)
+    out = rshift(acc * _r[..., None], _sh[..., None])
     from kernel.ops.project import merge_heads
     exact(merge_heads(out[None]), vs.out_online, "finalize reproduces out.online")
 
     with tempfile.TemporaryDirectory() as d:
         names = {os.path.basename(p) for p in emit(vs, d)}
-        assert {"fin_acc.hex", "fin_l.hex", "fin_recip.hex", "fin_out.hex"} <= names
+        assert {"fin_acc.hex", "fin_l.hex", "fin_recip.hex", "fin_shift.hex",
+                "fin_out.hex"} <= names
         man = json.load(open(os.path.join(d, "manifest.json")))
         assert man["finalize_rows"] == vs.model.num_heads + man["finalize_edge_rows"]
 
         gl = [int(x, 16) for x in open(os.path.join(d, "fin_l.hex")).read().split()]
         gr = [int(x, 16) for x in open(os.path.join(d, "fin_recip.hex")).read().split()]
-        exact(np.array(gr), reciprocal(np.array(gl, dtype=np.int64), vs.fmt),
-              "fin_recip.hex")
+        _gr, _gsh = reciprocal(np.array(gl, dtype=np.int64), vs.fmt)
+        exact(np.array(gr), _gr, "fin_recip.hex")
+        gsh = [int(x, 16) for x in open(os.path.join(d, "fin_shift.hex")).read().split()]
+        exact(np.array(gsh), _gsh, "fin_shift.hex")
         # l = 0 is a real input -- a masked position -- and answers zero.
         assert 0 in gl and gr[gl.index(0)] == 0
         # The constructed rows must take the reciprocal to its ceiling.
@@ -530,14 +534,30 @@ def check_the_finalize_goldens_are_the_kernels_own_two_lines():
 def check_the_real_denominators_do_not_exercise_the_divider():
     """Why the constructed rows exist, pinned rather than asserted in a comment.
 
-    Every head ends the same length of scan, so every `l` is close to
-    `n_tokens << prob_frac` and every reciprocal is a 10-bit number in a band
-    four values wide. A divider wrong above ten bits, or on a zero or a one,
+    Every head ends the same length of scan, so every real `l` is close to
+    `n_tokens << prob_frac` -- and since the reciprocal is NORMALISED, every
+    real quotient is therefore 31 bits and they sit within a hair of each
+    other. A divider wrong on a zero, on a one, or at any other magnitude
     agrees with all 32 of them.
+
+    This used to say "a 10-bit number in a band four values wide", which was
+    the old fixed-Q16 divide talking: there the quotient's WIDTH tracked the
+    context, which is exactly the defect `reciprocal` was rewritten to remove.
+    The premise the constructed rows rest on is unchanged -- real rows do not
+    exercise the divider -- but the reason is now that they are all the same
+    size rather than that they are all small.
     """
     from kernel.ops.attention import reciprocal
 
     vs, _ = _built()
-    r = reciprocal(vs.final["l"], vs.fmt)
-    assert int(r.max()) - int(r.min()) < 16, (int(r.min()), int(r.max()))
-    assert int(r.max()).bit_length() <= 12
+    r, sh = reciprocal(vs.final["l"], vs.fmt)
+    # Relative, not absolute: the quotient is now full-scale at every context,
+    # so "they are all nearly the same" is a statement about their ratio. 0.25%
+    # here -- the 32 heads end scans of the same length.
+    spread = (int(r.max()) - int(r.min())) / int(r.max())
+    assert spread < 0.01, (spread, int(r.min()), int(r.max()))
+    # Normalised: 31 bits, every one of them, whatever the context.
+    assert all(1 << 30 < int(x) <= 1 << 31 for x in r), (int(r.min()), int(r.max()))
+    # And one scan length means one shift, which is the other half of "these
+    # rows do not exercise the divider".
+    assert len(set(int(x) for x in sh)) == 1, sorted(set(int(x) for x in sh))

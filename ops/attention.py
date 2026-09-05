@@ -164,11 +164,75 @@ class ExpLut:
         return np.where(i > self.max_int_part, INT(0), p)
 
 
-def reciprocal(l, fmt: FixedFormat) -> np.ndarray:
-    """`1/l` in Q(recip_frac), for `l` in Q(prob_frac). Integer divide, once per step."""
+# The denominator's register width, from `finalize.sv`'s `L_WIDTH`. The
+# normalised reciprocal's shift can never exceed it.
+L_WIDTH = 48
+
+
+def _lead(l: np.ndarray) -> np.ndarray:
+    """Position of `l`'s leading one, 0 for zero. A priority encoder in RTL."""
     a = np.asarray(l, dtype=INT)
-    num = INT(1) << (fmt.recip_frac + fmt.prob_frac)
-    return np.where(a > 0, num // np.maximum(a, 1), INT(0))
+    n = np.zeros_like(a)
+    for b in range(1, L_WIDTH):
+        n = np.where(a >= (INT(1) << b), INT(b), n)
+    return n
+
+
+# The divisor width the reciprocal's divider is built for, and the numerator
+# that makes its quotient exactly one bit narrower. `l` is normalised INTO this
+# width, so both are compile-time constants and the divide is fixed-width.
+RECIP_NORM_BITS = 32
+RECIP_NUM_SHIFT = 2 * RECIP_NORM_BITS - 2        # 62: quotient is 31 bits
+
+
+def reciprocal(l, fmt: FixedFormat):
+    """`1/l`, normalised. Returns `(recip, shift)` with `out = (acc*recip) >> shift`.
+
+    WHY THIS IS NOT A FIXED Q16 DIVIDE ANY MORE
+    -------------------------------------------
+    It used to be `floor(2**31 / l)` at a fixed `recip_frac`, and that loses
+    precision linearly in context. The online denominator measures
+    `l = T * 2**15` to within 0.2% -- near-uniform attention makes every `p`
+    near unity -- so the old quotient was `2**16 / T`: 64 levels at ctx 1,024,
+    8 at 8,192, 2 at 32,768, 1 at 65,536 and **0 at 131,072**, where the output
+    became identically zero.
+
+    Worse, the error was a LOTTERY. It is the fractional part of `2**31/l`, so
+    at powers of two `l` lands just above an integer and the error is 0.2%,
+    while at ctx 24,576 it is 25%. Every context this project had tested -- 32,
+    64, 256, 1,024, 4,096 -- is a power of two, so every measurement had been
+    taken on a winning ticket. Bit-exactness could not catch it either, because
+    `finalize.sv` did the same integer divide and was wrong in the same way.
+
+    THE DIVISOR IS NORMALISED, NOT THE NUMERATOR
+    --------------------------------------------
+    The obvious fix is to scale the numerator by `l`'s leading bit -- and it
+    overflows a 64-bit integer at ctx 262,144, which is inside the range this
+    is meant to rescue. So `l` is shifted INTO a fixed 32-bit window instead
+    (left when it is small, right when it is large), and the numerator stays
+    the constant `2**62`. The quotient is then always in `(2**30, 2**31]` --
+    31 significant bits at EVERY context, with no ceiling -- and `acc * recip`
+    stays inside 64 bits because both factors are bounded by construction.
+    That is also the shape the RTL wants: a fixed-width divisor and a constant
+    dividend, which is the divider `finalize.sv` already has.
+
+    The value is unchanged, `acc * 2**prob_frac / l`; only the precision it is
+    carried at changes, and it no longer depends on the context.
+
+    `l = 0` is a real input -- a masked position scores nothing -- and answers
+    `(0, shift)`, giving the zero vector, as before.
+    """
+    a = np.asarray(l, dtype=INT)
+    s = _lead(a)
+    # `k` is where `l`'s leading one sits relative to the window. Negative means
+    # `l` is small and must be shifted UP; the shift below is total, so a
+    # negative `k` simply makes it smaller. `16 + s` is its floor, so it is
+    # never negative and `rshift` is never asked for a left shift.
+    k = s - (RECIP_NORM_BITS - 1)
+    l_n = np.where(k >= 0, a >> np.maximum(k, 0), a << np.maximum(-k, 0))
+    num = INT(1) << RECIP_NUM_SHIFT
+    r = np.where(a > 0, num // np.maximum(l_n, INT(1)), INT(0))
+    return r, RECIP_NUM_SHIFT - fmt.prob_frac + k
 
 
 # --------------------------------------------------------------------------
@@ -563,6 +627,10 @@ class CompressedAttention:
         return self._finalize(acc, l).reshape(np.shape(q_rot)), stats
 
     def _finalize(self, acc: np.ndarray, l: np.ndarray) -> np.ndarray:
-        """Divide by the softmax denominator. One reciprocal per step, not per token."""
-        recip = reciprocal(l, self.fmt)[..., None]
-        return rshift(acc * recip, self.fmt.recip_frac)
+        """Divide by the softmax denominator. One reciprocal per step, not per token.
+
+        The shift is per-row, because `reciprocal` normalises per row: two query
+        heads with different denominators get different shifts in the same step.
+        """
+        recip, shift = reciprocal(l, self.fmt)
+        return rshift(acc * recip[..., None], shift[..., None])

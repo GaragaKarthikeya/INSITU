@@ -984,7 +984,7 @@ Out-of-context, `xczu7ev-ffvc1156-2-e`, 250 MHz:
 
 | block | WNS | LUT | FF | DSP | BRAM |
 |---|---|---|---|---|---|
-| `finalize` | **+0.863 ns** | 1,060 | 5,326 | 16 | 0 |
+| `finalize` | **+0.022 ns** | 1,547 | — | 16 | 0 |
 
 The 5,326 FFs are almost entirely two registers: the held accumulator (64 × 32)
 and the output (64 × 48). Carrying the output at 48 bits when the seam is 24

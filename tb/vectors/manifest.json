@@ -33,8 +33,8 @@
   "stress_query_scale": 1024,
   "stress_distinct_factors": 17,
   "recip_frac": 16,
-  "finalize_rows": 44,
-  "finalize_edge_rows": 12,
+  "finalize_rows": 49,
+  "finalize_edge_rows": 17,
   "finalize_out_bits": 48,
   "ddr": {
     "row_bytes": 52,

@@ -67,10 +67,30 @@ module finalize #(
     input  logic out_ready,
     output logic [D*OUT_BITS-1:0] out_vec,
     output logic [RECIP_BITS-1:0] out_recip,
+    // The normalised divide's second half. Exposed for the same reason
+    // `out_recip` is: a wrong shift and a wrong quotient both come out as a
+    // wrong vector, and a bench that can only see the vector cannot say which.
+    output logic [$clog2(L_WIDTH)+1:0] out_shift,
     // A channel the seam cannot carry. Never a silent wrap, never a clamp.
     output logic range_error
 );
-    localparam int NUM_BIT    = RECIP_FRAC + PROB_FRAC;       // the set bit of NUM
+    // THE DIVIDE IS NORMALISED, AND THAT IS A NUMERIC CHANGE
+    // ------------------------------------------------------
+    // This used to be `floor(2**31 / l)` at a fixed `RECIP_FRAC`, which loses
+    // precision linearly in context: the online denominator is `l = T*2**15`,
+    // so the quotient was `2**16/T` -- 64 levels at ctx 1,024, 2 at 32,768, 1
+    // at 65,536, and 0 at 131,072, where `l_too_big` fired and every channel
+    // came out zero. The error was the fractional part of `2**31/l`, so it was
+    // a LOTTERY: 0.2% at powers of two, 25% at ctx 24,576. Every context this
+    // project had tested is a power of two.
+    //
+    // So `l` is normalised INTO the divisor's width instead, and the numerator
+    // is the constant `2**(2*RECIP_BITS-2)`. The quotient then always lands in
+    // (2**30, 2**31] -- 31 significant bits at EVERY context, with no ceiling
+    // -- and the caller shifts by `16 + s` rather than by `RECIP_FRAC`, where
+    // `s` is the position of `l`'s leading one. `ops/attention.py::reciprocal`
+    // is the same arithmetic and the goldens come from it.
+    localparam int NUM_SHIFT  = 2 * RECIP_BITS - 2;           // 62
     localparam int REM_W      = RECIP_BITS + 1;
     localparam int GROUPS     = D / LANES;
     localparam int PROD_W     = ACC_WIDTH + RECIP_BITS + 1;
@@ -97,20 +117,42 @@ module finalize #(
     logic [$clog2(GROUPS)+1:0]   mstep;
     logic mvld;
 
-    // `l` at or above 2**RECIP_BITS makes the quotient zero, and a divisor that
-    // wide would need a remainder wider than the dividend can ever reach. The
-    // guard is exact, not a range check: 2**31 / l is 0 for every l > 2**31.
-    wire l_too_big = |l_h[L_WIDTH-1:RECIP_BITS];
-    wire [RECIP_BITS-1:0] divisor = l_h[RECIP_BITS-1:0];
+    // `l`'s leading one. A priority encoder, and the only new logic the
+    // normalisation costs on the divisor side. There is no `l_too_big` any
+    // more: normalising removed the ceiling that made it necessary.
+    logic [$clog2(L_WIDTH)-1:0] lead;
+    always_comb begin
+        lead = '0;
+        for (int b = 1; b < L_WIDTH; b++)
+            if (l_h[b]) lead = ($clog2(L_WIDTH))'(b);
+    end
 
-    // one restoring step: shift the next dividend bit in, subtract if it fits
-    wire [REM_W-1:0] rem_shifted =
-        {rem[REM_W-2:0], (dstep == (RECIP_BITS-1-NUM_BIT)) ? 1'b1 : 1'b0};
+    // Shift `l` so its leading one sits at bit RECIP_BITS-1: right when it is
+    // large, left when it is small. Exactly one of the two is ever non-zero.
+    wire [$clog2(L_WIDTH)-1:0] shr = (lead >= RECIP_BITS-1)
+                                   ? (lead - ($clog2(L_WIDTH))'(RECIP_BITS-1)) : '0;
+    wire [$clog2(L_WIDTH)-1:0] shl = (lead >= RECIP_BITS-1)
+                                   ? '0 : (($clog2(L_WIDTH))'(RECIP_BITS-1) - lead);
+    wire [L_WIDTH-1:0] l_shifted = (l_h >> shr) << shl;
+    wire [RECIP_BITS-1:0] divisor = l_shifted[RECIP_BITS-1:0];
+
+    // The total right shift the product takes: NUM_SHIFT - PROB_FRAC + (lead -
+    // (RECIP_BITS-1)), which is 16 + lead and therefore never negative.
+    logic [$clog2(L_WIDTH)+1:0] oshift, oshift_h;
+    assign oshift = ($clog2(L_WIDTH)+2)'(NUM_SHIFT - PROB_FRAC - (RECIP_BITS-1)) +
+                    ($clog2(L_WIDTH)+2)'(lead);
+
+    // One restoring step. The dividend is a single set bit far above the
+    // divisor, so every bit shifted in from here is zero and the remainder is
+    // SEEDED at 2**(RECIP_BITS-1) rather than at 0 -- which is the alignment
+    // step, skipped rather than iterated.
+    wire [REM_W-1:0] rem_shifted = {rem[REM_W-2:0], 1'b0};
     wire fits = rem_shifted >= {1'b0, divisor};
 
     assign in_ready = (st == IDLE);
     assign out_valid = (st == DONE);
     assign out_recip = q;
+    assign out_shift = oshift_h;
 
     always_ff @(posedge clk) begin
         if (!rstn) begin
@@ -120,15 +162,23 @@ module finalize #(
             case (st)
                 IDLE: if (in_valid) begin
                     acc_h <= in_acc; l_h <= in_l;
-                    q <= '0; rem <= '0; dstep <= '0;
+                    // Seeded, not zeroed: a restoring divide producing an
+                    // n-bit quotient starts with the dividend's bits ABOVE the
+                    // low n, and this dividend is the single bit 2**NUM_SHIFT.
+                    // So the seed is `NUM >> RECIP_BITS`, and the first
+                    // RECIP_BITS steps of the textbook loop -- which would
+                    // produce nothing but that alignment -- are skipped.
+                    q <= '0; rem <= REM_W'(1) << (NUM_SHIFT - RECIP_BITS);
+                    dstep <= '0;
                     st <= DIV;
                 end
                 DIV: begin
-                    // A zero denominator and one too wide both answer zero,
-                    // and both skip the 32 iterations rather than producing
-                    // that answer the slow way.
-                    if (l_h == '0 || l_too_big) begin
-                        q <= '0;
+                    // A zero denominator answers zero and skips the 32
+                    // iterations rather than producing that answer the slow
+                    // way. There is no "too wide" case any more: `divisor` is
+                    // `l` normalised, so it is always exactly RECIP_BITS.
+                    if (l_h == '0) begin
+                        q <= '0; oshift_h <= oshift;
                         mstep <= '0; mvld <= 1'b0; st <= MUL;
                     end else begin
                         rem <= fits ? (rem_shifted - {1'b0, divisor}) : rem_shifted;
@@ -136,15 +186,17 @@ module finalize #(
                         dstep <= dstep + 1'b1;
                         if (dstep == RECIP_BITS-1) begin
                             mstep <= '0; mvld <= 1'b0; st <= MUL;
+                            oshift_h <= oshift;
                         end
                     end
                 end
                 MUL: begin
                     mvld <= (mstep < GROUPS);
                     mstep <= mstep + 1'b1;
-                    // Two drain cycles, not one: the fold is select, then
-                    // multiply, then write back.
-                    if (mstep == GROUPS + 2) st <= DONE;
+                    // Three drain cycles: the fold is select, multiply,
+                    // shift, then write back. The shift became a stage when
+                    // the divide was normalised -- see below.
+                    if (mstep == GROUPS + 3) st <= DONE;
                 end
                 DONE: if (out_ready) st <= IDLE;
             endcase
@@ -170,10 +222,11 @@ module finalize #(
     //
     // The arithmetic is untouched, so every golden holds; the divide costs one
     // more cycle, once per query head at the END of a T-cycle scan.
-    logic [$clog2(GROUPS)+1:0] mstep_d, mstep_d2;
-    logic mvld_d;
+    logic [$clog2(GROUPS)+1:0] mstep_d, mstep_d2, mstep_d3;
+    logic mvld_d, mvld_d2;
     logic signed [ACC_WIDTH-1:0] sel [0:LANES-1];
     logic signed [PROD_W-1:0] prod [0:LANES-1];
+    logic signed [PROD_W-1:0] shp  [0:LANES-1];
     // `mstep` runs two past the last group so the pipe drains; clamping the
     // read index keeps those cycles from part-selecting off the end of `acc_h`
     // and pushing X into a product nothing reads.
@@ -183,22 +236,42 @@ module finalize #(
     always_ff @(posedge clk) begin
         if (!rstn) begin
             range_error <= 1'b0;
-            mstep_d <= '0; mstep_d2 <= '0; mvld_d <= 1'b0;
+            mstep_d <= '0; mstep_d2 <= '0; mstep_d3 <= '0;
+            mvld_d <= 1'b0; mvld_d2 <= 1'b0;
         end else begin
         if (st == IDLE && in_valid) range_error <= 1'b0;
         mstep_d  <= mstep;
         mstep_d2 <= mstep_d;
+        mstep_d3 <= mstep_d2;
         mvld_d   <= mvld;
+        mvld_d2  <= mvld_d;
         for (int i = 0; i < LANES; i++)
             sel[i] <= $signed(acc_h[(rgrp*LANES + i)*ACC_WIDTH +: ACC_WIDTH]);
         for (int i = 0; i < LANES; i++)
             prod[i] <= $signed(PROD_W'(sel[i])) * $signed({1'b0, q});
-        if (mvld_d) begin
+        // THE SHIFT IS ITS OWN STAGE, AND THAT IS THE NORMALISATION'S BILL.
+        //
+        // It used to be `>>> RECIP_FRAC`, a constant, which is free wiring.
+        // Normalising made it `>>> oshift_h` -- a 65-bit variable arithmetic
+        // shift, a real barrel shifter -- and in the same cycle as the range
+        // compare and the output write it took this block to WNS -0.028 ns out
+        // of context, against the +0.863 ns step 9 recorded. Registering it
+        // is the same fix, for the same reason, as the SELECT stage above; it
+        // recovers +0.022, which is positive and thin, and the full-system
+        // build is what actually decides -- step 12's lesson was that out of
+        // context is the misleading measurement.
+        //
+        // It also stops the range check from being a second and third shifter:
+        // the comparison now reads the registered result rather than
+        // recomputing it twice more.
+        for (int i = 0; i < LANES; i++)
+            shp[i] <= prod[i] >>> oshift_h;
+        if (mvld_d2) begin
             for (int i = 0; i < LANES; i++) begin
-                out_vec[(mstep_d2*LANES + i)*OUT_BITS +: OUT_BITS] <=
-                    OUT_BITS'(prod[i] >>> RECIP_FRAC);
-                if (!((prod[i] >>> RECIP_FRAC) >= -(PROD_W'(1) << (SEAM_BITS-1)) &&
-                      (prod[i] >>> RECIP_FRAC) < (PROD_W'(1) << (SEAM_BITS-1))))
+                out_vec[(mstep_d3*LANES + i)*OUT_BITS +: OUT_BITS] <=
+                    OUT_BITS'(shp[i]);
+                if (!(shp[i] >= -(PROD_W'(1) << (SEAM_BITS-1)) &&
+                      shp[i] < (PROD_W'(1) << (SEAM_BITS-1))))
                     range_error <= 1'b1;
             end
         end
