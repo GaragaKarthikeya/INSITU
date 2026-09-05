@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Run one of this project's host tools with the right interpreter, the right
+# working directory, and root when the tool needs raw sockets.
+#
+#   ./scripts/attn probe                     # diagnose the Ethernet link
+#   ./scripts/attn infer --tokens 24         # all 16 layers, live, on the board
+#   ./scripts/attn ppl   --tokens 256        # perplexity, board vs baseline
+#   ./scripts/attn infer --cpu-only          # the control, no board, no sudo
+#
+# WHY THIS EXISTS
+# ---------------
+# `python -m kernel.<x>` from inside the repository imports `kernel.py` --- the
+# module --- instead of `kernel/` --- the package --- because the current
+# directory shadows it. The failure is an ImportError about relative imports
+# that says nothing about the actual mistake. So the directory is chosen here
+# rather than by the caller.
+set -uo pipefail
+VENV=/home/digital3/TurboQuant-Reproduction/.venv/bin/python
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+PARENT=$(dirname "$ROOT")            # the package lives in here, not in $ROOT
+IFACE="${IFACE:-enp4s0}"
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  probe) mod=kernel.host.eth_probe;          need_root=1; args=(--eth "$IFACE") ;;
+  infer) mod=kernel.experiments.fpga_infer;  need_root=1; args=(--eth "$IFACE") ;;
+  ppl)   mod=kernel.experiments.fpga_ppl;    need_root=1; args=(--eth "$IFACE") ;;
+  *) sed -n '2,16p' "$0"; exit 2 ;;
+esac
+
+# --cpu-only and --jtag do not touch a raw socket, so they do not need root --
+# and running them as root would write root-owned files into the workspace.
+for a in "$@"; do
+  case "$a" in --cpu-only|--jtag) need_root=0; args=() ;; esac
+done
+
+cd "$PARENT"
+if [ "$need_root" = 1 ] && [ "$(id -u)" != 0 ]; then
+  exec sudo "$VENV" -m "$mod" "${args[@]}" "$@"
+fi
+exec "$VENV" -m "$mod" "${args[@]}" "$@"
