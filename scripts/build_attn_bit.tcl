@@ -1,6 +1,14 @@
-# Synthesise, implement and write the bitstream for the attention block (step 12).
+# Synthesise, implement and write the bitstream for the attention block.
 #
-# Usage: vivado -mode batch -source scripts/build_attn_bit.tcl -tclargs <jobs> <freq_mhz>
+# Usage: vivado -mode batch -source scripts/build_attn_bit.tcl \
+#            -tclargs <jobs> <freq_mhz> [variant]
+#
+# `variant` selects which system the block is wrapped in and defaults to the
+# step-12 one:
+#   attn    `create_bd_attn.tcl`     -- jtag_axi is the master (step 12)
+#   attnps  `create_bd_attn_ps.tcl`  -- the PS is the master  (step 13)
+# The RTL and every step below the shim are the same in both, which is the
+# point; only the master and the output names differ.
 #
 # The WNS check is not advisory. `attn_top` routes out of context at +0.053 ns,
 # which is 1.3% of the period: in a full system, with the PS, four
@@ -12,8 +20,9 @@
 # explicit warning, not a line in a log.
 set J    [expr {[llength $argv] > 0 ? [lindex $argv 0] : 8}]
 set FREQ [expr {[llength $argv] > 1 ? [lindex $argv 1] : 250}]
+set VAR  [expr {[llength $argv] > 2 ? [lindex $argv 2] : "attn"}]
 set root [file normalize [file dirname [info script]]/..]
-set proj $root/build/bd_attn_f${FREQ}
+set proj $root/build/bd_${VAR}_f${FREQ}
 
 open_project $proj/attn_zcu104.xpr
 set_property top attn_bd_wrapper [get_filesets sources_1]
@@ -59,7 +68,7 @@ if {[get_property PROGRESS [get_runs impl_1]] != "100%"} { puts "### IMPL FAILED
 open_run impl_1
 set wns [get_property SLACK [get_timing_paths -delay_type max]]
 set whs [get_property SLACK [get_timing_paths -delay_type min]]
-puts "### IMPL FREQ=$FREQ WNS=${wns}ns WHS=${whs}ns"
+puts "### IMPL VARIANT=$VAR FREQ=$FREQ WNS=${wns}ns WHS=${whs}ns"
 if {$wns < 0} {
     puts "### WARNING: negative setup slack -- the block is NOT running at ${FREQ}MHz."
     puts "### Step 12 is correctness only and is still valid, but no later step"
@@ -76,7 +85,7 @@ report_timing_summary -file $proj/impl_timing.rpt
 
 set bit $proj/attn_zcu104.runs/impl_1/attn_bd_wrapper.bit
 if {![file exists $bit]} { puts "### NO BITSTREAM at $bit"; exit 1 }
-file copy -force $bit $root/build/attn_f${FREQ}.bit
-write_hw_platform -fixed -include_bit -force $root/build/attn_f${FREQ}.xsa
-puts "### BIT written: $root/build/attn_f${FREQ}.bit"
+file copy -force $bit $root/build/${VAR}_f${FREQ}.bit
+write_hw_platform -fixed -include_bit -force $root/build/${VAR}_f${FREQ}.xsa
+puts "### BIT written: $root/build/${VAR}_f${FREQ}.bit"
 puts "### ATTN BIT OK"

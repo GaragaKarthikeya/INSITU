@@ -15,6 +15,7 @@ MODULES = [
     "kernel.tests.test_hardware",
     "kernel.tests.test_vectors",
     "kernel.tests.test_ddr_layout",
+    "kernel.tests.test_board_vectors",
     "kernel.tests.test_adapter",
 ]
 
