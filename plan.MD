@@ -1487,6 +1487,57 @@ paying the 366 µs twice over. The DMA the system diagram already shows belongs
 here, sized against that number rather than against a guess — and it is the
 one change that needs the shim to grow a stream alongside its buffers.
 
+**Status: PARTLY DONE. The transport exists and is tested; the board half of
+the network does not.**
+
+Done, and in the bitstream:
+
+- **The DMA.** `attn_ctrl` grew a 512-bit AXI4-Stream pair selected by a MODE
+  bit at 0x38; `create_bd_attn_dma.tcl` adds an `axi_dma` on **HPC0, its own
+  coherent port**. Not a share of an HP port: all four carry a KV read master
+  and the design is sized against them delivering 16.0 GB/s, so 15 KB a token
+  would tax the one resource the architecture is short of. The buffers stay as
+  MODE 0, because a bring-up that cannot re-read what it loaded cannot
+  interpret what it gets out — and `attn_main.c` runs every case BOTH ways,
+  checking each against the goldens, so the fast path agreeing with the slow
+  one is not enough to pass.
+- **`s_axis_tready` is gated on `busy`.** `attn_ingress` clears its beat
+  counter on `start`, so a beat accepted before the step begins is swallowed
+  and then discarded, leaving the stream one vector short — which surfaces as
+  the LAST group hanging in S_RECV with every beat apparently delivered. The
+  buffered path cannot reach it, because its feeder is armed by `start`
+  itself. Software ordering would also fix it and would be a rule nothing
+  enforces.
+- **The wire format**, `host/attn_proto.h` and `host/attn_proto.py`. The
+  payload is EXACTLY the beat stream the core consumes, so the A53 hands
+  received bytes to the DMA untouched. The host owns the cache map —
+  `cache_base`, `head_stride`, `plane_span` travel with every step and the
+  board keeps no copy, because `hw/ddr_layout.py` computed the layout and also
+  built the image.
+- **`tests/test_proto.py` compiles the header and asks the compiler for the
+  offsets**, rather than reading them off the source. Two definitions of one
+  format is the bug that survives every unit test on both sides. It caught
+  `uint64_t cache_base` twice — padding inserted before the field, then
+  trailing padding because `sizeof` must be a multiple of the alignment — so
+  the address is split into lo/hi words the way `attn_ctrl`'s own register map
+  splits it.
+- **`host/attn_mock.py` and `host/attn_client.py`.** The mock answers from
+  `board_vectors`' table and does NOT recompute attention: a second golden
+  model would prove nothing and would drift. A mismatch there means the
+  transport is wrong; it cannot mean attention is.
+- **ctx 8,192 added to the board cases** — the first row of the table below,
+  and the regime the headline numbers are quoted at.
+
+Not done:
+
+- **The A53's Ethernet server.** Raw frames on the GEM, polled, no OS. The
+  fragmentation is specified and the host side is written and tested against
+  the mock; the board side is not.
+- **The host integration** — `adapters/torch_llama.py` routing attention to a
+  client instead of to numpy, with the GPU running the rest of the model. That
+  is what the exit criterion's tok/s comes from, so **step 14 is not closed and
+  no end-to-end throughput is claimed yet.**
+
 **Step 15 — the result.** Perplexity from a run where attention genuinely
 executed on the FPGA, then sweep `KEY_BITS`/`VAL_BITS`.
 *Exit:* measured bytes, cycles and throughput move as `config.py` predicts, and
