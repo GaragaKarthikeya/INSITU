@@ -24,14 +24,18 @@ the right bytes is the block's own write path.
 
 WHY SEVERAL CONTEXTS, AND WHY THE LARGEST IS THE ONE THAT MEANS ANYTHING
 ------------------------------------------------------------------------
-At ctx 64 a scan is 1,864 cycles for 520 rows -- 3.6 cycles a row, because
-eight groups each pay a pipeline fill and a DDR round trip that a 65-row scan
-cannot amortise. A bandwidth divided by that number is a statement about
-overhead, not about DDR. At ctx 1,024 the same overhead is 14% and the scan
-approaches the one row per cycle `kv_store_ddr` was built for, so it is the
-long context that says whether the engine is fed. The short ones are there
-because a bug that only appears at length is much easier to find once the
-short case is known good.
+Step 13 measured it: a scan is 3.87 cycles per row at ctx 64, 1.83 at 256 and
+1.24 at 1,024, because eight groups each pay a pipeline fill and a DDR round
+trip that a short scan cannot amortise. A bandwidth divided by the ctx-64
+number is a statement about that overhead, not about DDR. ctx 8,192 is here
+because it is the first row of `plan.MD`'s own throughput table -- the regime
+every headline number in this project is quoted at -- and at 1,026 rows a
+group the fill is under 3%. The short cases stay because a bug that only
+appears at length is far easier to find once the short case is known good.
+
+The ctx-8,192 image is 4.1 MB and it is carried in the ELF, which makes the
+JTAG download the slow part of a board session. That is a one-time cost and no
+part of any number the run reports.
 
 THE C FILE IS GENERATED, NOT WRITTEN
 ------------------------------------
@@ -59,7 +63,8 @@ from .vectors import collect, pack_lanes
 #
 # 4 steps is the smallest number that distinguishes the three ways a write path
 # can be wrong: right row (1 would pass), right plane (2), right stride (3+).
-CASES = (("ctx64", 64, 4), ("ctx256", 256, 4), ("ctx1024", 1024, 4))
+CASES = (("ctx64", 64, 4), ("ctx256", 256, 4), ("ctx1024", 1024, 4),
+         ("ctx8192", 8192, 4))
 
 IN_WORDS = 2304          # 8 groups x 6 vectors x 3 beats x 16 words
 OUT_WORDS = 1536         # 2,048 lanes of 24 b
