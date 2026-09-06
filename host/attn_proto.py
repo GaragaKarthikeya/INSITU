@@ -25,6 +25,7 @@ MAGIC = 0x314E5441
 VERSION = 1
 PORT = 7001
 ETHERTYPE = 0x88B5
+ETH_MTU = 9000          # jumbo; see attn_proto.h
 
 CMD_PING = 0
 CMD_STEP = 1

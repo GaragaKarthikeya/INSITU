@@ -128,7 +128,11 @@ class RawEthClient(_Base):
     # `tests/test_proto.py` checks them against each other the same way it
     # checks the request header.
     FRAG_HDR = struct.Struct("<IHH")
-    MTU_PAYLOAD = 1500 - FRAG_HDR.size
+    # Jumbo: matches ATTN_ETH_MTU in attn_proto.h. A reply is one frame at this
+    # size instead of five, and five-frame replies are what the board's
+    # receiver could not survive.
+    ETH_MTU = 9000
+    MTU_PAYLOAD = ETH_MTU - FRAG_HDR.size
 
     def __init__(self, iface: str, peer_mac: bytes, timeout=2.0):
         if len(peer_mac) != 6:
@@ -139,6 +143,18 @@ class RawEthClient(_Base):
         self.sock.bind((iface, P.ETHERTYPE))
         self.sock.settimeout(timeout)
         self.src = self.sock.getsockname()[4][:6]
+        # A jumbo frame that the interface will not carry is silently dropped by
+        # the kernel, so the MTU is checked rather than assumed.
+        try:
+            with open(f"/sys/class/net/{iface}/mtu") as f:
+                mtu = int(f.read().strip())
+            if mtu < self.ETH_MTU:
+                raise RuntimeError(
+                    f"{iface} has MTU {mtu}; this protocol needs at least "
+                    f"{self.ETH_MTU}. Run: sudo ip link set {iface} mtu "
+                    f"{self.ETH_MTU}")
+        except FileNotFoundError:
+            pass
         # AN AF_PACKET SOCKET SEES ITS OWN TRANSMISSIONS.
         # `eth_probe` proved it: five pings sent, ten frames of our ethertype
         # observed. Without this the receive loop reassembles the REQUEST it

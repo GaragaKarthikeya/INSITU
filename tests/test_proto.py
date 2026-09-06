@@ -117,6 +117,11 @@ def check_the_c_header_and_the_python_struct_are_the_same_format():
     from kernel.host.attn_client import RawEthClient as R
     assert c["frag"] == R.FRAG_HDR.size == c["fraghdr"], (c, R.FRAG_HDR.size)
     assert c["mtu"] == R.MTU_PAYLOAD, (c["mtu"], R.MTU_PAYLOAD)
+    # Jumbo, and the two ends must agree on it or fragments land at different
+    # offsets and reassemble into a token of the right length and wrong bytes.
+    assert R.MTU_PAYLOAD > 1500, R.MTU_PAYLOAD
+    assert P.RESULT_BYTES + P.RESP.size <= R.MTU_PAYLOAD, (
+        "a reply must fit in ONE frame; that is the entire point")
     assert c["attn_frag_hdr.seq"] == 0
     assert c["attn_frag_hdr.frag"] == 4
     assert c["attn_frag_hdr.nfrag"] == 6

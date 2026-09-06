@@ -53,7 +53,13 @@
 
 #define RXBD_COUNT      64
 #define TXBD_COUNT      64
-#define FRAME_MAX       1536
+/* JUMBO. A reply is 6,188 bytes and a request 9,252; at a 1,500-byte MTU those
+ * are five and seven frames. Five-frame replies are what kills this receiver --
+ * 256 consecutive single-frame replies never did -- so the cheapest cure is to
+ * stop sending five. At an MTU of 9,000 a reply is ONE frame and a request is
+ * two. The GEM supports 10,240 (XEMACPS_RX_BUF_SIZE_JUMBO); the host side sets
+ * its interface to match. */
+#define FRAME_MAX       9728
 #define BD_ALIGN        64
 
 /* ONE DESCRIPTOR PER CACHE LINE, AND THAT IS THE WHOLE POINT.
@@ -220,6 +226,12 @@ int attn_eth_init(void)
         xil_printf("ETH: CfgInitialize failed\r\n");
         return -1;
     }
+    /* Before anything else: the option changes the DMA receive buffer size the
+     * driver programs, so it has to be set before the rings are built. */
+    if (XEmacPs_SetOptions(&emac, XEMACPS_JUMBO_ENABLE_OPTION) != XST_SUCCESS) {
+        xil_printf("ETH: the controller refused jumbo frames\r\n");
+        return -1;
+    }
     XEmacPs_SetMacAddress(&emac, (void *)BOARD_MAC, 1);
 
     int phy = phy_find(&emac);
@@ -320,6 +332,8 @@ int attn_eth_init(void)
                (unsigned)RXBD_BYTES, (unsigned)TXBD_BYTES,
                (unsigned)RXBD_COUNT, (unsigned)TXBD_COUNT, (unsigned)BD_SEP,
                (unsigned)sizeof(XEmacPs_Bd), (unsigned)emac.MaxQueues);
+    xil_printf("ETH: jumbo on, frame buffer %u B, reply fits in one frame\r\n",
+               (unsigned)FRAME_MAX);
     xil_printf("ETH: ready, MAC %02x:%02x:%02x:%02x:%02x:%02x, ethertype %04x\r\n",
                BOARD_MAC[0], BOARD_MAC[1], BOARD_MAC[2],
                BOARD_MAC[3], BOARD_MAC[4], BOARD_MAC[5],

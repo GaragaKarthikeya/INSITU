@@ -51,6 +51,10 @@ cd "$PARENT"
 if [ "$board" = 0 ]; then exec "$VENV" -m "$mod" "$@"; fi
 if [ "$(id -u)" != 0 ]; then exec sudo -E "$SELF" "$cmd" "$@"; fi
 
+# Jumbo on this side too, or the kernel silently drops every frame we build.
+ip link set "$IFACE" mtu 9000 2>/dev/null || \
+    echo "### could not set $IFACE to MTU 9000 -- jumbo frames will be dropped"
+
 # -- the UART, always ---------------------------------------------------------
 : > "$LOG"
 "$ROOT/host/uart_cap.py" "$LOG" 3600 "$UART" >/dev/null 2>&1 &

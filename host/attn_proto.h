@@ -113,6 +113,12 @@ typedef struct {
 } attn_frag_hdr;
 
 #define ATTN_FRAG_HDR_BYTES 8
-#define ATTN_MTU_PAYLOAD    (1500 - ATTN_FRAG_HDR_BYTES)
+
+/* JUMBO: 9,000 rather than 1,500. A 6,188-byte reply then travels in ONE frame
+ * instead of five, which is the whole reason -- multi-frame replies are what
+ * this GEM driver could not survive, and single-frame ones ran 256 times
+ * without a fault. The host sets its interface MTU to match. */
+#define ATTN_ETH_MTU        9000
+#define ATTN_MTU_PAYLOAD    (ATTN_ETH_MTU - ATTN_FRAG_HDR_BYTES)
 
 #endif
