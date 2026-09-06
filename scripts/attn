@@ -80,7 +80,15 @@ c = RawEthClient(sys.argv[1], bytes.fromhex("0200 5a77 e001".replace(" ", "")),
 sys.exit(0 if c.ping()["status"] == 0 else 1)
 PYEOF
 alive=$?
-[ "$alive" != 0 ] && { bringup || exit 1; }
+# NORESET=1 keeps a wedged board wedged, which is the only way to ask it
+# anything after a failure. Reprogramming first destroys the evidence.
+if [ "$alive" != 0 ]; then
+    if [ "${NORESET:-0}" = 1 ]; then
+        echo "### the board is not answering, and NORESET=1 -- continuing anyway"
+    else
+        bringup || exit 1
+    fi
+fi
 [ "$board" = 2 ] && { echo "### board ready"; exit 0; }
 
 "$VENV" -m "$mod" "${args[@]}" "$@"
