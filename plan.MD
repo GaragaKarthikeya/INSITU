@@ -1842,7 +1842,12 @@ Status: The PERPLEXITY HALF IS measured, now AT 4,096 TOKENS.
 |---|---|---|---|
 | 32 | 46.530 | 70.960 | 1.525 |
 | 256 | 11.279 | 14.102 | 1.250 |
+| 1,024 | 5.981 | 7.256 | 1.2132 |
 | **4,096** | **9.074** | **10.640** | **1.1726** |
+
+The baselines are not comparable to each other — each row reads a different
+amount of the corpus, so a longer row is a different passage and not a better
+measurement of the same one. Only the ratio column carries across.
 
 `results/step15_perplexity.log` is the 256-token run;
 `results/step15_perplexity_4096.log` is the 4,096-token one, transcribed from
@@ -1857,8 +1862,8 @@ because a longer passage gives the model more context to predict from; it is a
 different measurement, not a better run of the same one. Only the ratio is
 comparable across rows.
 
-The ratio falls monotonically with corpus length: 1.525, 1.250, 1.173. Two
-effects are conflated in that and this data cannot separate them: fewer tokens
+The ratio falls monotonically with corpus length: 1.525, 1.250, 1.213, 1.173.
+Two effects are conflated in that and this data cannot separate them: fewer tokens
 is a noisier estimate, and a shorter run spends proportionally more of its life
 at tiny contexts, where the softmax is over a handful of entries and
 quantisation error has nothing to average against. The 32-token row is mostly
@@ -1873,19 +1878,44 @@ the evidence either side of it:
 - the datapath is bit-exact at **ctx 64, 256, 1,024 and 8,192** on both the
   AXI-Lite and DMA paths (step 14's `step14_dma_f250.log`), which brackets
   every context this run reached;
-- **live** activations through all 16 layers are bit-exact to ctx 256 (4,096 of
-  4,096 steps) and, in the control run immediately before this one, to ctx 32
-  (512 of 512);
+- **live** activations through all 16 layers are bit-exact to ctx 1,024 —
+  16,384 of 16,384 decode steps, measured after this run and recorded below;
 - this run reported zero clips, zero accumulator overflows and no channel
   outside the 24-bit seam, across all 65,536 steps.
 
-So the gap is narrow and specific: no run has checked live model activations
-against the host between ctx 257 and 4,096. The arithmetic at those contexts is
-covered by synthetic vectors and the ingress is checked at both ends of the
-range. That is a good deal stronger than "unverified", and still not the same
-as a checked run — "no counter fired" is not "the answer was right". Closing it
-costs one `--tokens 1024` run with the check on. Next-step 5 is the same
-question at 32k, where nothing brackets it at all.
+So the gap left is ctx 1,025 to 4,096 on live activations, and it is bracketed
+on both sides by synthetic vectors that are checked. That is a good deal
+stronger than "unverified" and still not the same as a checked run — "no
+counter fired" is not "the answer was right". Next-step 5 is the same question
+at 32k, where nothing brackets it at all.
+
+### Live activations are bit-exact to ctx 1,024
+
+`./scripts/attn ppl --tokens 1024`, with the per-step check on:
+
+```
+agreement with the host: 16384 exact, 0 different
+device time: 652.8 ms total, 40 us/step
+scan: 87381094 cycles, 2017624 starving (2.31%)
+clips 0, overflows 0, steps with a range/saturation flag 0
+```
+
+16,384 decode steps — 16 layers over 1,024 tokens — every one compared channel
+by channel against the numpy kernel, on activations from the real checkpoint
+rather than from a seed. This replaces the previous live figure of 4,096 steps
+to ctx 256.
+
+The scan sits at 1.301 cyc/row over 67,174,400 rows, which is where the series
+says a mean context of 512 should land: 1.30, 1.28, 1.17, 1.14 at mean contexts
+of 512, 2,048, 8,192 and 32,768. Starving is 2.31%, between the 6.99% of the
+32-token control and the 1.5% at 32k. The scan is 54% of device time here
+rather than the 82% it was at ctx 4,096, because at short context the fixed
+per-step work — ingress, rotation, quantize, finalize — is a larger share of a
+smaller step.
+
+The run also prices the check itself: 2,208 ms/token with verify on, against
+427 ms/token for the 4,096-token run with it off at four times the context.
+99.1% of the wall clock here is the host.
 
 **The scan at a mean context of 2,048.** 1,378,662,772 cycles over
 1,074,003,968 rows (16 layers x 8 heads x sum of 1..4,096) is **1.284
@@ -2170,7 +2200,7 @@ The headline results, all with the hardware in the loop:
 
 | | |
 |---|---|
-| Llama 3.2 1B, all 16 layers' attention on the ZCU104 | **4,096/4,096 steps bit-exact** |
+| Llama 3.2 1B, all 16 layers' attention on the ZCU104 | **16,384/16,384 steps bit-exact to ctx 1,024** |
 | perplexity, fp32 baseline → compressed 4b/2b, 4,096 tokens | **9.074 → 10.640 (1.173×)** |
 | decode step, device | **22–26 µs** |
 | decode step, wire (UDP/lwIP) | **1.5 ms** |
@@ -2346,10 +2376,10 @@ scales with `--tokens` and the run refuses to start if it comes up short —
 the old fixed 8,000 characters was 1,825 tokens, so `--tokens 4096` would
 silently have measured a quarter of what it claimed.
 
-The run used `--no-verify`, so no live step between ctx 257 and 4,096 was
-compared against the host. Step 14 proves the datapath bit-exact at ctx 1,024
-and 8,192 on synthetic vectors, which brackets it, so this is a narrow gap
-rather than an open one — one `--tokens 1024` run with the check on closes it.
+The run used `--no-verify`. A follow-up `--tokens 1024` run with the check on
+came back 16,384 of 16,384 exact, so live activations are now verified to ctx
+1,024; ctx 1,025–4,096 remains bracketed by synthetic vectors rather than
+checked directly.
 
 **3. Step 15's `KEY_BITS`/`VAL_BITS` sweep.** One synthesis run per format
 (~1 hour each), because the widths are RTL parameters. `config.py` now predicts

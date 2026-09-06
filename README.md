@@ -26,7 +26,7 @@ preloaded and there is no prefill anywhere.
 
 | | |
 |---|---|
-| decode steps checked against numpy | **4,096 of 4,096 bit-exact** |
+| decode steps checked against numpy | **16,384 of 16,384 bit-exact** |
 | perplexity, fp32 → 4b/2b on the board (4,096 tokens) | **9.074 → 10.640 (1.173×)** |
 | cache size | **4.92× smaller** |
 | decode step, on the device | 22–26 µs |
@@ -281,9 +281,11 @@ bitstream before the first token.
 6. **The grafted model writes zeros into `past_key_values`.** That object is
    bookkeeping only and the kernel never reads it, but anything inspecting it
    will be misled.
-7. **Bit-exactness is established up to context 4,096**, and only up to 256
-   with live model activations. The datapath is checked at contexts 64, 256,
-   1,024 and 8,192 on synthetic vectors. Nothing has been checked at 32,768.
+7. **Bit-exactness is established to context 1,024 on live activations** —
+   16,384 of 16,384 decode steps, all 16 layers, real checkpoint. The datapath
+   is separately checked at contexts 64, 256, 1,024 and 8,192 on synthetic
+   vectors, which brackets the 1,025–4,096 range that no live run has checked.
+   Nothing has been checked at 32,768.
 8. **Perplexity is one corpus and one checkpoint**, measured over a single
    contiguous passage of WikiText-2 rather than sampled windows. It also mixes
    "how good is 4b/2b" with "how much context was available", because the
