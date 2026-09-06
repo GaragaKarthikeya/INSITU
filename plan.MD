@@ -1598,7 +1598,53 @@ board's cache rows over JTAG and diffing them against `kernel.cache.buf`:
 44 bytes against 52, on the first line. `FpgaLayers` now asserts the row width
 against the bitstream, so the mismatch is a named error before the first token.
 
-### Still open: the Ethernet server dies after a few steps
+### Step 14 closes: the network path works, on lwIP
+
+`results/step14_lwip_udp.log`. The same run as above, over **UDP** instead of
+the JTAG mailbox:
+
+```
+decode steps on the FPGA: 304 (16 layers x 19 tokens)
+  agreement with the host: 304 exact, 0 different
+  wire time: 1.5 ms/step   (JTAG was 999 ms)
+  clips 0, overflows 0, no range or saturation flags
+```
+
+> The history of computing hardware spans centuries, from mechanical
+> calculators to the modern-day desktop computer.
+
+**666x faster per step than JTAG, and 23x faster end to end** -- 722 ms a token
+against 16,591. The block is now 1.5% of the wall clock rather than 0.0%, which
+is the first time the transport has been the same order as the work.
+
+**The hand-rolled GEM driver was the mistake, and it should have been abandoned
+four bugs earlier.** `sw/attn_eth.c` produced five real faults -- the driver
+does no descriptor cache maintenance, `RXBUF_NEW` is the caller's to clear,
+four descriptors shared a cache line so a flush erased its neighbours, a ring
+array was a quarter of what its alignment demanded, a frame buffer stayed at
+the old MTU -- and a sixth that was never found at all: the receiver stopped
+after one, four or nine steps depending on the run, with no error status set.
+A failure point that varies is a race, and hand-racing a DMA engine from a poll
+loop was never going to be the shortest path.
+
+Xilinx maintains an lwIP port for this exact controller. It owns the
+descriptors, the cache maintenance, the status acknowledgement and the PHY;
+`sw/attn_net.c` owns a UDP callback. **It also deleted the fragmentation
+layer** -- a 9,252-byte request and 6,188-byte reply do not fit a frame, so the
+raw transport carried `{seq, frag, nfrag}` and reassembled by offset, in C that
+had to agree byte for byte with a Python implementation of the same thing. IP
+does that in the stack. The host needs no raw socket and no root.
+
+Two things that bit on the way and are worth keeping: `sys_check_timeouts` does
+not exist in this configuration, and the only timer a UDP server needs is
+`ip_reass_tmr`; and the jumbo experiment left the host interface at MTU 9000,
+so the 36-byte ping worked while every 8 KB load vanished into a frame lwIP
+could not accept.
+
+`JtagClient`, `RawEthClient` and `UdpClient` present the same `step()`, so
+nothing above the transport changed when it was replaced.
+
+### Superseded: the hand-rolled Ethernet server
 
 It brings the link up at 1 Gb/s, finds the PHY, serves the ping, serves **256
 cache-zeroing `CMD_LOAD`s** flawlessly -- 1,540 frames, counters advancing
