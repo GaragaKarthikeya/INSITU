@@ -656,6 +656,11 @@ static void serve(void)
  * bytes off the wire are the bytes the core consumes. That is what
  * `attn_proto.h` is built around.
  * -------------------------------------------------------------------------- */
+/* Small accessors so the per-step line can report the ring counters without
+ * `attn_eth.c` having to expose its statics. */
+static u32 rx_any_count(void) { u32 a = 0; attn_eth_stats(&a, 0, 0); return a; }
+static u32 tx_count(void)     { u32 t = 0; attn_eth_stats(0, 0, &t); return t; }
+
 static u8 eth_frame[1600];
 static u8 eth_msg[64 + ATTN_TOKEN_BYTES];
 
@@ -689,6 +694,9 @@ static void serve_eth(void)
             }
         }
 
+        /* One frame per pass used to mean the ring could back up behind a
+         * reply, which takes five sends and their completions. Draining is the
+         * same work in a tighter loop. */
         int n = attn_eth_recv(eth_frame, sizeof(eth_frame));
         if (n <= (int)ATTN_FRAG_HDR_BYTES) {
             /* A heartbeat, so an idle server is visibly idle rather than
@@ -826,8 +834,14 @@ static void serve_eth(void)
                 xil_printf("ETH: send failed on fragment %u\r\n", (unsigned)f);
         }
         cur_seq = 0xFFFFFFFFu;            /* done; the next seq starts fresh */
-        if ((served % 64) == 1)
-            xil_printf("ETH: %u steps served\r\n", (unsigned)served);
+        /* EVERY step, not every sixty-fourth. When this stops replying the log
+         * has to show the last one it completed and how many frames the reply
+         * took; a counter printed once per 64 hides exactly that. */
+        xil_printf("ETH: served seq %u status %u ntok %u -> %u frags, %u us "
+                   "(rx %u tx %u)\r\n",
+                   (unsigned)rq.seq, (unsigned)rs.status, (unsigned)rq.n_tokens,
+                   (unsigned)nf, (unsigned)rs.dev_us,
+                   (unsigned)rx_any_count(), (unsigned)tx_count());
     }
 }
 

@@ -52,7 +52,7 @@
 #define GEM_BASE        0xFF0E0000U
 
 #define RXBD_COUNT      64
-#define TXBD_COUNT      16
+#define TXBD_COUNT      64
 #define FRAME_MAX       1536
 #define BD_ALIGN        64
 
@@ -431,20 +431,31 @@ int attn_eth_send(const u8 *payload, int len)
     XEmacPs_BdSetLength(bd, (u32)total);
     XEmacPs_BdClearTxUsed(bd);
     XEmacPs_BdSetLast(bd);
-    if (XEmacPs_BdRingToHw(txr, 1, bd) != XST_SUCCESS)
+    if (XEmacPs_BdRingToHw(txr, 1, bd) != XST_SUCCESS) {
+        /* Returning without freeing leaks a descriptor, and sixteen leaks is a
+         * transmitter that has silently stopped. Every exit below frees. */
+        XEmacPs_BdRingUnAlloc(txr, 1, bd);
+        xil_printf("ETH: ToHw refused a tx descriptor\r\n");
         return -1;
+    }
     bd_flush_one(bd);
     XEmacPs_Transmit(&emac);
 
     /* Polled: wait for the descriptor to come back before reusing `tx_buf`. */
-    u32 guard = 10000000;
+    /* Polled completion. The guard is small enough that a stuck transmitter is
+     * reported in milliseconds rather than looking like a hang, and the
+     * descriptor is freed either way. */
+    u32 guard = 2000000;
     while (guard) {
         bd_inval_tx();
         if (XEmacPs_BdRingFromHwTx(txr, 1, &bd) != 0) break;
         guard--;
     }
-    if (!guard)
+    if (!guard) {
+        xil_printf("ETH: tx did not complete (%u frames sent so far)\r\n",
+                   (unsigned)tx_frames);
         return -1;
+    }
     XEmacPs_BdRingFree(txr, 1, bd);
     tx_frames++;
     return len;
