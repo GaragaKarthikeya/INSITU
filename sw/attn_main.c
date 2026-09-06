@@ -661,7 +661,13 @@ static void serve(void)
 static u32 rx_any_count(void) { u32 a = 0; attn_eth_stats(&a, 0, 0); return a; }
 static u32 tx_count(void)     { u32 t = 0; attn_eth_stats(0, 0, &t); return t; }
 
-static u8 eth_frame[1600];
+/* A FRAGMENT IS NOW UP TO ATTN_MTU_PAYLOAD, NOT 1,492.
+ * This was 1,600 bytes, sized for a 1,500-byte MTU, and jumbo made every
+ * fragment overrun it in both directions -- reassembling a request into it and
+ * building a reply out of it. The symptom was a request arriving with 36 of
+ * 8,228 payload bytes and a reply arriving with 1,986 of 6,144. Sized from the
+ * protocol constant so it cannot drift from the MTU again. */
+static u8 eth_frame[ATTN_MTU_PAYLOAD + ATTN_FRAG_HDR_BYTES + 64];
 static u8 eth_msg[64 + ATTN_TOKEN_BYTES];
 
 static void serve_eth(void)
