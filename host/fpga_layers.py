@@ -1,8 +1,8 @@
 """Every layer's attention on the FPGA, and no prefill anywhere.
 
-WHAT CHANGED FROM ONE-LAYER-WITH-A-PUSHED-CACHE
+What changed from one layer with a pushed cache
 -----------------------------------------------
-The first version ran one layer and pushed a cache image the HOST had built in
+The first version ran one layer and pushed a cache image the host had built in
 numpy. Two things were wrong with that as a demonstration.
 
   * One layer of sixteen meant every throughput figure was one measurement
@@ -11,34 +11,50 @@ numpy. Two things were wrong with that as a demonstration.
     computed. The hardware's write path was exercised for the four tokens of a
     test case and for nothing else.
 
-Here the block serves all sixteen layers, and NOTHING is ever loaded. The
+Here the block serves all sixteen layers, and nothing is ever loaded. The
 prompt is fed one token at a time through the same decode path a generated
 token takes, so **every row in every cache was written by the block's own AXI
 write master**, from the first token of the prompt to the last token generated.
 By the end of a 200-token run that is 3,200 decode steps and 3,200 rows the
 host never wrote.
 
-SIXTEEN CACHES, ONE BLOCK
+Sixteen caches, one block
 -------------------------
 `cache_base` already travels with every step -- `attn_ctrl` has no map of its
 own, deliberately -- so sixteen caches cost sixteen base addresses and no
 hardware at all. Layer L lives at `base + L * layer_stride`, and the stride is
 `8 heads * 4 planes * plane_span` for the chosen capacity.
 
-The regions ARE zeroed before the first token. The argument that they need not
+The regions are zeroed before the first token. The argument that they need not
 be -- a scan reads exactly `n_tokens` rows, and row `t` is written by step `t`
 before step `t` scans it -- is a claim about the block's indices, and leaving
 16.9 MB of the self-test probe's pseudo-random bytes underneath it means a
 mistake there reads plausible noise rather than zeros. It costs one CMD_LOAD
 per layer, once.
 
-WHY THE NUMPY KERNEL STILL RUNS
--------------------------------
-`collect()` is what produces the ingress the board is sent -- it does the
-projections, RoPE and the rotation taps -- so its answer is a free by-product,
-not a second computation. It is used as a per-token agreement check. It is NOT
-what the model consumes: the board's numbers go through `to_float` and `W_o'`
-and become the layer output.
+Why the numpy kernel still runs, and how much of it
+---------------------------------------------------
+`collect()` is what produces the ingress the board is sent -- the projections,
+RoPE and the rotation taps -- so that half has to run and is not a second
+computation. The numpy attention underneath it is a different matter: it is a
+per-token agreement check, it is O(context), and it was 98% of the wall clock
+of every board-in-the-loop run (336 s against 6.7 s of wire and 108 ms of
+device on a 256-token perplexity run).
+
+So `verify` now reaches all the way down. With it on, nothing changes: the
+kernel scores, softmaxes and accumulates in numpy and every step is compared
+channel by channel. With it off, `collect(verify=False)` stops the kernel at
+the seam and the check is skipped, which is where the ~10x on long runs comes
+from. Verify while establishing that a configuration is exact; turn it off to
+measure or to run a corpus.
+
+Turning it off does not open the silent-numpy-fallback door that `plan.MD`
+warns about -- it bolts it shut. A kernel stopped at the seam returns `None`
+rather than an answer, so a fallback crashes instead of quietly producing the
+same text with the board idle.
+
+Either way it is not what the model consumes: the board's numbers go through
+`to_float` and `W_o'` and become the layer output.
 """
 
 from __future__ import annotations
@@ -53,15 +69,15 @@ from ..hw.vectors import collect, unpack_lanes
 from ..ops.project import project
 
 
-# WHAT THE BITSTREAM IS BUILT FOR. `attn_top` is parameterised at synthesis:
+# What the bitstream is built for. `attn_top` is parameterised at synthesis:
 # KEY_BITS = 4, VAL_BITS = 2, so a cache row is 8*4 + 8*2 + 4 = 52 bytes.
 #
-# `QuantConfig()` DEFAULTS TO THREE-BIT KEYS, and `graft()` takes that default
+# `QuantConfig()` defaults to three-bit keys, and `graft()` takes that default
 # unless told otherwise. The host then computed 3-bit key codes for hardware
 # that decodes 4-bit ones, and the stored rows could not agree.
 #
 # It hid beautifully. At T = 1 the softmax is over one element, so the output is
-# the decoded VALUE alone and the key cannot affect it -- token 1 matched every
+# the decoded value alone and the key cannot affect it -- token 1 matched every
 # time. Values and norms matched throughout because both sides use 2-bit values.
 # Only tokens 2 onward differed, identically over both transports, which looked
 # like a hardware fault for a day. The self-test never saw it because
@@ -97,7 +113,7 @@ class FpgaLayers:
         m = k0.cfg.model
         lay = DdrLayout.for_quant(k0.cfg.quant, m.head_dim, m.num_kv_heads,
                                   capacity)
-        # ASSERTED, NOT ASSUMED. A quantisation the bitstream was not built for
+        # Asserted, not assumed. A quantisation the bitstream was not built for
         # produces rows of the wrong length, and the failure that follows looks
         # like a datapath bug rather than a configuration one.
         if lay.row_bytes != BOARD_ROW_BYTES:
@@ -114,7 +130,7 @@ class FpgaLayers:
 
         # Counters, so a run can say what actually happened rather than that it
         # finished.
-        # ZERO EVERY REGION BEFORE THE FIRST TOKEN.
+        # Zero every region before the first token.
         #
         # The claim that these do not need clearing -- "a scan reads exactly
         # n_tokens rows and row t is written by step t" -- is a claim about the
@@ -123,7 +139,7 @@ class FpgaLayers:
         # bytes at exactly this address, so a read that strays past n_tokens
         # returns plausible noise instead of zeros.
         #
-        # That is also the ONE difference between the self-test's `fresh` case,
+        # That is also the one difference between the self-test's `fresh` case,
         # which passes at T = 1..6 with every row hardware-written, and live
         # inference, which fails from T = 2 with the same geometry and the same
         # code: `fresh` runs before the probe, on a zeroed region.
@@ -160,7 +176,7 @@ class FpgaLayers:
         base = self.bases[L]
         outer = self
 
-        # The TYPE, not the instance: `KernelAttention` assigns
+        # The type, not the instance: `KernelAttention` assigns
         # `__call__ = forward` at class scope and Python resolves dunders on the
         # type, so an instance attribute is ignored and the original numpy path
         # keeps running -- silently, because it produces the same text.
@@ -189,7 +205,7 @@ class FpgaLayers:
             row = x[0].detach().cpu().float().numpy()
             n_tokens = kern.cache.length + 1
 
-            vs = collect(kern, row)
+            vs = collect(kern, row, verify=outer.verify)
             t0 = time.time()
             got, c = outer.client.step(vs.ingress_bytes(), n_tokens, base,
                                        outer.head_stride, outer.plane_span)

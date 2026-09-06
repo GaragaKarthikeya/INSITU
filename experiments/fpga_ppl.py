@@ -2,20 +2,20 @@
 
     python -m kernel.experiments.fpga_ppl --eth enp4s0 --tokens 512
 
-WHAT THIS MEASURES, AND WHAT IT DOES NOT
+What this measures, and what it does not
 ----------------------------------------
-Two numbers on the SAME text and the SAME checkpoint:
+Two numbers on the same text and the same checkpoint:
 
   * `baseline` -- the unmodified model, batched, on the host.
   * `fpga` -- every layer's attention computed on the ZCU104, one token at a
     time, with all sixteen KV caches built by the block's own write master.
 
 The ratio is what the cache compression costs, end to end, with the hardware in
-the loop. It is NOT a claim about the FPGA versus numpy: those are checked
+the loop. It is not a claim about the FPGA versus numpy: those are checked
 per-step for bit-exactness and any difference there is a hardware bug, reported
 separately. It is a claim about 4-bit keys and 2-bit values.
 
-WHY IT IS SLOW, AND WHY THAT IS FINE
+Why it is slow, and why that is fine
 ------------------------------------
 Every token costs sixteen board round trips, so a 512-token passage is 8,192 of
 them. Over raw Ethernet that is seconds. Over JTAG it is half an hour, which is
@@ -37,6 +37,13 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from kernel.experiments.fpga_infer import CACHE_BASE, MODEL, open_client  # noqa: E402
 from kernel.host.fpga_layers import FpgaLayers                            # noqa: E402
+
+
+# WikiText-2 test is about 1.2 MB, so the only real cap is how much of it is
+# asked for. The join is `""`, not `"\n\n"`: the rows already carry their own
+# newlines and joining them differently would move the baseline perplexity,
+# which is the number every earlier result is quoted against.
+CHARS_PER_TOKEN = 8      # English is ~4; double it so the slice is never short
 
 
 def wikitext(n_chars: int = 8000) -> str:
@@ -66,7 +73,12 @@ def main(argv=None) -> int:
     ap.add_argument("--jtag", action="store_true")
     ap.add_argument("--cpu-only", action="store_true")
     ap.add_argument("--timeout", type=float, default=5.0)
-    ap.add_argument("--no-verify", action="store_true")
+    ap.add_argument("--no-verify", action="store_true",
+                    help="skip the per-step comparison against numpy. The "
+                         "perplexity is unaffected -- the board's numbers are "
+                         "what the model consumes either way -- and this is "
+                         "the difference between a long corpus taking minutes "
+                         "and taking hours.")
     ap.add_argument("--device", default="auto")
     ap.add_argument("--dtype", default="float32", choices=["float32", "bfloat16"])
     a = ap.parse_args(argv)
@@ -83,9 +95,23 @@ def main(argv=None) -> int:
                                                  dtype=getattr(torch, a.dtype))
     model.eval().to(dev)
 
-    text = wikitext()
+    # Enough text for the token budget, rather than a fixed 8,000 characters.
+    #
+    # The slice used to be a constant, which is about 1,900 Llama tokens. Asking
+    # for more did not fail -- it silently measured a shorter passage, so a
+    # 4,096-token run and a 2,048-token run would have returned the same
+    # perplexity over the same text and nothing would have said so. The
+    # assertion below is the part that matters: a run reports the length it was
+    # asked for or it does not run.
+    text = wikitext(max(8000, a.tokens * CHARS_PER_TOKEN))
     ids = tok(text, return_tensors="pt")["input_ids"][0][:a.tokens].to(dev)
-    print(f"{ids.shape[0]} tokens of WikiText-2")
+    if ids.shape[0] < a.tokens:
+        raise SystemExit(
+            f"asked for {a.tokens} tokens, the corpus yielded {ids.shape[0]}. "
+            f"WikiText-2 test is finite; raise CHARS_PER_TOKEN if the slice is "
+            f"the limit, or lower --tokens if the split is.")
+    print(f"{ids.shape[0]} tokens of WikiText-2 "
+          f"({len(text)} characters read)")
 
     # -- the reference, on the unmodified model ---------------------------
     print("baseline (unmodified, batched)")

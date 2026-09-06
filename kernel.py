@@ -2,26 +2,28 @@
 
     forward(hidden_states, positions) -> hidden_states
 
-That signature is the whole point of the package's shape. It is what a
+That signature is why the package is shaped the way it is. It is what a
 transformer layer already calls, so the kernel drops into a real model without
-the model knowing anything about rotations, codes or systolic arrays.
+the model needing to know anything about rotations, codes or systolic arrays.
 
-THE PIPELINE
+The pipeline
 ------------
     x  -> W_q,W_k,W_v      three arrays, fp16 x fp16 -> fp32
-       -> fp32 to Q(qk_frac)                     [ops.convert -- the ONE cast]
+       -> fp32 to Q(qk_frac)                     [ops.convert, the one cast]
        -> RoPE                                    [position enters here]
-       -> R = randomized Hadamard                 [q, k, v, all three]
+       -> R = randomized Hadamard                 [q, k and v, all three]
        -> quantize K,V, write to cache            [never rotated again]
        -> attend on codes                         [no dequantisation, ever]
        -> W_o'                                    [R^-1 already folded in]
 
-PREFILL AND DECODE ARE THE SAME CODE
+Steps 3 to 6 are what the FPGA runs. See `host/fpga_layers.py`.
+
+Prefill and decode are the same code
 ------------------------------------
-`forward` takes `(tokens, hidden)`. One row is a decode step; many rows are a
-prefill. There is no separate decode path to keep in agreement with the prefill
-path -- which is the failure mode of every accelerator model that only ever
-modelled the steady state.
+`forward` takes `(tokens, hidden)`. One row is a decode step, many rows are a
+prefill. There is no separate decode path that has to be kept in agreement with
+the prefill path, which is how accelerator models that only ever modelled the
+steady state tend to go wrong.
 """
 
 from __future__ import annotations
@@ -100,41 +102,57 @@ class AttentionKernel:
         # fp->fixed cast, so it costs no truncation of its own.
         self.attn_scale = 1.0 / np.sqrt(m.head_dim)
 
-        # How many query tokens the batched prefill evaluates at once. Bounds
-        # peak memory and NOTHING else -- it is invisible to the values and to
-        # the trace. It is not a hardware query tile and must never be reported
-        # as one.
+        # How many query tokens the batched prefill evaluates at once. This
+        # bounds peak memory and nothing else -- it is invisible to the values
+        # and to the trace. It is not a hardware query tile and must not be
+        # reported as one.
         self.batch_tile = 256
 
         # Forces the token-at-a-time path even during prefill. For tests only:
-        # it is the reference the batched path is checked against, in values
-        # AND in trace records. Never set on a measurement run -- it is 20x
-        # slower and produces the identical answer.
+        # it is the reference the batched path gets checked against, both in
+        # values and in trace records. Do not set it on a measurement run -- it
+        # is 20x slower and gives the identical answer.
         self.force_token_loop = False
 
-        # "two_pass" takes a global maximum then accumulates; "online" carries a
-        # running maximum and rescales the accumulator whenever it moves. The
-        # HARDWARE runs online -- it reads the cache once -- and the online form
-        # truncates the accumulator at every rescale, so the two do not agree
-        # exactly. Selecting it forces the token-at-a-time path, which is far
-        # slower; it exists so the gap can be MEASURED rather than assumed
-        # small.
+        # "two_pass" takes a global maximum and then accumulates. "online"
+        # carries a running maximum and rescales the accumulator whenever it
+        # moves. The hardware runs online, because that reads the cache once,
+        # and the online form truncates the accumulator at every rescale -- so
+        # the two do not agree exactly. Selecting online forces the
+        # token-at-a-time path and is much slower; it is here so the gap can be
+        # measured rather than assumed to be small.
         self.softmax = "two_pass"
 
-        # An OBSERVER, for the vector generator. Called as
-        # `on_stage(name, array)` at each named point below; the array it is
-        # handed is the one the datapath already computed and is never read
-        # back. `None` -- the default -- is one `is not None` check per stage,
+        # An observer, for the vector generator. Called as
+        # `on_stage(name, array)` at each named point below. The array it is
+        # handed is the one the datapath already computed, and it is never read
+        # back. Leaving it at None costs one `is not None` check per stage,
         # which is the same guard `record` uses for the trace and for the same
-        # reason: golden vectors must come off the UNMODIFIED kernel, or they
+        # reason: golden vectors have to come off the unmodified kernel, or they
         # are vectors for a different machine.
         self.on_stage = None
+
+        # Stop at the seam. With this set, `forward` runs the host's half --
+        # projections, QK-norm, the scale, the fp -> fixed cast, RoPE, the
+        # rotation and the cache write -- taps every stage as usual, and then
+        # returns, without scoring, softmaxing or accumulating anything.
+        #
+        # That is not an optimisation of the attention: it is the observation
+        # that when the PL is doing the attention, the numpy attention is a
+        # per-step check and nothing else. `collect(..., verify=False)` sets it
+        # for the duration of one call. The return is `(None, report)` --
+        # `None` rather than a zero array, so a caller that wanted the output
+        # and did not want this fails immediately instead of consuming zeros.
+        #
+        # Never set on a run whose answer is used. It is off by default and
+        # `forward`'s numbers are unchanged when it is.
+        self.ingress_only = False
 
     def _tap(self, name: str, value) -> None:
         if self.on_stage is not None:
             self.on_stage(name, value)
 
-    # -- the reduction chunk is the ONLY thing hardware config leaks ---------
+    # -- the reduction chunk is the only thing hardware config leaks ---------
 
     def _chunk(self, which: str) -> int | None:
         if self.cfg.hw is None:
@@ -182,7 +200,7 @@ class AttentionKernel:
         if w.q_norm is not None:
             q = rms_norm(q, w.q_norm, w.norm_eps)
             k = rms_norm(k, w.k_norm, w.norm_eps)
-        # The attention scale comes AFTER the norm: RMSNorm is invariant to the
+        # The attention scale comes after the norm: RMSNorm is invariant to the
         # scale of its input, so folding it in earlier would be erased.
         q = q * self.attn_scale
 
@@ -194,11 +212,12 @@ class AttentionKernel:
         # 3. RoPE, before the rotation and before the cache -----------------
         qi = self.rope.apply(qi, positions[:, None], self.cfg.fmt.qk_frac, trace, "rope")
         ki = self.rope.apply(ki, positions[:, None], self.cfg.fmt.qk_frac, trace, "rope")
-        # V carries no position: RoPE on the value path would have to be undone
-        # by the output projection, and there is nothing to undo it with.
+        # V carries no position. RoPE on the value path would have to be undone
+        # by the output projection, and there is nothing there to undo it.
 
-        # THE SEAM. Everything below this line is what the PL owns; these three
-        # are exactly what crosses the wire, in Q8.16, 24-bit lanes.
+        # The seam. Everything below this line belongs to the PL, and these
+        # three tensors are exactly what crosses the wire, in Q8.16 on 24-bit
+        # lanes.
         self._tap("wire.q", qi)
         self._tap("wire.k", ki)
         self._tap("wire.v", vi)
@@ -219,33 +238,39 @@ class AttentionKernel:
             self.cache.append(self.qk_q.to_float(kr), self.qk_q.to_float(vr),
                               positions, trace)
 
+        if self.ingress_only:
+            # Everything above this line is the host's half and it has all run;
+            # everything below is what the PL owns. See `__init__`.
+            report.context = base + n
+            return None, report
+
         # 6. attend ---------------------------------------------------------
-        # Query heads sharing a KV head are attended TOGETHER. Under
-        # grouped-query attention that is `kv_groups` queries against one
+        # Query heads that share a KV head are attended together. Under
+        # grouped-query attention that means `kv_groups` queries against one
         # cache, and the scoring path is already batched over the leading axis
         # (`test_attention.py::check_batched_queries_match_one_at_a_time` pins
         # the batched and one-at-a-time results as identical). It is the same
-        # arithmetic; it is `kv_groups` times fewer passes over the cache,
-        # which is also what the hardware would do.
+        # arithmetic and `kv_groups` times fewer passes over the cache, which is
+        # also what the hardware does.
         out = np.zeros((n, m.num_heads, m.head_dim), dtype=np.int64)
         if not self.compressed and n > 1 and not self.force_token_loop:
             # The dense control gets the same treatment, for the same reason
-            # and with the same guarantee about the trace. It matters most on
-            # a model WITHOUT grouped-query attention: Llama-2-7B has 32 KV
-            # heads, so the token-at-a-time path runs one query head against
-            # one cache 131,072 times per layer at a 4096 context.
+            # and with the same guarantee about the trace. It matters most on a
+            # model without grouped-query attention: Llama-2-7B has 32 KV heads,
+            # so at a 4096 context the token-at-a-time path would run one query
+            # head against one cache 131,072 times per layer.
             for kvh in range(m.num_kv_heads):
                 heads = slice(kvh * m.kv_groups, (kvh + 1) * m.kv_groups)
                 y, st = self._attend_dense_batch(qr[:, heads], kvh, base, trace, n)
                 out[:, heads] = y
                 report.attention.merge(st)
         elif self.compressed and n > 1 and not self.force_token_loop:
-            # PREFILL. All query tokens against one cache pass, in float64
-            # BLAS. Bit-identical to the loop below -- pinned by
-            # test_attention.py::check_causal_batch_is_bit_identical -- and the
-            # trace is identical too, because `view` is told how many query
-            # tokens this call serves. Neither the values nor the modelled
-            # hardware change; only how numpy is asked to evaluate them.
+            # Prefill: all query tokens against one pass over the cache, in
+            # float64 BLAS. Bit-identical to the loop below, pinned by
+            # test_attention.py::check_causal_batch_is_bit_identical, and the
+            # trace matches too because `view` is told how many query tokens
+            # this call serves. Neither the values nor the modelled hardware
+            # change -- only how numpy is asked to evaluate them.
             for kvh in range(m.num_kv_heads):
                 heads = slice(kvh * m.kv_groups, (kvh + 1) * m.kv_groups)
                 kv = self.cache.view(kvh, trace, n_reads=n)
@@ -268,9 +293,9 @@ class AttentionKernel:
         report.context = base + n
 
         # 7. output projection, R^-1 already folded in -----------------------
-        # THE OTHER SIDE OF THE SEAM. This is what the FPGA returns: Q16, still
-        # in the rotated domain, `merge_heads` order. `to_float` and `W_o'` on
-        # the next line are the host's again.
+        # The other side of the seam. This is what the FPGA hands back: Q16,
+        # still in the rotated space, in `merge_heads` order. `to_float` and
+        # `W_o'` on the next lines are the host's work again.
         merged = merge_heads(out)
         self._tap("out", merged)
         acc = self.qk_q.to_float(merged)
@@ -295,10 +320,10 @@ class AttentionKernel:
         strategy only: `n_reads` keeps the trace identical to the
         token-at-a-time path.
 
-        NOT bit-identical to that path, and it cannot be: BLAS blocks a batched
+        Not bit-identical to that path, and it cannot be: BLAS blocks a batched
         GEMM differently from a sequence of GEMVs, so the float64 scores differ
         in their last bits and the fixed-point cast can land one count away.
-        The compressed path IS bit-identical, because its arithmetic is
+        The compressed path is bit-identical, because its arithmetic is
         integer; this one is the fp32 baseline and is checked to a tolerance.
         """
         k, v = self.cache.view(kv_head, trace)
@@ -326,7 +351,7 @@ class AttentionKernel:
             AttentionStats(n_tokens=n_tok)
 
     def _attend_dense(self, q_rot, kv_head: int, ctx: int, trace: Trace | None):
-        """The fp16 baseline, in the SAME rotated domain and the same Q format.
+        """The fp16 baseline, in the same rotated domain and the same Q format.
 
         Deliberately not a float softmax: if the baseline used different
         arithmetic, an accuracy gap would be attributable to the arithmetic

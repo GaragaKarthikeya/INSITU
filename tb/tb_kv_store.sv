@@ -1,13 +1,13 @@
 // Self-checking testbench for kv_store_ddr.sv + kv_plane_rd.sv.
 //
-// A BEHAVIOURAL DDR, NOT AN IDEAL ONE
+// A behavioural DDR, not an ideal one
 // -----------------------------------
 // The slave holds the image `hw/ddr_layout.py` produced, answers AR after a
 // programmable latency, and can stall R at random. An always-ready memory would
 // let a prefetcher that hides no latency at all pass, which is the one property
 // this block exists to have.
 //
-// THE GOLDEN IS THE CACHE ITSELF
+// The golden is the cache itself
 // ------------------------------
 // `cache_rows_hN.hex` is what `KVQuantizer.pack` wrote. The image is the same
 // bytes transposed into planes, and this checks that what comes back out of the
@@ -15,7 +15,7 @@
 // already refuses to emit an image whose `row_at` disagrees with the cache, so
 // a failure here is the RTL's reassembly and not the layout's.
 //
-// STARVATION IS THE OTHER HALF OF THE EXIT CRITERION
+// Starvation is the other half of the exit criterion
 // --------------------------------------------------
 // Correct rows arriving too slowly is a failure of this block specifically. The
 // bench runs the consumer at full rate and counts every cycle it asked for a row
@@ -32,7 +32,11 @@ module tb_kv_store;
     localparam int KVH = 8;
     localparam int HEAD_STRIDE = 16384;
     localparam int PLANE_SPAN  = 4096;
-    localparam int IMG_BEATS   = 16384;   // the image, plus room for NU below
+    // What `ddr_image.hex` actually holds: one head stride per KV head.
+    localparam int IMG_WORDS   = KVH * HEAD_STRIDE / (DW/8);   // 8,192
+    // The array is twice that, so the non-uniform layout case further down has
+    // somewhere to write that the image does not already occupy.
+    localparam int IMG_BEATS   = 2 * IMG_WORDS;
     // Read latency, in cycles, from AR accepted to the first R beat. The board
     // measured ~120 ns at 250 MHz under load; 40 is deliberately worse.
     localparam int LATENCY = 40;
@@ -88,7 +92,7 @@ module tb_kv_store;
     logic stall_r = 0;
     int seed = 32'hD08;
 
-    // A slave that holds TWO outstanding ARs, because the design is sized for
+    // A slave that holds two outstanding ARs, because the design is sized for
     // two and a single-outstanding model would never exercise the depth the
     // board measurement chose. Beats are returned in order, after a latency,
     // and `rvalid` is deasserted the cycle a beat is accepted -- an earlier
@@ -111,7 +115,7 @@ module tb_kv_store;
             assign rid[q*IDW +: IDW] = '0;
             assign rresp[q*2 +: 2] = 2'b00;
 
-            // The stall decision is REGISTERED. A `$random` in a continuous
+            // The stall decision is registered. A `$random` in a continuous
             // assignment is re-evaluated on every event that touches the wire,
             // which is not a coin flip per cycle and, in iverilog, is not even
             // legal in this context.
@@ -131,7 +135,7 @@ module tb_kv_store;
                         rvalid[q] <= 1'b0;
                         rlast[q]  <= 1'b0;
                     end
-                    // EVERY pending burst's latency runs from when it was
+                    // Every pending burst's latency runs from when it was
                     // accepted, not from when it reaches the head of the
                     // queue. Counting only the head serialises the round
                     // trips and makes two outstanding behave exactly like one
@@ -213,7 +217,7 @@ module tb_kv_store;
         end
     end
 
-    // -- a second, NON-UNIFORM layout ---------------------------------------
+    // -- a second, non-UNIFORM layout ---------------------------------------
     //
     // At 4b/2b the planes are 16, 16, 16 and 4 bytes, so plane `p` starts at
     // byte `16*p` and an assembler that assumed a uniform 16-byte plane is
@@ -290,7 +294,7 @@ module tb_kv_store;
 
     // -- collector ----------------------------------------------------------
     int head = 0, tok = 0, got = 0;
-    // Steady state is measured from the FIRST row to the last, so the DDR
+    // Steady state is measured from the first row to the last, so the DDR
     // round trip -- paid once per scan and hidden by the next scan in
     // `attn_top` -- is not charged against the streaming rate.
     int t_first = 0, t_last = 0;
@@ -337,7 +341,10 @@ module tb_kv_store;
     endtask
 
     initial begin
-        $readmemh("tb/vectors/ddr_image.hex", mem);
+        // The range is explicit. Without it Icarus warns on every run that the
+        // file is shorter than `mem`, which it is meant to be, and a real
+        // short-file warning would then be lost in the noise.
+        $readmemh("tb/vectors/ddr_image.hex", mem, 0, IMG_WORDS-1);
         for (int h = 0; h < KVH; h++) begin
             case (h)
                 0: $readmemh("tb/vectors/cache_rows_h0.hex", onehead);
@@ -377,7 +384,7 @@ module tb_kv_store;
         // 65 tokens is two bursts; the DDR round trip is most of it and the
         // rate says nothing. This runs 1,024 tokens through the same four
         // planes -- reading past the cached region into the plane's own zeroed
-        // span, which is a legal address and the right access PATTERN, which is
+        // span, which is a legal address and the right access pattern, which is
         // what the rate depends on. Data is not checked here; the eight scans
         // above did that.
         check_data = 0;
@@ -404,7 +411,7 @@ module tb_kv_store;
         // quantize.pack": the bytes leave through WSTRB byte lanes and come
         // back through four read masters, and nothing in between knows what a
         // row is.
-        // Tokens 61..64, NOT just 64. The norms are 4 B/token, so token 64
+        // Tokens 61..64, not just 64. The norms are 4 B/token, so token 64
         // lands at byte lane 0 of its beat and exercises nothing: a write path
         // that ignored the byte lane entirely would round-trip it perfectly.
         // 61, 62 and 63 sit at lanes 4, 8 and 12.

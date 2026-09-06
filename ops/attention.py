@@ -1,42 +1,46 @@
 """Attention that never decompresses.
 
-THE IDEA
+The idea
 --------
-A cached key is stored as `norm * centroid[code]` in the rotated domain. The
-conventional thing to do is rebuild that dense vector and then dot it with the
-query. This does not:
+A cached key is stored as `norm * centroid[code]` in the rotated space. The
+usual thing to do is rebuild that dense vector and then dot it with the query.
+This does not:
 
     <q, k>  =  <R q, R k>                      R is orthonormal
             =  <rq, norm * centroid[code]>
             =  norm * sum_j rq[j] * centroid[code[j]]
 
-so the dot product runs directly on the codes. The query is rotated ONCE per
-step; no cached token is ever touched by a rotation, and no dense key or value
-is ever materialised. That is the whole architecture in three lines.
+so the dot product runs straight on the codes. The query is rotated once per
+step, no cached token is ever touched by a rotation, and no dense key or value
+is ever built. That is the whole architecture in three lines.
 
-The same holds on the value side, which is why the output stays in the rotated
-domain and `R^-1` is folded into `W_o` offline instead of being applied per
-token.
+The same thing works on the value side, which is why the output stays in the
+rotated space and `R^-1` gets folded into `W_o` offline instead of being
+applied to every token.
 
-TWO SOFTMAXES, AND WHY BOTH ARE HERE
-------------------------------------
-`attend_online` is what hardware runs: one pass over the cache, a running
-maximum, and a rescale of the accumulator whenever the maximum moves. It reads
-the cache once, which is the only thing that matters when the cache is off-die.
+Why there are two softmaxes here
+--------------------------------
+`attend_online` is what the hardware runs: one pass over the cache, a running
+maximum, and a rescale of the accumulator whenever that maximum moves. It reads
+the cache exactly once, which is the only thing that matters when the cache
+lives off-die.
 
-`attend_two_pass` computes every score first, takes the global maximum, and
-then accumulates. Same arithmetic, but no rescale and therefore no rescale
-truncation -- and it vectorises, so it is orders of magnitude faster in Python.
+`attend_two_pass` computes all the scores first, takes the global maximum, and
+then accumulates. Same arithmetic, but there is no rescale and so no rescale
+truncation -- and it vectorises, which makes it orders of magnitude faster in
+Python.
 
-They are NOT bit-identical, and the difference is not a bug: the online form
-truncates the accumulator once per rescale event. Keeping both makes that
-difference a measured quantity (`AttentionStats.rescale_events`, and
-`tests/test_softmax_equivalence.py`) instead of a claim in a comment.
+They are not bit-identical, and that is not a bug: the online form truncates
+the accumulator once per rescale. Keeping both turns the difference into a
+number we measure rather than a claim in a comment -- it shows up as
+`AttentionStats.rescale_events`, and `tests/test_attention.py` pins it with
+`check_online_and_two_pass_are_close_but_not_identical` and
+`check_online_and_two_pass_differ_only_by_rescale_truncation`.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -49,22 +53,22 @@ FLOAT64_EXACT = 1 << 53
 
 
 def exact_int_matmul(a, b, b_absmax: int | None = None) -> np.ndarray:
-    """Integer matrix product evaluated in float64 BLAS, exactly.
+    """Integer matrix product done in float64 BLAS, exactly.
 
-    numpy has no BLAS path for int64: a 512-cube int64 matmul runs at 1.1
-    GFLOP/s on this machine against 474 GFLOP/s for float64. That is a factor
-    of 427, and it is the difference between a 4096-context sweep taking hours
-    and taking days.
+    numpy has no BLAS path for int64. A 512-cube int64 matmul runs at 1.1
+    GFLOP/s on this machine against 474 GFLOP/s for float64 -- a factor of 427,
+    which is the difference between a 4096-context sweep taking hours and
+    taking days.
 
-    float64 represents every integer below 2^53 exactly, and addition and
-    multiplication of exactly-represented integers whose result is also below
-    2^53 are exact. So the product is not "accurate enough" -- it is the same
-    integer, bit for bit.
+    float64 holds every integer below 2^53 exactly, and adding or multiplying
+    two exactly-held integers is exact as long as the result is also below
+    2^53. So this is not "accurate enough": it is the same integer, bit for
+    bit.
 
-    The bound is CHECKED, not assumed. `max|a| * max|b| * k` is the worst case
-    (every term at maximum magnitude and the same sign); exceeding it raises
-    rather than silently returning a rounded answer, which is the one failure
-    mode of this trick and would be invisible downstream.
+    The bound is checked rather than assumed. `max|a| * max|b| * k` is the
+    worst case, with every term at full magnitude and the same sign. Going over
+    it raises instead of quietly returning a rounded answer. That is the one
+    way this trick fails, and it would be invisible downstream.
     """
     a = np.asarray(a, dtype=INT)
     b = np.asarray(b, dtype=INT)
@@ -84,16 +88,17 @@ def exact_int_matmul(a, b, b_absmax: int | None = None) -> np.ndarray:
 # --------------------------------------------------------------------------
 
 class ExpLut:
-    """`exp(-x)` as `2^-i * 2^-f`: a table on the fraction, a shift on the integer.
+    """`exp(-x)` as `2^-i * 2^-f`: a table for the fraction, a shift for the integer.
 
     `x` arrives in Q(acc_frac) and is always non-negative -- every call site
     passes a distance below a running maximum. Converting to base 2 turns the
-    integer part into a shift, so the table only has to cover `[0, 1)` and is
-    `2**lut_bits` entries regardless of how large `x` gets.
+    integer part into a shift, so the table only has to cover `[0, 1)` and stays
+    `2**lut_bits` entries no matter how large `x` gets.
 
-    A series expansion would need several multiplies and would still be wrong
-    in the tail; a table over the whole range would be enormous. This is the
-    standard split, and it is exact to within one LSB of Q(prob_frac).
+    A series expansion would need several multiplies and would still be wrong in
+    the tail. A table over the whole range would be enormous. This is the
+    standard split between the two, and it is exact to within one LSB of
+    Q(prob_frac).
     """
 
     def __init__(self, fmt: FixedFormat) -> None:
@@ -107,36 +112,36 @@ class ExpLut:
         # be undefined; clamping here is exact, not an approximation.
         self.max_int_part = fmt.prob_frac + 1
 
-        # ONE FLAT TABLE, NOT A TABLE PLUS A SHIFT.
+        # One flat table instead of a table plus a shift.
         #
-        # The result is `table[addr] >> i` where `addr` is the low
-        # `exp_lut_bits` of `t >> (acc_frac - exp_lut_bits)` and `i` is the
-        # rest. So it is a function of that quantity ALONE, and the whole thing
-        # collapses to a single gather over `(max_int_part + 1) << exp_lut_bits`
-        # entries -- 4,608 int64s, 37 KB.
+        # The result is `table[addr] >> i`, where `addr` is the low
+        # `exp_lut_bits` of `t >> (acc_frac - exp_lut_bits)` and `i` is what is
+        # left. So it depends on that one quantity and nothing else, which means
+        # the whole thing collapses into a single gather over
+        # `(max_int_part + 1) << exp_lut_bits` entries -- 4,608 int64s, 37 KB.
         #
-        # This is not an approximation: every entry is computed by the exact
-        # expression above, and `check_exp_lut_flat_matches_two_step` asserts
-        # the two agree on every reachable input. It is worth doing because the
-        # two-step form was 28% of total runtime -- eight passes over a
-        # 17-million-element array where one gather suffices.
+        # This is not an approximation. Every entry is computed from the exact
+        # expression above, and `check_exp_lut_flat_matches_two_step` asserts the
+        # two forms agree on every input that can actually occur. It is worth
+        # doing because the two-step version was 28% of total runtime: eight
+        # passes over a 17-million-element array where one gather does.
         self._shift = fmt.acc_frac - fmt.exp_lut_bits
         span = (self.max_int_part + 1) << fmt.exp_lut_bits
         self._span = span
 
-        # THE INPUT IS CLAMPED, AND IT HAS TO BE.
+        # The input is clamped, and it has to be.
         #
-        # `delta * log2e` overflows int64 once delta exceeds about 2^47, which
-        # a caller reaches trivially: masking a score to the format's floor and
-        # subtracting it from a running maximum produces exactly that. The
-        # old two-step form wrapped silently there and got away with it because
-        # every caller discarded the masked lanes afterwards -- a wrong answer
-        # that happened never to be read. The flat gather turns the same input
-        # into an out-of-bounds index, which is how it was found.
+        # `delta * log2e` overflows int64 once delta gets past about 2^47, and a
+        # caller reaches that easily: mask a score to the format's floor,
+        # subtract it from a running maximum, and there it is. The old two-step
+        # form wrapped silently and got away with it, because every caller threw
+        # the masked lanes away afterwards -- a wrong answer that nobody ever
+        # read. The flat gather turns the same input into an out-of-bounds
+        # index, which is how this was found.
         #
-        # Clamping is EXACT, not a safety net: every delta at or above this
-        # bound maps to the table's terminal zero entry, so the clamp cannot
-        # change a result. It also lets callers stop masking the output.
+        # The clamp is exact rather than a safety net. Every delta at or above
+        # this bound maps to the table's final zero entry, so clamping cannot
+        # change a result, and callers no longer need to mask the output.
         self._delta_max = INT(-(-((span << self._shift) << fmt.acc_frac)
                                 // int(self.log2e)))
         u = np.arange(span + 1, dtype=INT)
@@ -178,56 +183,66 @@ def _lead(l: np.ndarray) -> np.ndarray:
     return n
 
 
-# The divisor width the reciprocal's divider is built for, and the numerator
-# that makes its quotient exactly one bit narrower. `l` is normalised INTO this
-# width, so both are compile-time constants and the divide is fixed-width.
+# The width `l` is normalised into before the divide, and the numerator that
+# makes the quotient exactly one bit narrower than it. Both are constants, so
+# the divider is fixed-width -- which is what makes it cheap in hardware.
+#
+# This must equal `FixedFormat.recip_norm_bits` and `RECIP_BITS` in
+# `rtl/finalize.sv`. `check_the_reciprocal_width_is_one_number_everywhere`
+# pins all three together.
 RECIP_NORM_BITS = 32
-RECIP_NUM_SHIFT = 2 * RECIP_NORM_BITS - 2        # 62: quotient is 31 bits
+RECIP_NUM_SHIFT = 2 * RECIP_NORM_BITS - 2        # 62, so the quotient is 31 bits
 
 
 def reciprocal(l, fmt: FixedFormat):
     """`1/l`, normalised. Returns `(recip, shift)` with `out = (acc*recip) >> shift`.
 
-    WHY THIS IS NOT A FIXED Q16 DIVIDE ANY MORE
+    Why this is not a fixed Q16 divide any more
     -------------------------------------------
     It used to be `floor(2**31 / l)` at a fixed `recip_frac`, and that loses
-    precision linearly in context. The online denominator measures
-    `l = T * 2**15` to within 0.2% -- near-uniform attention makes every `p`
-    near unity -- so the old quotient was `2**16 / T`: 64 levels at ctx 1,024,
-    8 at 8,192, 2 at 32,768, 1 at 65,536 and **0 at 131,072**, where the output
-    became identically zero.
+    precision linearly in context. The online denominator comes out at
+    `l = T * 2**15` to within 0.2%, because attention is close to uniform and
+    every `p` is close to one. So the old quotient was just `2**16 / T`: 64
+    levels at context 1,024, 8 at 8,192, 2 at 32,768, 1 at 65,536, and zero at
+    131,072, where the output became identically zero.
 
-    Worse, the error was a LOTTERY. It is the fractional part of `2**31/l`, so
-    at powers of two `l` lands just above an integer and the error is 0.2%,
-    while at ctx 24,576 it is 25%. Every context this project had tested -- 32,
-    64, 256, 1,024, 4,096 -- is a power of two, so every measurement had been
-    taken on a winning ticket. Bit-exactness could not catch it either, because
-    `finalize.sv` did the same integer divide and was wrong in the same way.
+    The error was also a lottery, which made it much harder to notice. It is the
+    fractional part of `2**31/l`, so at powers of two `l` lands just above an
+    integer and the error is 0.2%, while at context 24,576 it is 25%. Every
+    context this project had tested -- 32, 64, 256, 1,024, 4,096 -- is a power of
+    two, so every measurement had been taken on a winning ticket. Checking
+    bit-exactness against the hardware could not catch it either, because
+    `finalize.sv` did the same divide and was wrong in the same way.
 
-    THE DIVISOR IS NORMALISED, NOT THE NUMERATOR
-    --------------------------------------------
-    The obvious fix is to scale the numerator by `l`'s leading bit -- and it
-    overflows a 64-bit integer at ctx 262,144, which is inside the range this
-    is meant to rescue. So `l` is shifted INTO a fixed 32-bit window instead
-    (left when it is small, right when it is large), and the numerator stays
-    the constant `2**62`. The quotient is then always in `(2**30, 2**31]` --
-    31 significant bits at EVERY context, with no ceiling -- and `acc * recip`
-    stays inside 64 bits because both factors are bounded by construction.
+    We normalise the divisor, not the numerator
+    -------------------------------------------
+    The obvious fix is to scale the numerator by `l`'s leading bit. That
+    overflows a 64-bit integer at context 262,144, which is inside the range
+    this is supposed to rescue.
+
+    So instead `l` is shifted into a fixed 32-bit window -- left when it is
+    small, right when it is large -- and the numerator stays the constant
+    `2**62`. The quotient then always lands in `(2**30, 2**31]`, which is 31
+    significant bits at every context with no ceiling, and `acc * recip` stays
+    inside 64 bits because both factors are bounded by construction.
+
     That is also the shape the RTL wants: a fixed-width divisor and a constant
     dividend, which is the divider `finalize.sv` already has.
 
-    The value is unchanged, `acc * 2**prob_frac / l`; only the precision it is
-    carried at changes, and it no longer depends on the context.
+    The value itself does not change -- it is still `acc * 2**prob_frac / l`.
+    What changes is the precision it is carried at, which no longer depends on
+    the context.
 
-    `l = 0` is a real input -- a masked position scores nothing -- and answers
-    `(0, shift)`, giving the zero vector, as before.
+    `l = 0` is a real input, because a masked position scores nothing. It
+    answers `(0, shift)` and gives the zero vector, same as before.
     """
     a = np.asarray(l, dtype=INT)
     s = _lead(a)
-    # `k` is where `l`'s leading one sits relative to the window. Negative means
-    # `l` is small and must be shifted UP; the shift below is total, so a
-    # negative `k` simply makes it smaller. `16 + s` is its floor, so it is
-    # never negative and `rshift` is never asked for a left shift.
+    # `k` says where `l`'s leading one sits relative to the window. Negative
+    # means `l` is small and has to be shifted up. The shift returned below is
+    # the total one, so a negative `k` just makes it smaller; its floor is
+    # `16 + s`, so it never goes negative and `rshift` is never handed a left
+    # shift.
     k = s - (RECIP_NORM_BITS - 1)
     l_n = np.where(k >= 0, a >> np.maximum(k, 0), a << np.maximum(-k, 0))
     num = INT(1) << RECIP_NUM_SHIFT
@@ -241,7 +256,7 @@ def reciprocal(l, fmt: FixedFormat):
 
 @dataclass
 class AttentionStats:
-    """What the step did, collected as it ran rather than reconstructed after."""
+    """What the step did, collected while it ran rather than worked out after."""
 
     n_tokens: int = 0
     rescale_events: int = 0
@@ -266,10 +281,10 @@ class AttentionStats:
 class CompressedAttention:
     """Scores and accumulates directly on codes, for one KV head's cache.
 
-    Stateless between calls. `q_rot` is expected to be rotated AND already
-    scaled by `1/sqrt(head_dim)`: folding that scale into the query means the
-    softmax needs no multiply of its own, and the query is one vector per step
-    where the scores are one per cached token.
+    Holds no state between calls. `q_rot` has to arrive rotated and already
+    scaled by `1/sqrt(head_dim)`. Folding that scale into the query means the
+    softmax needs no multiply of its own -- worth doing because there is one
+    query vector per step but one score per cached token.
     """
 
     def __init__(self, quantizer: KVQuantizer, fmt: FixedFormat, quant: QuantConfig) -> None:
@@ -285,25 +300,26 @@ class CompressedAttention:
         self.score_q = Q(fmt.score_width, fmt.acc_frac, fmt.saturate)
         self.acc_q = Q(fmt.acc_width, fmt.acc_frac, fmt.saturate)
 
-        # An OBSERVER on the online loop, for `hw/vectors.py`. Same contract as
-        # `AttentionKernel.on_stage`: guarded by `is not None`, handed copies,
-        # and read-only -- `softmax_online.sv` and `accum.sv` need the running
-        # `m`, `l` and `acc` per token, and the alternative is a second
-        # implementation of the recurrence in the vector generator, which is
-        # exactly what these files exist to avoid.
+        # An observer on the online loop, used by `hw/vectors.py`. Same
+        # contract as `AttentionKernel.on_stage`: guarded by `is not None`,
+        # handed copies, and read-only. `softmax_online.sv` and `accum.sv` need
+        # the running `m`, `l` and `acc` for each token, and the only other way
+        # to get them would be to write the recurrence a second time in the
+        # vector generator -- which is the thing these files exist to avoid.
         self.on_step = None
 
     # -- scoring -----------------------------------------------------------
 
     def scores(self, q_rot: np.ndarray, kv: CompressedKV,
                trace: Trace | None = None) -> tuple[np.ndarray, int]:
-        """All scores for one query against `T` cached tokens, Q(acc_frac).
+        """All scores for one query against `T` cached tokens, in Q(acc_frac).
 
-        `q_rot` is (..., d); `kv.k_idx` is (T, d). Returns (..., T).
+        `q_rot` is (..., d), `kv.k_idx` is (T, d), and the result is (..., T).
 
-        Planes are summed before the single shift. Shifting each term
-        separately would truncate each one independently and can differ by a
-        count from a datapath that shifts once, which is what hardware does.
+        The planes are summed before the one shift. Shifting each term on its
+        own would truncate each one separately, and that can come out a count
+        away from a datapath that shifts once -- which is what the hardware
+        does.
         """
         centroids = self.z.key.codebook.centroids
         k_hat = centroids[kv.k_idx.astype(INT)]                 # (T, d) Q(centroid_frac)
@@ -319,9 +335,9 @@ class CompressedAttention:
     def _accumulate_terms(self, p: np.ndarray, kv: CompressedKV) -> np.ndarray:
         """`(norm * prob * centroid) >> acc_shift`, one truncation per term.
 
-        Each term is truncated BEFORE it joins the running sum, not after. That
-        is what makes a vectorised sum equal to a sequential one: truncating
-        the sum instead would depend on the order the terms arrived in.
+        Each term is truncated before it joins the running sum, not after. That
+        is what lets a vectorised sum equal a sequential one -- truncating the
+        sum instead would depend on what order the terms arrived in.
         """
         centroids = self.z.value.codebook.centroids
         v_hat = centroids[kv.v_idx.astype(INT)]                  # (T, d)
@@ -355,11 +371,11 @@ class CompressedAttention:
     def attend_online(self, q_rot: np.ndarray, kv: CompressedKV,
                       trace: Trace | None = None
                       ) -> tuple[np.ndarray, AttentionStats]:
-        """One streaming pass, running maximum, rescale on a new maximum.
+        """One streaming pass with a running maximum, rescaling when it moves.
 
         This is the hardware's order and the hardware's truncation pattern. The
-        cache is read exactly once, which is the only property that matters
-        when it lives off-die.
+        cache gets read exactly once, which is the property that matters when it
+        lives off-die.
         """
         s, ovf = self.scores(q_rot, kv, trace)
         s = np.atleast_2d(s)                                      # (H, T)
@@ -378,9 +394,10 @@ class CompressedAttention:
             st = s[:, t]
             grew = st > m
             if grew.any():
-                # exp(-(new_max - old_max)) pulls everything already summed
-                # down onto the new scale. Rare in practice, so hardware can
-                # stall here rather than carry a permanent d-wide multiplier.
+                # exp(-(new_max - old_max)) pulls everything summed so far down
+                # onto the new scale. This is rare in practice, so the hardware
+                # can afford to stall here instead of carrying a permanent
+                # d-wide multiplier for it.
                 delta = np.where(grew, st - m, 0)
                 factor = np.where(grew, self.exp(delta), unity)
                 acc = rshift(acc * factor[:, None], self.fmt.prob_frac)
@@ -416,27 +433,28 @@ class CompressedAttention:
                             ) -> tuple[np.ndarray, AttentionStats]:
         """Every query token of a prefill against one KV head, in one pass.
 
-        `q_rot` is (n_q, heads, d); query token `i` attends cache tokens
-        `[0, base + i]`. Returns (n_q, heads, d).
+        `q_rot` is (n_q, heads, d), query token `i` attends cache tokens
+        `[0, base + i]`, and the result is (n_q, heads, d).
 
-        THIS DOES NOT CHANGE THE MODELLED HARDWARE. It is an evaluation
+        This does not change the modelled hardware. It is an evaluation
         strategy, not a datapath: the caller still emits one MEM_READ per query
-        token, so the trace -- and therefore every byte, cycle and energy
-        figure -- is identical to the token-at-a-time path. That separation is
-        exactly what `trace.py` exists to provide, and
+        token, so the trace -- and with it every byte, cycle and energy figure --
+        comes out identical to the token-at-a-time path. Keeping those two things
+        separate is what `trace.py` is for.
         `tests/test_attention.py::check_causal_batch_is_bit_identical` pins the
-        values while `test_kernel.py::check_batching_does_not_change_the_trace`
+        values and `test_kernel.py::check_batching_does_not_change_the_trace`
         pins the accounting.
 
-        `tile` bounds peak memory only. It is NOT a query-tile in the hardware
+        `tile` only bounds peak memory. It is not a query tile in the hardware
         sense and must not be reported as one.
 
         The accumulate cannot be a plain matmul, because each term is truncated
-        BEFORE it joins the sum and that is load-bearing. It is instead
-        decomposed over the `2**value_bits` distinct centroids: within one code
-        value every term shares a multiplier, so the truncation happens first
-        and what remains is a 0/1 matrix product. Exact, and `2**value_bits`
-        BLAS calls instead of one enormous elementwise temporary.
+        before it joins the sum and that ordering is load-bearing. Instead it is
+        split over the `2**value_bits` distinct centroids: within one code value
+        every term shares a multiplier, so the truncation can happen first and
+        what is left is a 0/1 matrix product. Exact, and it costs
+        `2**value_bits` BLAS calls rather than one enormous elementwise
+        temporary.
         """
         q = np.asarray(q_rot, dtype=INT)
         if q.ndim == 2:
@@ -451,7 +469,7 @@ class CompressedAttention:
         v_cent = self.z.value.codebook.centroids
         v_cent_max = absmax(v_cent)
         # Everything the exactness guards need, computed once for the whole
-        # batch instead of once per tile per code value. A guard that walks the
+        # batch rather than once per tile per code value. A guard that walks the
         # array it is guarding costs more than the work it protects.
         score_scale = 2.0 ** -self.score_shift
         k_norm_f = kv.k_norm.astype(np.float64)
@@ -475,11 +493,12 @@ class CompressedAttention:
                     f"score: |q|*|k_hat|*d = {q_max * k_hat_max * d} >= 2^53")
             dot_f = qt.astype(np.float64) @ k_hat.T.astype(np.float64)
 
-            # The score truncation also runs in float64 when the operands prove
-            # it is exact, which is the ordinary case: `dot * k_norm` is an
-            # exact float64 integer below 2^53, and the shift is a power-of-two
-            # scale. The int64 fallback is kept because the bound depends on
-            # the data, not only on the format, so it can genuinely be reached.
+            # The score truncation runs in float64 too, whenever the operands
+            # prove that is exact -- which is the ordinary case, because
+            # `dot * k_norm` is an exact float64 integer below 2^53 and the
+            # shift is a power-of-two scale. The int64 fallback stays because
+            # the bound depends on the data and not only on the format, so it
+            # can genuinely be reached.
             if q_max * k_hat_max * d * k_norm_max < FLOAT64_EXACT:
                 s = np.floor((dot_f * k_norm_f) * score_scale).astype(INT)
             else:
@@ -489,32 +508,33 @@ class CompressedAttention:
             stats.max_abs_score = max(stats.max_abs_score, peak)
             s = s.reshape(nt, heads, n_tok)
 
-            # Causal mask. Invalid entries are pinned to the format's floor so
-            # the running maximum is taken over the prefix only; their
-            # probability is then exactly zero and contributes nothing.
+            # Causal mask. Invalid entries are pinned to the format's floor, so
+            # the running maximum only ever sees the causal prefix. Their
+            # probability then comes out at exactly zero and contributes
+            # nothing.
             valid = (positions[None, :] <= (base + np.arange(lo, hi))[:, None])
             s = np.where(valid[:, None, :], s, self.score_q.lo)
 
-            # Masked lanes are pinned far enough below the running maximum
-            # that `ExpLut`'s clamp maps them to exactly zero, so they need no
-            # second masking pass -- and, more importantly, no lane ever
-            # reaches the exp with a delta that would overflow.
+            # Masked lanes sit far enough below the running maximum that
+            # `ExpLut`'s clamp maps them to exactly zero, so there is no need
+            # for a second masking pass. More importantly, no lane ever reaches
+            # the exp with a delta large enough to overflow.
             m = s.max(axis=-1, keepdims=True)
             p = self.exp(m - s)
             l = p.sum(axis=-1)
 
-            # The accumulate runs in float64 from here, and it is EXACT.
+            # The accumulate runs in float64 from here, and it is exact.
             #
-            # `rshift(x, s)` is `floor(x / 2^s)`. In float64, `w * c` is an
-            # exact integer while it stays under 2^53, and scaling by 2^-s is
-            # exact because the scale is a power of two, so `floor((w*c) *
-            # 2^-s)` is the same integer as the int64 shift -- and it feeds the
-            # matmul without a conversion. The int64 path cost a multiply, a
-            # shift and an astype over a 17-million-element array per code
-            # value; this costs a multiply and a floor.
+            # `rshift(x, s)` is `floor(x / 2^s)`. In float64 `w * c` is an exact
+            # integer as long as it stays under 2^53, and scaling by 2^-s is
+            # exact because the scale is a power of two. So `floor((w*c) * 2^-s)`
+            # is the same integer the int64 shift would give, and it feeds the
+            # matmul without a conversion.
             #
-            # The bound is checked, not assumed, exactly as in
-            # `exact_int_matmul`.
+            # The int64 path cost a multiply, a shift and an astype over a
+            # 17-million-element array per code value. This costs a multiply and
+            # a floor. The bound is checked rather than assumed, the same way
+            # `exact_int_matmul` does it.
             w = p.reshape(-1, n_tok).astype(np.float64) * v_norm_f
             w_max = absmax(p) * absmax(kv.v_norm)
             if w_max * v_cent_max >= FLOAT64_EXACT:
@@ -529,11 +549,12 @@ class CompressedAttention:
                     f"accumulate: the reduction over {n_tok} tokens exceeds 2^53; "
                     f"lower `tile` will not help"
                 )
-            # Scale once, not once per code. `w * 2^-acc_shift` is exact
-            # (a power-of-two scale never rounds), so `floor(w_s * c)` is the
-            # same integer as `floor((w * c) * 2^-acc_shift)` -- but it is one
-            # multiply per code instead of two, and building these terms costs
-            # four times what the matmuls that consume them cost.
+            # Scale once rather than once per code. `w * 2^-acc_shift` is
+            # exact, because a power-of-two scale never rounds, so
+            # `floor(w_s * c)` is the same integer as
+            # `floor((w * c) * 2^-acc_shift)` -- but it is one multiply per code
+            # instead of two. Worth it: building these terms costs about four
+            # times what the matmuls that consume them cost.
             w_s = w * self._acc_scale
             acc = np.zeros((nt * heads, d), dtype=np.float64)
             for v, sel in enumerate(selector):
@@ -544,10 +565,10 @@ class CompressedAttention:
             acc = acc.reshape(nt, heads, d)
             out[lo:hi] = self._finalize(acc, l)
 
-        # The CAUSAL counts, not the rectangular ones. Query token i scores
-        # against base+i+1 cached tokens, not against all n_tok -- the batch
-        # computes a full rectangle and masks, but the modelled design does
-        # only the triangle, and it is the design the trace describes.
+        # These are the causal counts, not the rectangular ones. Query token i
+        # scores against base+i+1 cached tokens rather than all n_tok. The batch
+        # computes a full rectangle and masks it, but the design being modelled
+        # only does the triangle, and the trace describes the design.
         causal = heads * sum(base + i + 1 for i in range(n_q))
         record(trace, Op.SCORE, "attention", m=d, n=causal)
         record(trace, Op.SOFTMAX, "attention", m=1, n=n_q * heads)
@@ -557,22 +578,22 @@ class CompressedAttention:
     def attend_online_batch(self, q_rot: np.ndarray, kv: CompressedKV,
                             base: int = 0, trace: Trace | None = None
                             ) -> tuple[np.ndarray, AttentionStats]:
-        """The ONLINE softmax over a whole prefill, one cached token per step.
+        """The online softmax over a whole prefill, one cached token per step.
 
-        This is what the hardware does: a single pass over the cache carrying a
+        This is what the hardware does: one pass over the cache carrying a
         running maximum, rescaling the accumulator whenever that maximum moves.
-        `attend_online` already expresses it, but one query at a time, which is
-        O(n^2) Python iterations for a prefill and hours per window.
+        `attend_online` already says this, but one query at a time, which works
+        out to O(n^2) Python iterations for a prefill and hours per window.
 
-        Here the loop is over CACHED TOKENS and every query is advanced
-        together. The step is still exactly one cached token, so the sequence of
-        rescale events -- and therefore the truncation pattern, which is the
-        whole reason the online and two-pass forms differ -- is identical to the
-        per-query loop. `check_online_batch_is_bit_identical` pins that.
+        Here the loop runs over cached tokens and every query advances together.
+        A step is still exactly one cached token, so the sequence of rescale
+        events comes out identical to the per-query loop -- and with it the
+        truncation pattern, which is the entire reason the online and two-pass
+        forms differ at all. `check_online_batch_is_bit_identical` pins that.
 
         Causality is handled by only admitting query `q` once the loop reaches
-        token `q`: before that the token is in its future and must not touch its
-        running maximum.
+        token `q`. Before that the token is in that query's future and must not
+        touch its running maximum.
         """
         q = np.asarray(q_rot, dtype=INT)
         if q.ndim == 2:
@@ -627,9 +648,9 @@ class CompressedAttention:
         return self._finalize(acc, l).reshape(np.shape(q_rot)), stats
 
     def _finalize(self, acc: np.ndarray, l: np.ndarray) -> np.ndarray:
-        """Divide by the softmax denominator. One reciprocal per step, not per token.
+        """Divide by the softmax denominator, once per step rather than per token.
 
-        The shift is per-row, because `reciprocal` normalises per row: two query
+        The shift is per row, because `reciprocal` normalises per row: two query
         heads with different denominators get different shifts in the same step.
         """
         recip, shift = reciprocal(l, self.fmt)

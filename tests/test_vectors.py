@@ -91,7 +91,7 @@ def check_beat_hex_is_msb_first_over_a_little_endian_stream():
 
 
 def check_the_stream_is_eight_groups_of_six_with_k_and_v_first():
-    """Group layout and, more importantly, the order INSIDE a group.
+    """Group layout and, more importantly, the order inside a group.
 
     The current token attends to itself, so its key and value must reach the
     cache before any score is computed. `plan.MD` calls this causality rather
@@ -117,7 +117,7 @@ def check_the_stream_is_eight_groups_of_six_with_k_and_v_first():
 
 
 def check_the_stream_decodes_back_to_the_tapped_vectors():
-    """The whole point: what the RTL will receive IS what the model computed."""
+    """The whole point: what the RTL will receive is what the model computed."""
     vs, _ = _built()
     d = vs.model.head_dim
     flat = unpack_lanes(vs.ingress_bytes(), vs.lane_bits, 48 * d).reshape(48, d)
@@ -229,6 +229,65 @@ def check_the_tap_is_an_observer_and_leaves_no_trace():
     exact(one(True), one(False), "observer changed the answer")
 
 
+def check_ingress_only_sends_the_board_the_same_bytes():
+    """`verify=False` must change the wall clock and nothing on the wire.
+
+    The numpy attention is a per-step check, not part of producing the ingress,
+    so skipping it must leave the board's stimulus and the row the cache stored
+    bit-identical. If it did not, `--no-verify` would be a different experiment
+    from `--verify` rather than the same one measured faster, and no result
+    taken with it could be compared against one taken without.
+    """
+    from kernel import AttentionKernel, KernelConfig
+
+    def one(verify):
+        m = ModelConfig(hidden_size=256, num_heads=8, num_kv_heads=2, head_dim=32)
+        k = AttentionKernel(KernelConfig(model=m, quant=QuantConfig()), capacity=8)
+        rng = np.random.default_rng(11)
+        for _ in range(3):
+            x = rng.standard_normal((1, 256)).astype(np.float32) * 0.05
+            vs = collect(k, x, verify=verify)
+        assert k.ingress_only is False, "the kernel must be left at the seam-open default"
+        assert k.on_stage is None, "the observer must be detached again"
+        return vs, k
+
+    fast, kf = one(False)
+    slow, ks = one(True)
+    exact(np.frombuffer(fast.ingress_bytes(), dtype=np.uint8),
+          np.frombuffer(slow.ingress_bytes(), dtype=np.uint8),
+          "the ingress differs with the check off")
+    exact(fast.rows, slow.rows, "the stored row differs with the check off")
+    exact(kf.cache.buf[:kf.cache.length], ks.cache.buf[:ks.cache.length],
+          "the whole cache differs with the check off")
+
+    # The checking half really is gone, not merely unused.
+    assert fast.out_online is None and fast.scores is None, \
+        "verify=False still computed the golden it is meant to skip"
+    assert slow.out_online is not None, "verify=True stopped producing the golden"
+
+
+def check_a_kernel_stopped_at_the_seam_returns_no_answer():
+    """The one guard against the project's most dangerous failure mode.
+
+    `plan.MD`: the host kernel produces the same text as the board, so "board
+    idle" and "board correct" are indistinguishable from the output. A kernel
+    running with `ingress_only` has not attended to anything, so it must hand
+    back `None` rather than a zero array -- a caller that meant to use the
+    answer then dies at the first arithmetic instead of consuming zeros that
+    look like a quiet numerical problem.
+    """
+    from kernel import AttentionKernel, KernelConfig
+
+    m = ModelConfig(hidden_size=256, num_heads=8, num_kv_heads=2, head_dim=32)
+    k = AttentionKernel(KernelConfig(model=m, quant=QuantConfig()), capacity=8)
+    x = np.random.default_rng(3).standard_normal((1, 256)).astype(np.float32) * 0.05
+    k.ingress_only = True
+    y, report = k.forward(x)
+    assert y is None, "a kernel stopped at the seam returned an answer"
+    # The host's half all ran: the token is in the cache and the report knows it.
+    assert k.cache.length == 1 and report.context == 1
+
+
 # --------------------------------------------------------------------------
 # step 6: the encoder stimulus
 # --------------------------------------------------------------------------
@@ -237,7 +296,7 @@ def check_encoder_stimulus_contains_exact_boundary_ties():
     """The reason the tie vectors are constructed instead of sampled.
 
     `_encode_plane` compares with `>`, so a channel exactly on a boundary falls
-    to the LOWER bin. An RTL comparator that used `>=` would disagree on those
+    to the lower bin. An RTL comparator that used `>=` would disagree on those
     channels alone -- and a tie needs `x << 8 == norm * boundary` exactly, which
     random stimulus hits with probability about 2**-32. If this check ever finds
     no ties, `tb_rot_encode` has silently stopped testing the rule.
@@ -378,7 +437,7 @@ def check_the_product_table_is_the_multiply_the_scan_avoids():
 
 
 def check_the_constructed_norm_rows_are_negative_where_they_claim_to_be():
-    """The edge rows exist to make the norm's SIGN observable.
+    """The edge rows exist to make the norm's sign observable.
 
     Every norm a real cache holds is far below 2**15, so a score lane that
     read the norm as unsigned agrees with all 2,080 real rows. These rows have
@@ -437,7 +496,7 @@ def check_the_real_scores_do_not_exercise_the_rescale():
     assert grew.sum() == 19
     # Four are the zero of each lane's first token, where `m` starts at the
     # format's floor and annihilates an empty accumulator. Thirteen are exactly
-    # unity, so the multiply runs and changes nothing. TWO of nineteen events
+    # unity, so the multiply runs and changes nothing. Two of nineteen events
     # do arithmetic a mutation could get wrong.
     assert (factors == 0).sum() == vs.model.kv_groups
     assert (factors == unity).sum() == 13
@@ -528,14 +587,21 @@ def check_the_finalize_goldens_are_the_kernels_own_two_lines():
         # l = 0 is a real input -- a masked position -- and answers zero.
         assert 0 in gl and gr[gl.index(0)] == 0
         # The constructed rows must take the reciprocal to its ceiling.
-        assert max(gr) == 1 << (vs.fmt.recip_frac + vs.fmt.prob_frac)
+        #
+        # That ceiling is 2**(RECIP_NORM_BITS - 1) and nothing else. It used to
+        # be written `1 << (recip_frac + prob_frac)`, which is the same 2**31
+        # today by coincidence -- the normalised divide stopped depending on
+        # either field, so that form would have failed on a change to
+        # `prob_frac` that cannot affect the quotient at all.
+        from kernel.ops.attention import RECIP_NORM_BITS
+        assert max(gr) == 1 << (RECIP_NORM_BITS - 1)
 
 
 def check_the_real_denominators_do_not_exercise_the_divider():
     """Why the constructed rows exist, pinned rather than asserted in a comment.
 
     Every head ends the same length of scan, so every real `l` is close to
-    `n_tokens << prob_frac` -- and since the reciprocal is NORMALISED, every
+    `n_tokens << prob_frac` -- and since the reciprocal is normalised, every
     real quotient is therefore 31 bits and they sit within a hair of each
     other. A divider wrong on a zero, on a one, or at any other magnitude
     agrees with all 32 of them.

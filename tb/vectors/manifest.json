@@ -32,7 +32,7 @@
   "softmax_tokens": 65,
   "stress_query_scale": 1024,
   "stress_distinct_factors": 17,
-  "recip_frac": 16,
+  "recip_norm_bits": 32,
   "finalize_rows": 49,
   "finalize_edge_rows": 17,
   "finalize_out_bits": 48,

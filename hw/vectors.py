@@ -2,24 +2,24 @@
 
     python -m kernel.hw.vectors --ctx 64 --out tb/vectors
 
-Every file this writes comes off the UNMODIFIED kernel. Nothing here computes a
+Every file this writes comes off the unmodified kernel. Nothing here computes a
 value: it attaches `AttentionKernel.on_stage` -- an observer with the same
 `is not None` guard the trace uses -- collects the arrays the datapath already
 produced, and formats them. If a vector disagrees with the RTL, the numpy model
 is right by construction, because it is the same code that scores
 `cosine 1.000000` against `LlamaAttention`.
 
-THE WIRE FORMAT, AND WHY IT NEEDS NO PADDING
+The wire format, and why it needs no padding
 --------------------------------------------
 Q8.16 in 24-bit lanes on a 512-bit AXI4-Stream. `d = 64`, so one vector is
 64 x 24 = 1,536 bits = **exactly 3 beats**. No `TKEEP` decoding, no DRE, no
-partial beat -- but a lane still STRADDLES a beat boundary (24 does not divide
+partial beat. A lane does still straddle a beat boundary (24 does not divide
 512), so `attn_ingress.sv` is a shift register and a counter, and this module
 is the thing that says which bit goes where. Lanes are packed LSB-first into a
 little-endian byte stream and beats are emitted MSB-first as hex, which is what
 `$readmemh` wants.
 
-GROUPED BY KV HEAD, AND THE ORDER IS CAUSALITY
+Grouped by KV head, and the order is causality
 ----------------------------------------------
 The stream is 8 groups of 6 vectors, `[k_h][v_h][q_4h..q_4h+3]`, so the block
 can start on group 0 after 1,152 B instead of 9,216 B. **k and v come first
@@ -29,7 +29,7 @@ must be in the cache before any score is computed, exactly as
 produces an off-by-one-token attention that still runs and still looks
 plausible, which is the worst kind of wrong.
 
-WHAT ELSE COMES OUT, AND FOR WHOM
+What else comes out, and for whom
 ---------------------------------
 Each block in `plan.MD`'s table needs its own stimulus, so the per-stage
 intermediates are emitted too: post-rotate for `rot_fwht.sv`, codes and norms
@@ -40,9 +40,9 @@ The scores are taken from `CompressedAttention.scores` -- the same function the
 kernel's own datapath calls, invoked here on the same rotated query and the
 same cache view. It is not a reimplementation.
 
-THE SOFTMAX GOLDEN IS `attend_online`
+The softmax golden is `attend_online`
 -------------------------------------
-`forward` runs two-pass, and the two are NOT bit-identical -- the online form
+`forward` runs two-pass, and the two are not bit-identical -- the online form
 truncates the accumulator once per rescale. The hardware is online, so
 `out.online.hex` is what `attn_top.sv` must reproduce. `out.hex` is the
 two-pass result `forward` returned, emitted beside it so the gap is visible
@@ -109,7 +109,7 @@ def beats(buf: bytes, width_bits: int = BEAT_BITS) -> list[str]:
     """Packed bytes -> `$readmemh` lines, one beat each, MSB-first hex.
 
     Byte 0 of the stream is bits [7:0] of beat 0, so a beat prints its bytes
-    REVERSED. That convention is the single most common way a testbench and a
+    reversed. That convention is the single most common way a testbench and a
     packer come to disagree while both look correct in isolation.
     """
     if width_bits % 8:
@@ -147,7 +147,7 @@ class VectorSet:
     model: ModelConfig
     quant: QuantConfig
     fmt: FixedFormat
-    context: int                     # cached tokens BEFORE this step
+    context: int                     # cached tokens before this step
     wire: dict = field(default_factory=dict)      # stage -> (tokens, heads, d)
     rotated: dict = field(default_factory=dict)
     quantizer: object | None = None               # the kernel's own KVQuantizer
@@ -178,7 +178,7 @@ class VectorSet:
     def ingress_groups(self) -> list[np.ndarray]:
         """8 groups of 6 vectors: `[k_h][v_h][q_4h..q_4h+3]`, token 0 only.
 
-        k and v FIRST. See the module docstring -- this is causality, not
+        k and v first. See the module docstring -- this is causality, not
         layout preference.
         """
         m = self.model
@@ -196,28 +196,44 @@ class VectorSet:
         return beats(self.ingress_bytes())
 
 
-def collect(kernel, hidden, positions=None) -> VectorSet:
+def collect(kernel, hidden, positions=None, verify: bool = True) -> VectorSet:
     """Run one step with the observer attached and gather everything.
 
     The kernel is left exactly as it was found, observer included, so a caller
     that reuses it for a second step is not silently still recording.
-    """
-    from ..ops.attention import CompressedAttention  # noqa: F401  (documented below)
 
+    `verify=False` collects the ingress and nothing else
+    ---------------------------------------------------
+    The ingress is the host's half: projections, QK-norm, the scale, the cast,
+    RoPE and the rotation, all O(1) in context. Everything else this function
+    produces -- the scores, the online softmax, the full cache copy, the
+    two-pass output -- is O(context) numpy that exists to check the board, and
+    on a board-in-the-loop run it is 98% of the wall clock. A perplexity run
+    was 336 s against 6.7 s of wire and 108 ms of device.
+
+    With `verify=False` the kernel stops at the seam (`ingress_only`) and the
+    per-token check is skipped, so `scores`, `out_two_pass`, `out_online`,
+    `cache`, `softmax` and `final` are all `None`/empty. `rows` -- the single
+    row this token appended -- is kept: it is O(1), it is what `attn diff`
+    compares, and the cache write ran either way.
+    """
     m = kernel.cfg.model
     ctx = kernel.cache.length
     tap = StageTap()
     prev, kernel.on_stage = kernel.on_stage, tap
+    prev_ing, kernel.ingress_only = kernel.ingress_only, not verify
     try:
         y, report = kernel.forward(hidden, positions)
     finally:
         kernel.on_stage = prev
+        kernel.ingress_only = prev_ing
 
     vs = VectorSet(model=m, quant=kernel.cfg.quant, fmt=kernel.cfg.fmt, context=ctx)
     for s in ("q", "k", "v"):
         vs.wire[s] = tap[f"wire.{s}"]
         vs.rotated[s] = tap[f"rot.{s}"]
-    vs.out_two_pass = tap["out"]
+    if verify:
+        vs.out_two_pass = tap["out"]
 
     if kernel.compressed:
         # The encoder golden is the quantizer the cache is actually using, not
@@ -230,7 +246,10 @@ def collect(kernel, hidden, positions=None) -> VectorSet:
         # bytes the cache actually stored, not a re-packing of them.
         vs.rows = kernel.cache.buf[ctx].copy()
 
-        # The WHOLE cache, `ctx + 1` tokens including the one just appended.
+        if not verify:
+            return vs
+
+        # The whole cache, `ctx + 1` tokens including the one just appended.
         # `score_lane.sv` scans this; `kv_rows.hex` is only its last row, and a
         # bench fed one token cannot tell a working adder tree from a working
         # accumulator. Taken after `forward`, so the causal set the scores
@@ -296,7 +315,7 @@ CENT_BITS  = 20          # widest centroid is 89,465 -- 18 b signed; same wire w
 
 
 def _tie_vectors(quantizer, base: np.ndarray, plane) -> np.ndarray:
-    """Vectors where a channel sits EXACTLY on a decision boundary.
+    """Vectors where a channel sits exactly on a decision boundary.
 
     The `>` in `_encode_plane` sends a tie to the lower bin. That rule is one
     character of Python and one comparator bit in RTL, it disagrees with the
@@ -463,7 +482,7 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
                 [f"{int(c) & ((1 << CENT_BITS) - 1):0{cw}x}"
                  for c in plane.codebook.centroids]))
 
-        # The product tables `qtab_build.sv` must hold, one line per QUERY
+        # The product tables `qtab_build.sv` must hold, one line per query
         # head. Entry (ch, i) is `q_rot[ch] * centroid[i]` -- the multiply the
         # scan is amortising away -- at bit offset `(ch * 2**BITS + i) * PROD_W`,
         # LSB-first, the same convention every other packed file here uses.
@@ -491,7 +510,7 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
 
         # -- rows a real cache does not contain --------------------------
         #
-        # `_unpack_word` SIGN-EXTENDS the norm, so the model multiplies by a
+        # `_unpack_word` sign-extends the norm, so the model multiplies by a
         # signed 16-bit value. Every norm `isqrt` produces here is far below
         # 2**15, which means a lane that treated the norm as unsigned agrees
         # with `scores` on all 2,080 real rows and is still wrong. These rows
@@ -537,7 +556,7 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
 
     # -- the online softmax --------------------------------------------
     #
-    # `exp_table.hex` is the 256-entry table of `ExpLut.two_step`, NOT the
+    # `exp_table.hex` is the 256-entry table of `ExpLut.two_step`, not the
     # 4,353-entry flat gather. The flat form is a numpy speed trick -- one
     # index where the two-step needs a table read and a shift -- and
     # `check_exp_lut_flat_matches_two_step` already asserts they agree on every
@@ -585,7 +604,7 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
             f"{sum(int(v) << i for i, v in enumerate(row)):01x}"
             for row in book["grew"]]))
         # One line per (token, lane): 64 accumulator channels, channel 0 in the
-        # low bits. This is what `accum.sv` must hold after EVERY token, not
+        # low bits. This is what `accum.sv` must hold after every token, not
         # merely at the end of the scan -- an accumulator that is right only at
         # the last token is one whose rescales cancelled out by luck.
         out.append(_write(p(f"{prefix}_acc.hex"), [
@@ -598,7 +617,7 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
 
     # -- a query scaled so the rescale is not a no-op ---------------------
     #
-    # THE REAL SCORES DO NOT TEST THE RESCALE. At ctx 64 the four lanes rescale
+    # The real scores do not test the rescale. At ctx 64 the four lanes rescale
     # 19 times between them and the factor is 32,768 -- exactly one -- in all
     # but three of those. Consecutive maxima differ by a few LSBs of Q16, so
     # `exp(-delta)` rounds to 1.0 and `acc * factor >> 15` returns `acc`
@@ -645,13 +664,13 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
 
     # -- finalize: one reciprocal per query head -------------------------
     #
-    # THE REAL DENOMINATORS DO NOT EXERCISE THE DIVIDER. All 32 heads end a
+    # The real denominators do not exercise the divider. All 32 heads end a
     # 65-token scan with `l` near 65 * 32768, so `2**31 // l` lands between
     # 1,008 and 1,012 -- a four-value spread, all of them 10-bit. A divider
     # that was wrong above 10 bits, or that mishandled a zero or a one, would
     # agree with every real head.
     #
-    # So the stimulus is the 32 real (acc, l) pairs FOLLOWED by constructed
+    # So the stimulus is the 32 real (acc, l) pairs followed by constructed
     # ones at l = 0, 1, 2, 3, 2**15-1, 2**15, 2**16-1, 2**20, 2**31-1, 2**31,
     # 2**32-1 and 2**33. l = 0 is a real input -- a masked or padded position --
     # and `reciprocal` answers it with zero rather than dividing. l = 1 gives
@@ -665,12 +684,12 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
         from ..numerics.fixed import rshift
 
         real_acc, real_l = vs.final["acc"], vs.final["l"]
-        # THE CONSTRUCTED DENOMINATORS, AND WHAT THEY STRESS NOW
+        # The constructed denominators, and what they stress now
         # ------------------------------------------------------
         # These used to exist because the old fixed-Q16 divide gave every real
         # row a 10-bit quotient in a four-value band, so only constructed rows
         # reached its ceiling. The normalised divide has no such band -- every
-        # quotient is 31 bits -- so what these stress instead is the SHIFT, the
+        # quotient is 31 bits -- so what these stress instead is the shift, the
         # degree of freedom normalising introduced: `lead` from 0 to
         # `L_WIDTH-1`, and the `shr`/`shl` boundary at `RECIP_BITS-1 = 31`
         # where the normaliser changes direction.
@@ -782,7 +801,7 @@ def emit(vs: VectorSet, out_dir: str) -> list[str]:
         "softmax_tokens": int(vs.softmax["s"].shape[0]) if vs.softmax else 0,
         "stress_query_scale": 1024,
         "stress_distinct_factors": stress_factors,
-        "recip_frac": vs.fmt.recip_frac,
+        "recip_norm_bits": vs.fmt.recip_norm_bits,
         "finalize_rows": n_fin,
         "finalize_edge_rows": n_fin_edge,
         "finalize_out_bits": 48,

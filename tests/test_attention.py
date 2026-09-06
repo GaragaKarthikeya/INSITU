@@ -7,7 +7,7 @@ from kernel.numerics.fixed import Q
 from kernel.ops.attention import (CompressedAttention, ExpLut, exact_int_matmul,
                                   reciprocal)
 from kernel.ops.quantize import KVQuantizer
-from .harness import approx, raises
+from .harness import approx, exact, raises
 
 FMT = FixedFormat()
 QQ = Q(FMT.qk_width, FMT.qk_frac)
@@ -49,7 +49,7 @@ def check_reciprocal():
     l = np.array([1 << FMT.prob_frac, 3 << FMT.prob_frac, 0])
     r, sh = reciprocal(l, FMT)
     # `out = (acc*recip) >> shift` realises `acc * 2**prob_frac / l`, so
-    # `recip / 2**shift` IS `2**prob_frac / l` -- which is 1.0 when l is unity
+    # `recip / 2**shift` is `2**prob_frac / l` -- which is 1.0 when l is unity
     # in Q(prob_frac). The old fixed-Q form divided by `2**recip_frac` here.
     approx(r[:2] / (2.0 ** sh[:2]), [1.0, 1.0 / 3.0], tol=1e-4, what="1/l")
     assert r[2] == 0
@@ -60,11 +60,11 @@ def check_the_reciprocal_holds_its_precision_at_every_context():
 
     The old fixed-Q16 divide was `2**16 / T` levels: 2 at ctx 32,768 and 0 at
     131,072. Its error was the fractional part of `2**31/l`, which made it a
-    LOTTERY -- 0.2% at powers of two and 25% at ctx 24,576. Every context this
+    lottery: 0.2% at powers of two and 25% at ctx 24,576. Every context this
     project tested was a power of two, so every measurement landed on a winning
     ticket and nothing failed.
 
-    So this sweeps the unlucky contexts ON PURPOSE. `l = T * 2**15` is the
+    So this sweeps the unlucky contexts on purpose. `l = T * 2**15` is the
     measured law: near-uniform attention makes every `p` near unity.
     """
     for T in (64, 1024, 4096, 16384, 20000, 24576, 32768, 49152, 65536,
@@ -75,7 +75,7 @@ def check_the_reciprocal_holds_its_precision_at_every_context():
         got = r / 2.0 ** sh
         want = (1 << FMT.prob_frac) / l
         assert abs(got - want) / want < 1e-6, (T, got, want)
-        # The quotient is normalised, so it is 31 bits WHATEVER the context --
+        # The quotient is normalised, so it is 31 bits whatever the context --
         # that is the property, not the error bound that follows from it.
         assert 1 << 30 < r <= 1 << 31, (T, r)
         # And `acc * recip` must stay inside 64 bits: acc is ACC_WIDTH signed.
@@ -91,6 +91,36 @@ def check_the_reciprocal_shift_is_never_a_left_shift():
     l = np.array([0, 1, 1 << FMT.prob_frac, (1 << 47) - 1])
     _, sh = reciprocal(l, FMT)
     assert np.all(sh >= 0), sh
+
+
+def check_the_reciprocal_width_is_one_number_everywhere():
+    """The divisor width is defined in three places and they must all agree.
+
+    `FixedFormat.recip_norm_bits`, `RECIP_NORM_BITS` in `ops/attention.py` and
+    `RECIP_BITS` in `rtl/finalize.sv` all describe the same thing: the window
+    `l` is normalised into before the divide. The RTL derives it as
+    `RECIP_FRAC + PROB_FRAC + 1`, which happens to be 32 as well.
+
+    Happening to be right is the problem. Those two fields no longer take any
+    part in the arithmetic, so someone changing `prob_frac` -- an ordinary
+    thing to want to do -- would resize the hardware's divider while leaving
+    the model's alone, and the two would divide differently with nothing
+    saying so. Bit-exactness would not catch it either: the goldens come from
+    this side.
+    """
+    import pathlib
+    import re
+
+    from kernel.ops.attention import RECIP_NORM_BITS
+
+    exact(FMT.recip_norm_bits, RECIP_NORM_BITS,
+          "FixedFormat and ops/attention disagree on the reciprocal width")
+
+    rtl = (pathlib.Path(__file__).resolve().parents[1] / "rtl" / "finalize.sv").read_text()
+    frac = int(re.search(r"parameter int RECIP_FRAC\s*=\s*(\d+)", rtl).group(1))
+    prob = int(re.search(r"parameter int PROB_FRAC\s*=\s*(\d+)", rtl).group(1))
+    exact(frac + prob + 1, RECIP_NORM_BITS,
+          "rtl/finalize.sv sizes its divider differently from the model")
 
 
 def check_scoring_on_codes_equals_scoring_on_the_reconstruction():
@@ -121,7 +151,7 @@ def check_two_pass_matches_float_softmax():
 def check_online_and_two_pass_are_close_but_not_identical():
     """Both are correct; they differ by the online form's rescale truncation.
 
-    Asserting they are EQUAL would be wrong and has to stay wrong: the online
+    Asserting they are equal would be wrong, and has to stay wrong: the online
     softmax truncates the accumulator once per rescale event. This pins the
     size of that difference so a regression in either one is visible.
     """
@@ -182,7 +212,7 @@ def check_exact_int_matmul_refuses_to_round():
 
 
 def check_causal_batch_is_bit_identical():
-    """The batched prefill IS the token-at-a-time path, at every width.
+    """The batched prefill is the token-at-a-time path, at every width.
 
     Not "close to" -- the same integers. If this ever weakens to a tolerance,
     the batched path has stopped being an evaluation strategy and has become a
@@ -250,7 +280,7 @@ def check_exp_lut_survives_a_floor_masked_score():
 def check_online_batch_is_bit_identical():
     """The batched online form must reproduce the per-query one exactly.
 
-    This is the path that measures what the HARDWARE does, so "close" is not
+    This is the path that measures what the hardware does, so "close" is not
     good enough: the whole reason the online and two-pass forms differ is the
     accumulator truncation at each rescale, and a batching that smeared those
     events would be measuring a third thing that no hardware runs.
@@ -272,7 +302,7 @@ def check_online_batch_is_bit_identical():
 
 
 def check_online_and_two_pass_differ_only_by_rescale_truncation():
-    """They must be close, and they must NOT be identical.
+    """They must be close, and they must not be identical.
 
     Identical would mean the rescale path is not being exercised, which would
     make every online-versus-two-pass comparison vacuous.

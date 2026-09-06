@@ -9,7 +9,7 @@ The split into four groups is deliberate and load-bearing:
     ModelConfig     what the network is.   Comes from the checkpoint.
     QuantConfig     how the KV cache is compressed.  An algorithm choice.
     FixedFormat     the fixed-point contract downstream of the arrays.
-    HardwareConfig  what the accelerator looks like.  Affects CYCLES ONLY.
+    HardwareConfig  what the accelerator looks like.  Affects cycles only.
 
 `HardwareConfig` is last because of a property the rest of the package
 enforces: changing it must never change a numeric result. That is what lets the
@@ -147,11 +147,11 @@ class QuantConfig:
 
     # How many rounds of randomized Hadamard.
     #
-    # ONE, on measured evidence. Two rounds was the default for a while on the
+    # one, on measured evidence. Two rounds was the default for a while on the
     # grounds that one overshoots into a platykurtic distribution -- which is
     # true, and turned out not to be what matters. Measured end to end on
     # WikiText-2 (12 windows, paired, TinyLlama at 1024 context), one round is
-    # 1.3% BETTER in perplexity than two, and the difference is significant at
+    # 1.3% better in perplexity than two, and the difference is significant at
     # 2.8 standard errors. The likely mechanism is that each round ends in a
     # truncation, so a second round rounds the value off a second time for a
     # distributional gain the quantizer does not cash in.
@@ -219,9 +219,23 @@ class FixedFormat:
     score_width: int = 48
     prob_frac: int = 15
     prob_width: int = 16
-    recip_frac: int = 16
     exp_lut_bits: int = 8
     saturate: bool = True
+
+    # Width the softmax denominator is normalised into before the divide.
+    #
+    # This used to be `recip_frac = 16`, back when the divide was a fixed
+    # `2**31 / l`. It is not that any more: `l` is shifted into a fixed window
+    # and the numerator is a constant, so the only thing that sets the
+    # quotient's width is this number. See `ops/attention.py::reciprocal`.
+    #
+    # Three places have to agree on it: this field, `RECIP_NORM_BITS` in
+    # `ops/attention.py`, and `RECIP_BITS` in `rtl/finalize.sv`. The RTL
+    # derives it as `RECIP_FRAC + PROB_FRAC + 1`, which comes to the same 32
+    # today but for no reason -- change `prob_frac` and the hardware would
+    # quietly divide differently from the model. `finalize.sv` now has an
+    # elaboration check that fires if they ever disagree.
+    recip_norm_bits: int = 32
 
     def score_shift_for(self, quant: QuantConfig) -> int:
         return self.qk_frac + self.centroid_frac + quant.norm_frac - self.acc_frac
@@ -232,7 +246,7 @@ class FixedFormat:
 
 
 # --------------------------------------------------------------------------
-# What the accelerator looks like  (CYCLES ONLY -- never a numeric result)
+# What the accelerator looks like  (cycles only -- never a numeric result)
 # --------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -248,7 +262,6 @@ class ArrayConfig:
     rows: int = 128
     cols: int = 128
     mul_latency: int = 1
-    load_weight_cycles: int = 1
 
     @property
     def pe_count(self) -> int:
@@ -273,9 +286,9 @@ class RotateConfig:
 class EncoderConfig:
     """`rot_norm.sv` + `rot_encode.sv`. One rotated vector in, one cache row out.
 
-    MEASURED, not estimated. Both blocks fold over the head dimension --
+    Measured, not estimated. Both blocks fold over the head dimension --
     `LANES = 8` of 64 channels per cycle -- because Phase A runs once per token
-    against a Phase B that runs once per CACHED token. Sixty-four squarers and
+    against a Phase B that runs once per cached token. Sixty-four squarers and
     sixty-four comparator stacks would buy back cycles nothing is waiting on
     and take area from the score lanes, which are the thing that is actually
     bandwidth-limited.
@@ -299,7 +312,7 @@ class EncoderConfig:
 class AttentionConfig:
     """The score -> softmax -> accumulate lanes.
 
-    `lanes` is the number of query heads scored against ONE cached row at a
+    `lanes` is the number of query heads scored against one cached row at a
     time. Under grouped-query attention the group sharing a KV head reads the
     same 52 B, so widening this costs adders and no bandwidth -- it is the one
     axis in the datapath that is free to parallelise, and the reason it is set
@@ -309,12 +322,12 @@ class AttentionConfig:
     which a score is waiting and the datapath cannot take it. Charged per
     RESCALE record, which only the online softmax emits.
 
-    MEASURED, not estimated. `tb_softmax_accum` counts the bubbles directly --
+    Measured, not estimated. `tb_softmax_accum` counts the bubbles directly --
     a score sitting in the input FIFO with no pop -- over 39 rescale events
     across two stimulus sets, and gets **15 cycles each**, not the 1 an earlier
     draft assumed. A new maximum must not move while tokens computed against
     the old one are in flight, so the event is: drain the three-stage exp pipe,
-    three more cycles to compute the factor from it, issue the SCALE, and wait
+    three more cycles to compute the factor from it, issue the scale, and wait
     while `accum` folds 64 channels through 8 multipliers.
 
     It was 11 until the design was placed and routed. Every increase since is
@@ -325,7 +338,7 @@ class AttentionConfig:
     * 11 -> 12: `accum`'s rescale fold split into select, then multiply.
     * 12 -> 14: both of `accum`'s wide products -- 32x20 for the terms and
       48x16 for the fold -- registered between the multiply and the cascade
-      adder. Each is wider than one DSP48 and maps to a PAIR, which does not
+      adder. Each is wider than one DSP48 and maps to a pair, which does not
       reach 250 MHz without that register; it is the DSP's own MREG, and
       Vivado infers it only if the RTL has one there.
     * 14 -> 15: `a_w` registered before the term multiply, so two multipliers
@@ -351,8 +364,8 @@ class AttentionConfig:
 class CacheConfig:
     """`kv_store_ddr.sv`: the DDR-resident cache, and the bandwidth it gets.
 
-    THIS IS THE ONLY PLACE A MEASURED NUMBER ENTERS THE MODEL
-    --------------------------------------------------------
+    This is the only place a measured number enters the model
+    ---------------------------------------------------------
     `ddr_gbps` is not an estimate. It is 14.708 GB/s, measured on the ZCU104 at
     4 AXI-HP ports, burst 64, outstanding 2, median of five repeats across two
     runs and a power cycle (`results/step1_ddr_sweep_run2_medians.log`). It is
@@ -371,18 +384,18 @@ class CacheConfig:
     parallel_kv: int = 1            # KV heads scanned concurrently
     hp_ports: int = 4
     port_bits: int = 128            # one AXI-HP master
-    ddr_gbps: float = 14.708        # MEASURED. See the docstring.
+    ddr_gbps: float = 14.708        # measured. See the docstring.
 
-    # -- what the SCAN actually costs, measured on the board -----------------
+    # -- what the scan actually costs, measured on the board -----------------
     #
-    # THE SUPPLY IS NOT THE BOUND, AND TREATING IT AS ONE WAS A REAL ERROR.
-    # `ddr_gbps` is 14.708 and the interface ceiling is 64 B/cycle, so this
-    # model used to answer 58.8 B/cycle. The board sustains 45.6. The gap is
-    # not DDR: it is that `PARALLEL_KV = 1` retires ONE ROW PER CYCLE, so the
-    # engine's demand ceiling is `row_bytes` per cycle -- 13.0 GB/s at 52 B and
-    # 250 MHz -- and it reaches that ceiling less two measured overheads.
-    # `plan.MD`'s throughput table had the same error and was 1.15-1.25x
-    # optimistic because of it.
+    # Supply is not the same thing as the bound, and treating it as one was a
+    # real mistake here. `ddr_gbps` is 14.708 and the interface ceiling is
+    # 64 B/cycle, so this model used to answer 58.8 B/cycle. The board sustains
+    # 45.6. The gap is not DDR. It is that `PARALLEL_KV = 1` retires one row per
+    # cycle, so the engine's demand ceiling is `row_bytes` per cycle -- 13.0
+    # GB/s at 52 B and 250 MHz -- and it reaches that ceiling less two measured
+    # overheads. `plan.MD`'s throughput table had the same error in it and was
+    # 1.15-1.25x optimistic as a result.
     #
     # Both numbers below are fitted to six contexts measured on hardware, ctx
     # 65 through 32,769 (`results/step14_dma_f250.log`,
@@ -401,10 +414,10 @@ class CacheConfig:
         return self.ddr_gbps * 1e9 / (clock_mhz * 1e6)
 
     def engine_bytes_per_cycle(self, row_bytes: int) -> float:
-        """What the DATAPATH can eat: one row per cycle per parallel scan.
+        """What the datapath can consume: one row per cycle per parallel scan.
 
-        The term the model was missing. No amount of DDR makes a scan faster
-        than the rate `score_lane` retires rows at.
+        This is the term the model used to be missing. No amount of DDR makes a
+        scan go faster than the rate `score_lane` retires rows at.
         """
         return row_bytes * self.lanes * self.parallel_kv
 
@@ -425,11 +438,11 @@ class CacheConfig:
         """Cycles for one decode step's scan: `n_groups` scans of `tokens` rows.
 
         `n_groups * fill + rows * (1 + overhead + starve)`. The overhead term
-        is EMPIRICAL and unexplained -- 0.129 cycles a row that is not starving
-        and is not the one-row-per-cycle floor. It is 11% of the scan at long
-        context and therefore the largest single efficiency item left in this
-        design; naming it as measured-but-not-understood is more useful than a
-        confident story about bursts.
+        is measured and we do not know what causes it: 0.129 cycles a row that
+        is not starving and is not the one-row-per-cycle floor. It is 11% of the
+        scan at long context, which makes it the largest single efficiency item
+        left in this design. Calling it measured-but-not-understood is more
+        useful than a confident story about bursts.
         """
         import math
         rows = n_groups * tokens
@@ -445,7 +458,7 @@ class MemoryConfig:
     port_bits: int = 256
     read_latency: int = 100     # cycles from request accepted to first beat
     write_latency: int = 8
-    beat_gap: int = 0           # idle cycles BETWEEN beats once streaming
+    beat_gap: int = 0           # idle cycles between beats once streaming
     weight_dtype_bytes: int = 2
 
     @property
@@ -476,7 +489,7 @@ class HardwareConfig:
     cache: CacheConfig = field(default_factory=CacheConfig)
     clock_mhz: float = 100.0
 
-    # Units the trace names that cost the PL nothing, and WHY -- an empty set
+    # Units the trace names that cost the PL nothing, and why -- an empty set
     # here would make every one of them a silent zero again.
     #
     #   rope   RoPE is applied on the host, before the wire. The seam is
@@ -509,7 +522,7 @@ class HardwareConfig:
 
     @classmethod
     def zcu104(cls, model: "ModelConfig", **kw) -> "HardwareConfig":
-        """The board this is being built for, with its MEASURED numbers.
+        """The board this is being built for, with its measured numbers.
 
         Two things are pinned here rather than left to defaults, because
         getting either wrong makes the report quietly optimistic:
@@ -520,7 +533,7 @@ class HardwareConfig:
 
         `memory.port_bits = 512`. The cache stream is four dedicated 128-bit
         AXI-HP masters, so the burst model and the bandwidth model must see the
-        SAME interface -- 4 x 128 b = 64 B/cycle. Leaving `MemoryConfig` at its
+        Same interface -- 4 x 128 b = 64 B/cycle. Leaving `MemoryConfig` at its
         generic 256-bit default would have the burst model charging for a
         narrower port than the one the measurement was taken on, and it would
         show up as a burst bound where the truth is a DRAM bound.

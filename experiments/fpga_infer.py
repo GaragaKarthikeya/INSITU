@@ -1,10 +1,10 @@
-"""Llama 3.2 1B with ALL SIXTEEN layers' attention on the ZCU104. No prefill.
+"""Llama 3.2 1B with all sixteen layers' attention on the ZCU104. No prefill.
 
     python -m kernel.experiments.fpga_infer --eth enp4s0 --tokens 24
     python -m kernel.experiments.fpga_infer --jtag --tokens 8
     python -m kernel.experiments.fpga_infer --cpu-only          # the control
 
-THERE IS NO PREFILL STAGE, AND THAT IS THE POINT
+There is no prefill stage, and that is the point
 ------------------------------------------------
 The prompt is not run as a batch. Its tokens go through the same one-at-a-time
 decode path a generated token takes, so every row of every one of the sixteen
@@ -16,13 +16,19 @@ That also makes the throughput figure a measurement rather than an
 extrapolation: the earlier one-layer runs reported "x16" for a layer count
 nothing had executed.
 
-WHAT IS MEASURED
+What is measured
 ----------------
 Per step, from the board's own counters: device microseconds, scan cycles,
 starve cycles, clips, accumulator overflows, and whether any channel escaped
-the 24-bit seam. Plus an exactness check against the numpy kernel, which is
-free because `collect()` has to run anyway to produce the bytes the board is
-sent.
+the 24-bit seam. Plus, with `--verify` (the default), an exactness check
+against the numpy kernel.
+
+That check is not free. `collect()` has to run to produce the bytes the board
+is sent, but only its ingress half -- the projections, RoPE and the rotation,
+all O(1) in context. The numpy attention underneath it is O(context) and
+exists only to be compared against: at ctx 4,096 it is 675 ms a layer-step
+against 9 ms for the ingress. `--no-verify` stops the kernel at the seam and
+skips it, which is where a long run gets its wall clock back.
 """
 
 from __future__ import annotations
@@ -81,7 +87,10 @@ def main(argv=None) -> int:
     ap.add_argument("--trace", action="store_true",
                     help="print every board round trip, layer by layer")
     ap.add_argument("--no-verify", action="store_true",
-                    help="skip the per-step comparison against numpy")
+                    help="skip the per-step comparison against numpy. The "
+                         "check is O(context) numpy and dominates the wall "
+                         "clock of a long run; the ingress the board is sent "
+                         "is unchanged, byte for byte.")
     ap.add_argument("--device", default="auto",
                     help="cuda | cpu | auto. The 15/16 of the model that is "
                          "not attention is pure GPU work.")
@@ -125,7 +134,7 @@ def main(argv=None) -> int:
               f"{fpga.layer_stride} B each, {fpga.bytes_used / 1e6:.1f} MB of DDR "
               f"from {CACHE_BASE:#x}")
 
-    # -- the prompt, ONE TOKEN AT A TIME -----------------------------------
+    # -- the prompt, one token AT A time -----------------------------------
     print(f"feeding {len(ids)} prompt tokens through the pipeline "
           f"(no prefill; the hardware writes every row)")
     past = None
