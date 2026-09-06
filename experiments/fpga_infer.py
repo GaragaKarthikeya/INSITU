@@ -44,6 +44,12 @@ CACHE_BASE = 0x10000000
 def open_client(a):
     if a.cpu_only:
         return None
+    if getattr(a, "udp", None):
+        from kernel.host.attn_client import UdpClient
+        print(f"transport: UDP to {a.udp}:7001 (lwIP on the board)")
+        c = UdpClient(a.udp, timeout=a.timeout)
+        print(f"  ping: status {c.ping()['status']}")
+        return c
     if a.eth:
         from kernel.host.attn_client import RawEthClient
         mac = bytes(int(b, 16) for b in a.mac.split(":"))
@@ -62,6 +68,8 @@ def main(argv=None) -> int:
     ap.add_argument("--prompt", default=PROMPT)
     ap.add_argument("--model", default=MODEL)
     ap.add_argument("--layers", default="", help="default: every layer")
+    ap.add_argument("--udp", metavar="IP", nargs="?", const="192.168.10.2",
+                    help="UDP to the board's lwIP server (default 192.168.10.2)")
     ap.add_argument("--eth", metavar="IFACE")
     ap.add_argument("--mac", default="02:00:5a:77:e0:01")
     ap.add_argument("--jtag", action="store_true")

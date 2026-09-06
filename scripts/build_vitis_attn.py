@@ -50,6 +50,36 @@ client.set_workspace(WS)
 print(f"### creating platform from {XSA}")
 plat = client.create_platform_component(
     name=PLAT, hw_design=XSA, os="standalone", cpu=CPU, domain_name=DOMAIN)
+
+# lwIP, because hand-rolling a GEM driver did not work.
+#
+# Five real bugs in a polled driver of my own -- descriptor cache maintenance,
+# RXBUF_NEW never cleared, four descriptors to a cache line, a ring array a
+# quarter of its ring, a frame buffer sized for the old MTU -- and a sixth that
+# was never found: the receiver dies after a varying number of steps. Xilinx
+# ships a maintained port for exactly this controller (`xemacpsif_dma.c`,
+# `xemacpsif_physpeed.c`) and it handles all of that.
+#
+# It also removes the custom fragmentation layer entirely: UDP over IP will
+# carry a 9 KB datagram and reassemble it, so the protocol stops caring about
+# the MTU.
+dom = plat.get_domain(name=DOMAIN)
+try:
+    dom.set_lib(lib_name="lwip220")
+    print("### lwip220 added to the domain")
+except Exception as e:                                    # noqa: BLE001
+    print(f"### could not add lwip220: {e}")
+    raise
+
+# The raw API, no sockets and no OS underneath it.
+for k, v in (("lwip220_api_mode", "RAW_API"),
+             ("lwip220_dhcp_does_arp_check", "false"),
+             ("lwip220_ipv6_enable", "false")):
+    try:
+        dom.set_lib_param(lib_name="lwip220", param_name=k, value=v)
+    except Exception as e:                                # noqa: BLE001
+        print(f"###   (lwip param {k} not set: {e})")
+
 plat.build()
 xpfm = client.find_platform_in_repos(PLAT)
 print(f"### platform: {xpfm}")
@@ -59,7 +89,8 @@ client.create_app_component(name=APP, platform=xpfm, domain=DOMAIN)
 app = client.get_component(name=APP)
 app.import_files(from_loc=os.path.join(ROOT, "sw"),
                  files=["attn_main.c", "attn_vectors.c", "attn_vectors.h",
-                        "attn_server.h", "attn_eth.c", "attn_eth.h"])
+                        "attn_server.h", "attn_eth.c", "attn_eth.h",
+                        "attn_net.c", "attn_net.h"])
 # `attn_proto.h` lives in host/ because the x86 client shares it; the board
 # needs the same file rather than a copy that can drift.
 app.import_files(from_loc=os.path.join(ROOT, "host"), files=["attn_proto.h"])

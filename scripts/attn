@@ -27,14 +27,15 @@ VENV=/home/digital3/TurboQuant-Reproduction/.venv/bin/python
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PARENT=$(dirname "$ROOT")
 IFACE="${IFACE:-enp4s0}"
+BOARD_IP="${BOARD_IP:-192.168.10.2}"
 UART="${UART:-/dev/ttyUSB1}"
 LOG=/tmp/attn.log
 
 cmd="${1:-}"; shift || true
 case "$cmd" in
   probe) mod=kernel.host.eth_probe;         board=1; args=(--eth "$IFACE") ;;
-  infer) mod=kernel.experiments.fpga_infer; board=1; args=(--eth "$IFACE") ;;
-  ppl)   mod=kernel.experiments.fpga_ppl;   board=1; args=(--eth "$IFACE") ;;
+  infer) mod=kernel.experiments.fpga_infer; board=1; args=(--udp "$BOARD_IP") ;;
+  ppl)   mod=kernel.experiments.fpga_ppl;   board=1; args=(--udp "$BOARD_IP") ;;
   diff)  mod=kernel.experiments.cache_diff;  board=1; args=() ;;
   reset) mod=""; board=2; args=() ;;
   *) sed -n '2,8p' "$SELF"; exit 2 ;;
@@ -52,9 +53,6 @@ if [ "$board" = 0 ]; then exec "$VENV" -m "$mod" "$@"; fi
 if [ "$(id -u)" != 0 ]; then exec sudo -E "$SELF" "$cmd" "$@"; fi
 
 # Jumbo on this side too, or the kernel silently drops every frame we build.
-ip link set "$IFACE" mtu 9000 2>/dev/null || \
-    echo "### could not set $IFACE to MTU 9000 -- jumbo frames will be dropped"
-
 # -- the UART, always ---------------------------------------------------------
 : > "$LOG"
 "$ROOT/host/uart_cap.py" "$LOG" 3600 "$UART" >/dev/null 2>&1 &
@@ -75,12 +73,11 @@ bringup() {
 
 # A ping is the cheapest possible liveness test, and it is the same code path
 # every tool uses.
-"$VENV" - "$IFACE" <<'PYEOF' >/dev/null 2>&1
-import sys, socket
+"$VENV" - "$BOARD_IP" <<'PYEOF' >/dev/null 2>&1
+import sys
 sys.path.insert(0, "/home/digital3")
-from kernel.host.attn_client import RawEthClient
-c = RawEthClient(sys.argv[1], bytes.fromhex("0200 5a77 e001".replace(" ", "")),
-                 timeout=1.5)
+from kernel.host.attn_client import UdpClient
+c = UdpClient(sys.argv[1], timeout=1.5)
 sys.exit(0 if c.ping()["status"] == 0 else 1)
 PYEOF
 alive=$?

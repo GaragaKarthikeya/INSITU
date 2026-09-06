@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import socket
 import struct
+import time
 
 from . import attn_proto as P
 
@@ -106,6 +107,58 @@ class TcpClient(_Base):
                 raise RuntimeError(f"connection closed with {len(buf)} of {n} B")
             buf += chunk
         return buf
+
+
+class UdpClient(_Base):
+    """The board over UDP, with lwIP on the far end.
+
+    THE SIMPLEST OF THE THREE, AND THAT IS THE POINT.
+    `RawEthClient` fragments by hand because a 9 KB message does not fit an
+    Ethernet frame; `JtagClient` drives xsdb over pipes. Here the stack does
+    the fragmenting and reassembly, so this is a `sendto` and a `recvfrom`.
+    No root, no raw sockets, no MTU to match, and no descriptor ring on either
+    side that this project wrote.
+    """
+
+    def __init__(self, host: str = "192.168.10.2", port: int = P.PORT,
+                 timeout: float = 5.0):
+        self.peer = (host, port)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.settimeout(timeout)
+        # A 9 KB datagram is several IP fragments; the buffers need room for the
+        # reassembled whole, not for one fragment.
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1 << 20)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
+
+    def close(self):
+        self.sock.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        self.close()
+
+    def _exchange(self, req: bytes) -> tuple[dict, bytes]:
+        seq = struct.unpack_from("<I", req, P.REQ.size - 4)[0]
+        self.sock.sendto(req, self.peer)
+        deadline = time.time() + self.sock.gettimeout()
+        while True:
+            try:
+                data, _ = self.sock.recvfrom(65535)
+            except socket.timeout:
+                raise TimeoutError(
+                    f"no reply from {self.peer[0]}:{self.peer[1]}. Is the board "
+                    f"running the lwIP server (UART says 'NET SERVER READY')?"
+                ) from None
+            h, body = P.parse_response(data)
+            # A reply to an earlier request is indistinguishable from a wrong
+            # answer to this one unless the sequence number is checked.
+            if h["seq"] == seq:
+                return h, body
+            if time.time() > deadline:
+                raise TimeoutError(f"only saw replies to other requests, last "
+                                   f"seq {h['seq']}, wanted {seq}")
 
 
 class RawEthClient(_Base):

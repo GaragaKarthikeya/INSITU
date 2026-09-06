@@ -72,6 +72,7 @@
 #include "attn_vectors.h"
 #include "attn_server.h"
 #include "attn_eth.h"
+#include "attn_net.h"
 #include "attn_proto.h"
 
 /* Pinned by `scripts/create_bd_attn_ps.tcl`, exactly as the JTAG design pinned
@@ -854,6 +855,102 @@ static void serve_eth(void)
     }
 }
 
+/* --------------------------------------------------------------------------
+ * The protocol, with the wire handed to lwIP.
+ *
+ * One whole request in, one whole response out, and no fragment bookkeeping:
+ * UDP reassembled it. Everything below the parse is what `serve_eth` did.
+ * -------------------------------------------------------------------------- */
+static int on_request(void *ctx, const u8 *req, u32 req_len, u8 *out, u32 out_max)
+{
+    (void)ctx;
+    attn_req_hdr rq;
+    attn_resp_hdr rs;
+
+    if (req_len < sizeof(rq)) return 0;
+    memcpy(&rq, req, sizeof(rq));
+    memset(&rs, 0, sizeof(rs));
+    rs.magic = ATTN_MAGIC;
+    rs.seq = rq.seq;
+
+    if (rq.magic != ATTN_MAGIC)            rs.status = ATTN_EBADMAGIC;
+    else if (rq.version != ATTN_VERSION)   rs.status = ATTN_EBADVER;
+    else if (rq.cmd == ATTN_CMD_PING)      rs.status = ATTN_OK;
+    else if (rq.cmd == ATTN_CMD_LOAD) {
+        u64 base = ((u64)rq.cache_base_hi << 32) | rq.cache_base_lo;
+        if (req_len < sizeof(rq) + rq.payload) rs.status = ATTN_EBADLEN;
+        else {
+            memcpy((void *)(UINTPTR)base, req + sizeof(rq), rq.payload);
+            Xil_DCacheFlushRange((UINTPTR)base, rq.payload);
+            rs.status = ATTN_OK;
+        }
+    }
+    else if (rq.cmd != ATTN_CMD_STEP)      rs.status = ATTN_EBADCMD;
+    else if (rq.payload != ATTN_TOKEN_BYTES ||
+             req_len < sizeof(rq) + ATTN_TOKEN_BYTES)
+        rs.status = ATTN_EBADLEN;
+    else {
+        XTime t0, t1;
+        u32 st = 0, guard = 100000000, ok = 1;
+
+        memcpy(dma_tx, req + sizeof(rq), TOKEN_BYTES);
+        Xil_DCacheFlushRange((UINTPTR)dma_tx, TOKEN_BYTES);
+        Xil_DCacheFlushRange((UINTPTR)dma_rx, RESULT_BYTES);
+
+        XTime_GetTime(&t0);
+        wr(REG_MODE, 1);
+        wr(REG_NTOK,    rq.n_tokens);
+        wr(REG_BASE_LO, rq.cache_base_lo);
+        wr(REG_BASE_HI, rq.cache_base_hi);
+        wr(REG_STRIDE,  rq.head_stride);
+        wr(REG_SPAN,    rq.plane_span);
+
+        if (XAxiDma_SimpleTransfer(&dma, (UINTPTR)dma_rx, RESULT_BYTES,
+                                   XAXIDMA_DEVICE_TO_DMA) != XST_SUCCESS) ok = 0;
+        if (ok && XAxiDma_SimpleTransfer(&dma, (UINTPTR)dma_tx, TOKEN_BYTES,
+                                         XAXIDMA_DMA_TO_DEVICE) != XST_SUCCESS) ok = 0;
+        if (ok) {
+            wr(REG_CTRL, 1);
+            do { st = rd(REG_CTRL); } while (!(st & ST_DONE) && --guard);
+            while (ok && guard && (XAxiDma_Busy(&dma, XAXIDMA_DEVICE_TO_DMA) ||
+                                   XAxiDma_Busy(&dma, XAXIDMA_DMA_TO_DEVICE)) && --guard) { }
+            if (!guard) ok = 0;
+        }
+        XTime_GetTime(&t1);
+        Xil_DCacheInvalidateRange((UINTPTR)dma_rx, RESULT_BYTES);
+
+        rs.status = ok ? ((st & ST_RANGE) ? ATTN_ERANGE : ATTN_OK) : ATTN_EDMA;
+        rs.payload = ok ? ATTN_RESULT_BYTES : 0;
+        rs.dev_us = (u32)(((t1 - t0) * 1000000ULL) / COUNTS_PER_SECOND);
+        rs.scan_cycles = rd(REG_SCAN_CYC);
+        rs.busy_cycles = rd(REG_BUSY_CYC);
+        rs.starve_cycles = rd(REG_STARVE);
+        rs.clips = rd(REG_CLIPS);
+        rs.overflows = rd(REG_OVF);
+    }
+
+    u32 total = sizeof(rs) + rs.payload;
+    if (total > out_max) return 0;
+    memcpy(out, &rs, sizeof(rs));
+    if (rs.payload)
+        memcpy(out + sizeof(rs), dma_rx, rs.payload);
+    return (int)total;
+}
+
+static void serve_net(void)
+{
+    xil_printf("NET SERVER READY\r\n");
+    for (;;) {
+        attn_net_poll();
+        /* The JTAG mailbox stays served alongside, so a control run against a
+         * suspect network path is always possible. */
+        volatile u32 *mb = (volatile u32 *)MBX_BASE;
+        Xil_DCacheInvalidateRange((UINTPTR)mb, MBX_CTRL_BYTES);
+        if (mb[MBX_DOORBELL] == MBX_REQ_STEP)
+            serve_one_mailbox();
+    }
+}
+
 int main(void)
 {
     int fails = 0;
@@ -936,10 +1033,19 @@ int main(void)
      * network is still a board that can do inference, just slowly, and falling
      * back is better than a session that ends at a dead PHY. */
     if (dma_ok) {
-        if (attn_eth_init() == 0)
-            serve_eth();
+        /* lwIP first: it owns the descriptors, the cache maintenance, the
+         * status bits and the PHY, none of which this project should be
+         * writing. The JTAG mailbox is the fallback, and it is served from
+         * inside the network loop as well. */
+        {
+            volatile u32 *mb = (volatile u32 *)MBX_BASE;
+            for (unsigned i = 0; i < MBX_CTRL_BYTES / 4; i++) mb[i] = 0;
+            Xil_DCacheFlushRange((UINTPTR)mb, MBX_CTRL_BYTES);
+        }
+        if (attn_net_init(on_request, 0) == 0)
+            serve_net();
         else {
-            xil_printf("ETH unavailable; falling back to the JTAG mailbox\r\n");
+            xil_printf("NET unavailable; falling back to the JTAG mailbox\r\n");
             serve();
         }
     }

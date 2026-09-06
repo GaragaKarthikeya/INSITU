@@ -60,6 +60,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--tokens", type=int, default=256)
     ap.add_argument("--model", default=MODEL)
+    ap.add_argument("--udp", metavar="IP", nargs="?", const="192.168.10.2")
     ap.add_argument("--eth", metavar="IFACE")
     ap.add_argument("--mac", default="02:00:5a:77:e0:01")
     ap.add_argument("--jtag", action="store_true")

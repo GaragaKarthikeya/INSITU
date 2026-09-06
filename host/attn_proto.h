@@ -98,14 +98,13 @@ typedef struct {
     uint32_t overflows;
 } attn_resp_hdr;
 
-/* THE FRAGMENT HEADER, in front of every Ethernet frame's slice of a message.
- * 9,216 bytes of token does not fit a 1,500-byte frame, so a message arrives
- * as a run of frames and is reassembled BY OFFSET rather than by arrival
- * order. `host/attn_client.py::RawEthClient` packs this as "<IHH".
+/* THE FRAGMENT HEADER IS GONE, and its absence is the point.
  *
- * `seq` is repeated in every fragment on purpose: it is what lets a straggler
- * from an abandoned message be dropped instead of being spliced into the
- * current one. */
+ * A request is 9,252 bytes and a reply 6,188, neither of which fits a frame,
+ * so the raw-Ethernet transport carried `{seq, frag, nfrag}` and reassembled by
+ * offset. UDP over IP does that inside the stack. What is left below is kept
+ * only because `RawEthClient` still exists as a fallback; the UDP path never
+ * looks at it. */
 typedef struct {
     uint32_t seq;
     uint16_t frag;
