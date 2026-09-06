@@ -1548,6 +1548,62 @@ Not done:
   is what the exit criterion's tok/s comes from, so **step 14 is not closed and
   no end-to-end throughput is claimed yet.**
 
+### IT RUNS: every layer, live, on real text
+
+`results/step14_all_layers_jtag.log`. Llama 3.2 1B generating text with **all
+sixteen layers' attention computed on the ZCU104**, one token at a time, no
+prefill anywhere, every row of every cache written by the block's own AXI write
+master.
+
+```
+decode steps on the FPGA: 208 (16 layers x 13 tokens)
+  agreement with the host: 208 exact, 0 different
+  clips 0, overflows 0, steps with a range/saturation flag 0
+  device time: 22 us/step, 358 us/token across all 16 layers
+```
+
+> The history of computing hardware spans centuries, from mechanical calculators to
+
+**208 of 208 exact.** The board's numbers are what the model consumed --
+`to_float` then `W_o'` then the residual -- so those words were produced from
+them. Nothing was preloaded: the first token scanned one row it had just
+written, and the last scanned thirteen, all its own.
+
+**358 µs a token across sixteen layers, which is 2,796 tok/s if the transport
+were free.** It is not free here: this ran over the JTAG mailbox at 999 ms a
+step, so **0.0% of the wall clock is the block**. The context is 1..13 tokens,
+so the scan is almost entirely per-group fill and starving is 7.4% -- both
+figures are about a cold cache, not about the design, and the ctx-8k and ctx-32k
+numbers above are the ones that mean anything.
+
+**And it found the bug that hid behind a day of transport failures.**
+`QuantConfig()` defaults to `key_bits=3`; the bitstream is synthesised with
+`KEY_BITS=4`. `graft()` took the default, so the host computed 3-bit key codes
+-- a 44-byte row -- for hardware that decodes 4-bit ones and writes 52. Every
+symptom followed:
+
+- **token 1 always agreed**, because at T = 1 the softmax is over one element,
+  `p/l = 1`, and the output is the decoded VALUE alone -- the stored key cannot
+  affect it;
+- **values and norms always agreed**, because both sides use 2-bit values;
+- **the failures were identical over JTAG and over Ethernet**, because it was
+  never the transport;
+- **the self-test never saw it**, because `board_vectors` passes `key_bits=4`
+  explicitly and only the torch adapter took the default.
+
+It was chased as a hardware fault through four real transport bugs -- descriptor
+cache maintenance, `RXBUF_NEW` on re-arm, four descriptors to a cache line, an
+oversized `CMD_LOAD` -- none of which was it. What found it was dumping the
+board's cache rows over JTAG and diffing them against `kernel.cache.buf`:
+44 bytes against 52, on the first line. `FpgaLayers` now asserts the row width
+against the bitstream, so the mismatch is a named error before the first token.
+
+**Still open: the Ethernet server is unreliable.** It brings the link up,
+negotiates 1 Gb/s, serves the ping, sixteen `CMD_LOAD`s and about four steps at
+1.3 ms each -- and then stops replying. The JTAG mailbox is 750x slower and
+completely dependable, which is why the run above used it. That is step 14's
+remaining work and it is a transport problem, not a datapath one.
+
 ### On the board: 32 steps, four contexts, both paths, all bit-exact
 
 `results/step14_dma_f250.log`. Every case runs twice — once through the
