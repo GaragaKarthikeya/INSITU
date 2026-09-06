@@ -1,23 +1,23 @@
 // Self-checking testbench for attn_ctrl.sv: the block as JTAG will drive it.
 //
-// THE POINT IS THE PROTOCOL, NOT THE ARITHMETIC
+// The point is the protocol, not the arithmetic
 // ---------------------------------------------
 // `tb_attn` already proved the datapath against `out.online.hex`. This bench
-// proves the SHIM: that a host which writes 2,304 words into the input window,
+// proves the shim: that a host which writes 2,304 words into the input window,
 // pokes one control register, polls a status bit and reads 1,536 words back
 // gets those same numbers. Every access is a 32-bit AXI-Lite transaction at a
 // real address, because that is what `create_hw_axi_txn` issues -- and it is
 // the one thing that cannot be checked on the board without a working
 // bitstream to check it with.
 //
-// WHAT WOULD OTHERWISE BE FOUND AT 1 ms PER TRANSACTION
+// What would OTHERWISE BE FOUND AT 1 ms per TRANSACTION
 // -----------------------------------------------------
 // Word order inside a 512-bit beat, the buffer base addresses, a status bit
 // that never latches, a `done` pulse missed between two polls, and reads that
 // wedge because `rvalid` came out of reset as X. Each of those is a morning on
 // hardware and a second here.
 //
-// The input buffer is READ BACK before the run, because a host that cannot
+// The input buffer is read back before the run, because a host that cannot
 // trust what it loaded cannot interpret what it gets out.
 `timescale 1ns/1ps
 module tb_attn_ctrl;
@@ -407,7 +407,7 @@ module tb_attn_ctrl;
 
         // -- MODE 1: the same step, through the DMA stream ---------------------
         //
-        // THE TWO PATHS MUST AGREE, AND THAT IS THE WHOLE TEST. The buffers
+        // The two PATHS must AGREE, and that IS the whole TEST. The buffers
         // and the stream reach the same core over the same four read masters;
         // if the fast path is right, it returns the 2,048 numbers the slow
         // path just returned, which are the numbers `out.online.hex` holds.
@@ -420,7 +420,7 @@ module tb_attn_ctrl;
 
         reload_image(1);
         stream_result = '0;
-        // Armed BEFORE the start write, deliberately: the beats offered while
+        // Armed before the start write, deliberately: the beats offered while
         // the core is still idle are what `s_axis_tready`'s `busy` gate exists
         // to refuse. If that gate regresses, this hangs.
         stream_run = 1;
@@ -467,11 +467,11 @@ module tb_attn_ctrl;
     // a short or duplicated stream rather than passing by luck on a bench that
     // never stalls.
     //
-    // CLOCKED, NOT A TASK. A hand-rolled task that sets `tvalid` and then
+    // CLOCKED, not A TASK. A hand-rolled task that sets `tvalid` and then
     // looks at `tready` has to decide which edge it is reading, and the first
     // version of this counted a transfer that had not happened -- it reported
     // all 144 beats delivered while the core had seen fewer, which surfaced as
-    // the LAST group hanging with 84 of 96 output beats emitted. Driving from
+    // the last group hanging with 84 of 96 output beats emitted. Driving from
     // the clock and counting `tvalid && tready` at the same edge the core does
     // removes the question.
     logic stream_run = 0;

@@ -28,8 +28,8 @@ rotate → quantize → cache → score → online softmax → accumulate.
 **`R⁻¹` stays folded into `W_o` offline** (`ops/output.py:48`), as the package
 already does by default. No inverse rotation exists anywhere in the system. This
 deletes a hardware block, deletes a fixed-point truncation, and — the point that
-matters most — **puts the seam on a value the unmodified package already
-computes**: the FPGA returns exactly `merge_heads(out)` in Q16 from
+matters most — puts the seam on a value the unmodified package already
+computes: the FPGA returns exactly `merge_heads(out)` in Q16 from
 `kernel.py:236`, just before `to_float` and the `W_o'` projection. Golden vectors
 come from running `kernel/` as it stands, with no numeric changes that could
 disturb the `cosine 1.000000` control in `single_layer.py`.
@@ -43,7 +43,7 @@ nowhere else. There is no URAM cache build. This is a deliberate narrowing: at
 long context DRAM bandwidth is the wall, and a design that hides the cache in
 URAM would be measuring the wrong thing.
 
-**Deliverable: architecture spec + SystemVerilog RTL, in the `kernel/` repo.**
+Deliverable: architecture spec + SystemVerilog RTL, in the `kernel/` repo.
 
 ---
 
@@ -97,7 +97,7 @@ re-splitting to Q7.17 is a real numerics change (`qk_frac` feeds `score_shift`
 and `acc_shift`, `config.py:225`) for a gain that is near zero next to 4-bit key
 quantisation.
 
-**Step 4 measured this on 20× the text, and it moved.** 8,188 tokens of
+Step 4 measured this on 20× the text, and it moved. 8,188 tokens of
 WikiText-2, all 16 layers, 402,653,184 elements through the cast: **max abs
 24.957, saturation rate 0**. The peak is 19% above the 400-token figure — which
 is what more text should do, and is exactly why the gate runs before the format
@@ -121,8 +121,8 @@ have it — the checkpoint's layer 0 carries only `input_layernorm`,
 
 **The `1/√d` scale stays on q, on the host.** `(q·k)/√d` and `(q/√d)·k` are the
 same number, but scaling q is 64 multiplies per head per token while scaling the
-score is one per cached token. More importantly, **the PL score path is
-deliberately multiplier-free**; a multiply inside that loop would destroy the
+score is one per cached token. More importantly, the PL score path is
+deliberately multiplier-free; a multiply inside that loop would destroy the
 property the design is built around. `1/√64 = 1/8` is an exact shift by 3. It is
 applied *after* the norm (`kernel.py:172`) because RMSNorm erases input scale.
 
@@ -152,7 +152,7 @@ headroom.
 | 2 | 26.0 GB/s | starves, engine idle ~50% |
 | 4 | 52.0 GB/s | starves badly |
 
-**Anything above 1 is dead silicon on a DDR-only build.** The balance point is
+Anything above 1 is dead silicon on a DDR-only build. The balance point is
 1.03 lanes at realistic DDR throughput, 1.48 at optimistic peak.
 
 **Four AXI-HP ports are required.** A 128-bit HP port moves 16 B per PL clock,
@@ -181,7 +181,7 @@ group 1: [ k₁ ][ v₁ ][ q₄ ][ q₅ ][ q₆ ][ q₇ ]   1,152 B
 group 7: [ k₇ ][ v₇ ][ q₂₈…q₃₁ ]         total  9,216 B
 ```
 
-**k and v must precede the q's inside a group — causality, not preference.** The
+k and v must precede the q's inside a group — causality, not preference. The
 current token attends to itself, so its own key and value must be in the cache
 before any score is computed. `cache.append_rotated` at `kernel.py:187` runs
 *before* attend, which then selects `slice(0, ctx)` including the new token.
@@ -196,7 +196,7 @@ width:
 | **v** | 128 b codes + 16 b norm = **18 B** | 10.7× shrink |
 | **q** | rotated, held raw at 24 b | unchanged until needed |
 
-**Accept all 8 groups immediately; do not backpressure.** k and v go straight to
+Accept all 8 groups immediately; do not backpressure. k and v go straight to
 their own DDR write buffers — group *h+1* writes head *h+1*'s region while group
 *h* reads head *h*'s, so they never collide. The 32 rotated q vectors are held
 **raw at 6 KiB**, and each group's product table is built **just-in-time**
@@ -227,7 +227,7 @@ lanes cost ~12 DSP and ~12k LUT against 1,728 DSP and 230k LUT — which is why
 ### Dataflow: three phases per token
 
 ```
- PHASE A — once per token                      ~150 cycles
+ phase A — once per token                      ~150 cycles
  ┌────────────────────────────────────────────────────────┐
  │ 48 vectors in (32 q, 8 k, 8 v), 64 values each         │
  │   rotate  : FWHT-64  ─ 1 vector/cycle ─ 48 cyc         │
@@ -236,17 +236,17 @@ lanes cost ~12 DSP and ~12k LUT against 1,728 DSP and 230k LUT — which is why
  │   hold    : 32 rotated q raw, 6 KiB                    │
  └────────────────────────────────────────────────────────┘
                             ↓
- PHASE B — once per CACHED TOKEN               8 × T cycles   (>99%)
+ phase B — once per CACHED TOKEN               8 × T cycles   (>99%)
  ┌────────────────────────────────────────────────────────┐
- │ for kv_head in 0..7:              ← 8, SEQUENTIAL      │
+ │ for kv_head in 0..7:              ← 8, sequential      │
  │   build this group's product tables (64 cyc, hidden)   │
- │   for t in 0..T-1:                ← T, SEQUENTIAL      │
+ │   for t in 0..T-1:                ← T, sequential      │
  │     stream one 52 B row from DDR                       │
- │     for j in the 4 query heads:   ← 4, PARALLEL        │
+ │     for j in the 4 query heads:   ← 4, parallel        │
  │       score → softmax → accumulate                     │
  └────────────────────────────────────────────────────────┘
                             ↓
- PHASE C — once per token                      ~64 cycles
+ phase C — once per token                      ~64 cycles
  ┌────────────────────────────────────────────────────────┐
  │ 32 reciprocal divides, acc × recip >> 16, egress       │
  └────────────────────────────────────────────────────────┘
@@ -269,7 +269,7 @@ nothing but Phase B.**
 ```
  S0   stream 52 B row for token t from DDR
  S1   split → 64 k-codes (4b) | 64 v-codes (2b) | k_norm | v_norm
- S2   64 PARALLEL table reads:  prod[ch] = qtab[ch][ kcode[ch] ]      ← no multiplier
+ S2   64 parallel table reads:  prod[ch] = qtab[ch][ kcode[ch] ]      ← no multiplier
  S3 ┐
  ..  │ adder tree, 64 → 1, six levels                                  ← no multiplier
  S8 ┘
@@ -277,7 +277,7 @@ nothing but Phase B.**
  S10  >> 24, clamp                    → score s_t  in Q16
  S11  compare vs m ; exp LUT          → p          in Q15   ─┐
  S12  l += p ;  w = v_norm × p              1 DSP            │ loop-carried,
- S13  64 PARALLEL: acc[ch] += (w × c_v[vcode[ch]]) >> 23     │ 3 deep
+ S13  64 parallel: acc[ch] += (w × c_v[vcode[ch]]) >> 23     │ 3 deep
                             └─ only 4 possible c_v → a mux, ─┘
                                not 64 multipliers
 ```
@@ -286,8 +286,8 @@ Throughput 1 result/cycle, latency ~13. Four lanes share one row.
 
 ### The softmax recurrence, and why it is nearly free
 
-`m`, `l` and `acc` are loop-carried. But **`m` only changes when a new maximum
-appears, and new maxima are logarithmically rare** — expected count in T samples
+`m`, `l` and `acc` are loop-carried. But `m` only changes when a new maximum
+appears, and new maxima are logarithmically rare — expected count in T samples
 is the harmonic number, ≈ ln T + 0.577:
 
 | ctx | expected rescales | cost (8 DSP × 8 cyc) | % of scan |
@@ -322,7 +322,7 @@ Phase A of group *h+1* overlaps Phase B of group *h*, on nearly disjoint hardwar
 | DDR **read** stream, score lane | | ✔ |
 | **exp LUT, softmax, accumulator** | | ✔ |
 
-**The softmax is never touched by an arriving group**, and only one group is ever
+The softmax is never touched by an arriving group, and only one group is ever
 in Phase B. No cross-group contention.
 
 Two real contention points:
@@ -398,15 +398,15 @@ Requirements:
 | `finalize.sv` | reciprocal divide, `acc × recip >> 16` |
 | `attn_top.sv` | control FSM, AXI4-Stream wrapper, `sa_top.sv` pattern |
 
-**`attn_top.sv` must stream through, not store and forward.** Begin on group 0 as
+`attn_top.sv` must stream through, not store and forward. Begin on group 0 as
 soon as it lands; return each group's 4 output heads as they finalize.
 
 ### Softmax must be the online form
 
 `ops/attention.py:283` is the hardware order; `forward` uses two-pass. The README
 is explicit that the two are **not** bit-identical and must not be asserted to be
-— the online form truncates the accumulator once per rescale. **The testbench
-golden model is `attend_online`, not `attend_two_pass`.** Getting this backwards
+— the online form truncates the accumulator once per rescale. The testbench
+golden model is `attend_online`, not `attend_two_pass`. Getting this backwards
 produces a testbench that can never pass.
 
 ---
@@ -421,7 +421,7 @@ Two rules that hold throughout:
 - **No numeric path changes.** `python -m kernel.tests.run` and the
   `cosine 1.000000` control in `single_layer.py` must pass, unchanged, at every
   step. If they move, cost modelling has leaked into the datapath.
-- **Every RTL step ends with out-of-context synthesis.** Resource and timing
+- Every RTL step ends with out-of-context synthesis. Resource and timing
   numbers in this plan are estimates until `run_synth.sh` says otherwise.
 
 ### Phase 0 — kill the riskiest assumption first
@@ -442,13 +442,13 @@ outstanding 1..32.
 **Gate:** if sustained < 13.0 GB/s, revise `PARALLEL_KV`, the clock, or the
 KV format **before proceeding**. Record the measured number in this document.
 
-**Status: MEASURED ON HARDWARE. GATE PASSES.**
+**Status: Measured ON HARDWARE. GATE passes.**
 
 Implementation closed at 250 MHz (WNS +0.575 ns, WHS +0.017 ns, 0 errors).
 Two independent runs across a power cycle; run 2 repeats every configuration
 five times and reports the median. Logs in `results/`.
 
-**Measured: 14,708 MB/s at 4 ports, burst 64, outstanding 2.**
+Measured: 14,708 MB/s at 4 ports, burst 64, outstanding 2.
 Spread over 5 repeats: 14,697–14,734 (**0.25%**). Run 1 independently saw
 14,678. That is **77% of the 19.2 GB/s DDR4-2400 peak** and 92% of the 4-port
 interface ceiling.
@@ -484,7 +484,7 @@ different DRAM rows and thrashes activate/precharge, while a shallow queue lets
 each stream keep its row open. The rising variance is the fingerprint — thrashing
 is timing-dependent in a way that clean sequential access is not.
 
-So size `kv_store_ddr` at **burst 64, outstanding 2 per port, and no deeper**.
+So size `kv_store_ddr` at burst 64, outstanding 2 per port, and no deeper.
 The instinct to build a deep prefetch queue is actively wrong here, and only a
 measurement could have said so.
 
@@ -495,7 +495,7 @@ repeats showed the opposite of what I expected. The repeat-and-take-the-median
 change was still the right move: it is what turned a number I did not trust into
 one I do.
 
-**Ports: 4 is correct, and for a reason that does not depend on the clock.**
+Ports: 4 is correct, and for a reason that does not depend on the clock.
 One 128-bit port carries 16 B/cycle, so the count is `ceil(row_bytes / 16)`:
 4b/2b's 52 B needs 4. (3 ports peaked at 11,797 MB/s against their 12,000
 ceiling — interface-limited, and short of the 13.0 needed.)
@@ -527,11 +527,11 @@ dequantises). Anything else raises.
 
 Two modelling decisions worth stating, because both change the headline:
 
-- **SCORE and ACCUMULATE are the max, not the sum.** They are the same
+- SCORE and ACCUMULATE are the max, not the sum. They are the same
   (query, cached token) pairs one pipeline stage apart. Summing them would
   double the dominant term of a long-context step, for the same reason weight
   bytes are not charged to both the arrays and the memory model.
-- **The cache has two bounds and both are reported.** `MemoryModel` charges
+- The cache has two bounds and both are reported. `MemoryModel` charges
   bursts and latency; `CacheBandwidth` charges the measured 14.708 GB/s.
   `memory_cycles` is the max and `memory_bound_by` says which. They cross over:
   at ctx 8 it is bursts, at ctx 4096 it is bandwidth.
@@ -582,7 +582,7 @@ plausible values.
 loss. If it fires, the wire format changes and steps 5–11 shift with it — which
 is why this comes before any RTL.
 
-**Status: MEASURED. GATE PASSES.**
+**Status: Measured. GATE passes.**
 
 `wikitext_ppl.py` did not report these figures; it now aggregates
 `StepReport.conversion` over every grafted layer and carries `sat` and `max|x|`
@@ -664,8 +664,8 @@ stages.
 blocks, so `./scripts/run_synth.sh all` closes every block the datapath has.
 
 `hw/vectors.py` gained the encoder stimulus: **560 vectors** — the 16 real
-rotated k/v tensors, 512 random, and **32 constructed to sit exactly on a
-decision boundary**. The tie vectors are the point. `_encode_plane` compares
+rotated k/v tensors, 512 random, and 32 constructed to sit exactly on a
+decision boundary. The tie vectors are the point. `_encode_plane` compares
 with `>`, so a channel on a boundary belongs to the bin *below* it, and random
 stimulus hits `x << 8 == norm * boundary` about once in 2³². They are built by
 setting the last lane to the value that lands on a boundary and iterating to a
@@ -699,7 +699,7 @@ nothing is waiting on, and take area from the score lanes, which are the thing
 actually starved. The square root is one pipelined stage per output bit, so the
 folding costs area, not throughput.
 
-**Both first attempts missed 250 MHz, and synthesis is what said so.**
+Both first attempts missed 250 MHz, and synthesis is what said so.
 
 | | first attempt | fixed |
 |---|---|---|
@@ -720,7 +720,7 @@ Out-of-context, `xczu7ev-ffvc1156-2-e`, 250 MHz:
 The 16 DSPs are 8 squarers (24×24 takes two each); the 14 are the 15 threshold
 multiplies, one of which is against a zero boundary and optimises away.
 
-**The cost model moved, and this is the correction.** `EncoderConfig` claimed
+The cost model moved, and this is the correction. `EncoderConfig` claimed
 one vector per cycle and an 8-cycle latency. The RTL retires one every **13**
 (`D/LANES + KEY_BITS + 1`, the encoder being the slower of the two) with **31**
 cycles of latency. So Phase A at ctx 4096 is **293 cycles, not 78** — 54 rotate
@@ -773,7 +773,7 @@ building into the bank being read, and a one-lane rotation of the channel index.
 `score_lane`: round-half-up instead of floor (1,017 failures), the norm reaching
 the multiply one stage early (1,204), and a perturbed value plane (2,083).
 
-**The fourth mutation is the interesting one, because it survived.** Reading the
+The fourth mutation is the interesting one, because it survived. Reading the
 norm as *unsigned* agreed with all 2,080 real scores. `_unpack_word`
 sign-extends, so the model multiplies by a signed 16-bit norm — but every norm
 `isqrt` produces here is far below 2^15, so the rule is unobservable on real
@@ -788,12 +788,12 @@ same delta it assigned `out_ready`, which raced the continuous assignment and
 made the bench and the DUT disagree about which rows were accepted; that showed
 up as isolated wrong scores in the stalled head only.
 
-**The product table is LUTRAM, not URAM, and synthesis is what said so.** The
+The product table is LUTRAM, not URAM, and synthesis is what said so. The
 budget table above assumed 320 Kb of URAM. It cannot be: `score_lane` gathers
 all 64 channels in the *same* cycle at 64 *different* addresses, so the table is
 64 independent memories, not one wide one. The first attempt declared them as a
-two-dimensional array and Vivado inferred **registers — 93,486 FF and zero
-LUTRAM for a single lane**, which is 374k FF across four and does not fit the
+two-dimensional array and Vivado inferred registers — 93,486 FF and zero
+LUTRAM for a single lane, which is 374k FF across four and does not fit the
 part. Rewritten as D one-dimensional arrays with a scalar write address and an
 asynchronous read, it infers `RAM32M16` and drops to 5,401 FF:
 
@@ -816,12 +816,12 @@ Out-of-context, `xczu7ev-ffvc1156-2-e`, 250 MHz:
 | `score_lane` (lane only) | **+1.702 ns** | 862 | 0 | 1,591 | **2** |
 | `score_lane` + its table | +1.702 ns | 6,387 | 1,664 | 7,011 | 18 |
 
-**Two DSPs in the inner loop, which is the claim this step exists to check.**
+Two DSPs in the inner loop, which is the claim this step exists to check.
 The 49x16 norm multiply is split at bit 25 into two DSP-sized products and a
 shifted add; synthesis absorbs both, along with the norm's pipeline register,
 into the DSP48s. The estimate of "~3 DSP and ~3k LUT per lane" was for the inner
-loop and holds at 2 DSP / 862 LUT; the **table build is 16 DSP and 3.5k LUT on
-top of it**, which the estimate did not carry. Four lanes are therefore 8 DSP of
+loop and holds at 2 DSP / 862 LUT; the table build is 16 DSP and 3.5k LUT on
+top of it, which the estimate did not carry. Four lanes are therefore 8 DSP of
 scoring and 64 DSP of table building — still 4% of the part, and still nothing
 next to the 1,728 a dense unit would need, but it is 9x the figure this document
 had.
@@ -846,7 +846,7 @@ new read-only observer on `attend_online` — the same `is not None` contract
 `AttentionKernel.on_stage` uses — so `hw/vectors.py` taps the running `m`, `l`
 and `acc` instead of reimplementing the recurrence in the vector generator.
 
-**Bit-exact against `attend_online` on every token, not on the answer.** Two
+Bit-exact against `attend_online` on every token, not on the answer. Two
 stimulus sets x 4 lanes x 65 cached tokens: `m`, `l`, the probability, the
 rescale factor and **all 64 accumulator channels** are compared after each
 token. 39 rescale events, matching the count the model recorded lane for lane.
@@ -862,7 +862,7 @@ a 256 x 16 b distributed ROM, a 20x17 multiply and a barrel shift. Measured
 BRAM36 budgeted. `check_exp_lut_flat_matches_two_step` already asserted the two
 agree; this is which one to build.
 
-**Two stimulus sets, because the real scores do not exercise the rescale.** At
+Two stimulus sets, because the real scores do not exercise the rescale. At
 ctx 64 the four lanes take 19 new maxima and the factor is exactly unity in 13
 of them, zero in the 4 first-token events, and something else **twice**.
 Consecutive maxima differ by a few LSBs of Q16, so `exp(-delta)` rounds to 1.0
@@ -875,14 +875,14 @@ rows — only the query is synthetic, and a query is exactly what the host is
 free to send. `check_the_real_scores_do_not_exercise_the_rescale` pins the gap
 so the extra set can be dropped if the golden data ever closes it.
 
-**`accum`'s drain guard needed its own driver.** A SCALE must not be applied
+**`accum`'s drain guard needed its own driver.** A scale must not be applied
 while add terms are still in flight, or it scales a partial accumulator and
 un-scaled terms land on top of it. But `softmax_online` drains its own pipe and
 spends three more cycles on the factor before issuing one, so `accum` never
 sees that case through this producer and the mutation removing the guard
 passed. The bench now captures lane 0's op stream and **replays it into a
 second `accum` at full rate**: the goldens are unchanged because the arithmetic
-does not depend on the timing, a SCALE lands directly behind an ADD, and the
+does not depend on the timing, a scale lands directly behind an ADD, and the
 mutation fails 68 checks.
 
 Also caught: `>=` for the new-maximum test (an infinite rescale loop — a
@@ -893,8 +893,8 @@ of the accumulator rescale, and two transposed value centroids.
 **`rescale_cycles` was 1. It is 11, measured.** `tb_softmax_accum` counts the
 bubbles directly — a score waiting in the input FIFO with no pop — over 39
 events: drain the 3-stage exp pipe, 3 cycles to compute the factor from it,
-issue the SCALE, wait while `accum` folds 64 channels through 8 multipliers.
-**The conclusion is untouched and that is worth stating plainly:** new maxima
+issue the scale, wait while `accum` folds 64 channels through 8 multipliers.
+The conclusion is untouched and that is worth stating plainly: new maxima
 are logarithmically rare, so at ctx 32,768 this is 11 events and 121 cycles
 against a 32,786-cycle scan — **0.37%**, against the 0.27% the 8-cycle estimate
 gave. `score_latency` goes 10 → 11 (8 measured in `score_lane`, 3 in the exp
@@ -941,7 +941,7 @@ heads, and `check_the_finalize_goldens_are_the_kernels_own_two_lines` asserts
 is the seam, so the block is checked against the value the FPGA returns and not
 against an intermediate.
 
-**44 rows bit-exact: 32 real heads and 12 constructed.** The constructed ones
+44 rows bit-exact: 32 real heads and 12 constructed. The constructed ones
 are the point. Every head ends the same length of scan, so every `l` is near
 `65 << 15` and every reciprocal lands between **1,008 and 1,012** — a four-value
 band, all of them 10-bit. A divider wrong above ten bits, or on a zero or a
@@ -972,7 +972,7 @@ differ is the one the truncation discards. It is written arithmetically anyway �
 that is what the model does, and the equivalence is a property of one parameter
 set, not of the operation.
 
-**Slow on purpose: 50 cycles, 19 when the divide is skipped.** 32 of restoring
+Slow on purpose: 50 cycles, 19 when the divide is skipped. 32 of restoring
 division plus 16 of folded multiply, once per head at the *end* of a T-cycle
 scan. Widening either buys back cycles nothing is waiting on and takes DSPs from
 the score lanes, which are the thing actually starved — the same argument that
@@ -1006,8 +1006,8 @@ score pipe never starved; row round-trip byte-exact against `quantize.pack`.
 **Status: DONE.** `hw/ddr_layout.py`, `rtl/kv_plane_rd.sv`, `rtl/kv_store_ddr.sv`,
 `rtl/kv_write.sv`, `tb/tb_kv_store.sv`, `tests/test_ddr_layout.py`.
 
-**THE FLAT ROW LAYOUT ABOVE CANNOT FEED FOUR PORTS, AND THAT IS THIS STEP'S
-FINDING.** This document specified the cache as packed 52-byte rows at a flat
+The FLAT ROW LAYOUT ABOVE cannot FEED FOUR PORTS, and that IS this step'S
+FINDING. This document specified the cache as packed 52-byte rows at a flat
 stride, on the reasoning that a sequential address pattern is what a prefetcher
 wants. It is — but a row is 52 B and one 128-bit HP port carries 16 B per cycle,
 so four ports must run *at once* and each needs its **own** sequential stream. A
@@ -1047,7 +1047,7 @@ of them at startup. That is 52 B/cycle = **13.0 GB/s at 250 MHz**, which is what
 `PARALLEL_KV = 1` was sized against. The eight-head scan is byte-exact against
 `cache_rows_h0..7.hex`, with and without random R stalls.
 
-**Two bench bugs that looked exactly like DUT bugs, and are worth recording.**
+Two bench bugs that looked exactly like DUT bugs, and are worth recording.
 The first slave model left `rvalid`/`rlast` asserted after a burst's last beat,
 so the master counted an RLAST every cycle and its in-flight counter underflowed
 to 213 — after which that port never issued another read and served stale FIFO
@@ -1118,7 +1118,7 @@ thing this level checks that ten block benches cannot. **4,170 cycles for
 520 rows** at ctx 64, with 44 starve cycles and all of them at the first scan's
 DDR round trip.
 
-**Token 64 is BLANKED in the image, and that is the point.** `ddr_image.hex`
+Token 64 is blanked in the image, and that is the point. `ddr_image.hex`
 holds all 65 tokens because the kernel had already appended this one when
 `collect` copied the cache. Left there, a DUT whose write path did nothing
 would still answer correctly — the current token attends to itself and its row
@@ -1127,14 +1127,14 @@ of every head, and the only way it returns is through `kv_write`. The necessity
 is asserted rather than assumed: with every write byte lane masked off, **all
 2,048 channels change**.
 
-**Back-pressure on both sides plus a stalling DDR is bit-identical.** The third
+Back-pressure on both sides plus a stalling DDR is bit-identical. The third
 run stalls ingress, stalls egress and stalls R at random, and the result must
 equal the clean run's exactly — 4,197 cycles against 4,170. A fourth run
 repeats the step on the same instance, because every counter and the ingress
 group counter have to come back to where they started or the second token of a
 real decode is wrong in a way no single-step bench can see.
 
-**FOUR BLOCKS NEEDED PIPELINING TO ROUTE, AND THEY ARE ALL THE SAME BUG.**
+Four blocks needed pipelining to route, and they are all the same bug.
 Every block met 250 MHz alone; `attn_top` first routed at **−0.550 ns**. The
 failing path was the same shape four times over: a step counter fanning out
 across a 64-word register file, through a wide mux, straight into a DSP.
@@ -1164,7 +1164,7 @@ plane readers' address adders. `grp` settles at the end of a group's egress and
 the base is not read until that group's scan starts hundreds of cycles later,
 so it is registered.
 
-**Two bench bugs, both of which looked exactly like a deadlocked DUT.**
+Two bench bugs, both of which looked exactly like a deadlocked DUT.
 `attn_ingress` clears its beat counter on `start`, so a beat pushed in beside
 that pulse is counted by the driver and dropped by the DUT — the step then
 waits forever for a vector one beat short. And the back-pressure pattern was
@@ -1205,9 +1205,9 @@ the exp LUT as a 252-LUT two-step ROM, which is what that block was written for.
 The budget over-estimated because it sized a flat 4,353-entry table; the block
 memories are simply unused and available for whatever the system build wants.
 
-**254 DSPs, against the ~12 the datapath argument claims.** Both numbers are
+254 DSPs, against the ~12 the datapath argument claims. Both numbers are
 right and the gap is worth stating: the "three DSPs in the inner loop" claim is
-about the loop that runs once per CACHED token, and it holds — the gathers and
+about the loop that runs once per cached token, and it holds — the gathers and
 the 4:1 mux have no multipliers in them. The 252 are the things that run once
 per *token* or once per *head*: building the product tables (16 per lane), the
 reciprocal fold (16), the rescale fold (17), the norms (16) and the encoders.
@@ -1230,8 +1230,8 @@ round trip, so no throughput claim.
 `scripts/create_bd_attn.tcl`, `scripts/build_attn_bit.tcl`,
 `scripts/jtag_ps_init.sh`, `scripts/jtag_attn.tcl`.
 
-**The block ran on the ZCU104 and returned all 2,048 channels bit-exact
-against `out.online.hex`** — the numpy kernel's own answer for the same step,
+The block ran on the ZCU104 and returned all 2,048 channels bit-exact
+against `out.online.hex` — the numpy kernel's own answer for the same step,
 which is the value the seam is defined by. Token 64's cache row reached DDR
 only through the block's own AXI write master: the image is loaded with that
 row zeroed, so a design that never wrote it would have scored a blank key
@@ -1251,7 +1251,7 @@ channel escaped the 24-bit seam. (At 150 MHz the same run starves for 51
 cycles: the DDR round trip is a fixed number of nanoseconds, so it is more
 cycles at a faster clock. It is paid once per scan.)
 
-**250 MHz IN THE FULL SYSTEM, AND IT TOOK SEVEN FIXES TO GET THERE.** The first
+250 MHz IN the FULL SYSTEM, and IT TOOK SEVEN FIXES TO GET THERE. The first
 attempt missed by **−1.953 ns** with 49,557 failing endpoints, against
 `attn_top`'s +0.053 ns out of context. A 150 MHz build was taken first and
 passed on the board — correctness owes nothing to the clock — but a bitstream
@@ -1259,7 +1259,7 @@ that misses timing is worse than useless *for* correctness, because it produces
 wrong answers indistinguishable from datapath bugs. So the timing was closed
 rather than worked around.
 
-**Out of context was the misleading measurement.** The core sat at +0.008 ns
+Out of context was the misleading measurement. The core sat at +0.008 ns
 with a whole die to spread across; every path that killed the system was one
 the placer could hide there. The fixes were found by reading the routed report
 after each build, never guessed:
@@ -1274,7 +1274,7 @@ after each build, never guessed:
 | 6 | 64 channels each incrementing one overflow counter → 64 conditions on its clock enable | a registered popcount, folded in a cycle later |
 | 7 | FSM state → 6,144 `q_vec` flop enables | a registered per-lane write enable, replicable |
 
-**Fixes 4, 5 and the two products inside `accum` are one lesson.** `a_w *
+Fixes 4, 5 and the two products inside `accum` are one lesson. `a_w *
 centroid` is 32×20 and `acc * factor` is 48×16; both are wider than a DSP48 and
 map to a cascaded PAIR, which does not reach 250 MHz without a register between
 the multiply and the cascade adder. That register is the DSP's own MREG and
@@ -1292,7 +1292,7 @@ twelve benches green after every single change. What moved is
 `AttentionConfig.rescale_cycles`, **11 → 15**, measured by `tb_softmax_accum`
 and asserted nowhere: at ctx 32,768 that is 0.50% of a scan against 0.40%.
 
-**The margin is +0.006 ns, and that is thin enough to say out loud.** It meets
+The margin is +0.006 ns, and that is thin enough to say out loud. It meets
 setup at the slow corner with hold at +0.010, and the board returns the right
 2,048 numbers — but 0.15% of a period is not margin, it is a coin that landed
 face up. A different placement seed or a hotter die could miss. Step 13 changes
@@ -1300,7 +1300,7 @@ this fabric anyway when the PS replaces the JTAG bridge, and if it comes back
 negative the answer is the same as it was here: read the routed report, fix the
 path it names.
 
-**The shim is addressed memory, not a FIFO window.** 9,216 B in and 6,144 B
+The shim is addressed memory, not a FIFO window. 9,216 B in and 6,144 B
 out, both readable back. A push-here/pop-there pair of magic addresses is
 smaller and wrong for a bring-up: a `create_hw_axi_txn` that is retried or
 typed twice shifts the whole stream by one word, and the failure looks like a
@@ -1309,7 +1309,7 @@ before starting anything, and `tb_attn_ctrl` checks that reading the output
 window twice returns the same word — which a pop-on-read FIFO would fail and
 nothing else would catch.
 
-**DDR IS DEAD UNTIL SOMEBODY RUNS `psu_init`.** There is no FSBL and no A53
+**DDR IS DEAD UNTIL SOMEBODY runs `psu_init`.** There is no FSBL and no A53
 software in this design, so the DRAM controller is never brought up, JTAG
 writes to it are acknowledged and discarded, and the block starts, issues its
 first AR and sits at busy forever. Status `0x00000001` and no progress reads
@@ -1320,7 +1320,7 @@ and `jtag_attn.tcl` calls it — **after** programming the PL, because
 A two-pattern DDR round trip now runs before anything else, so the failure
 names its cause in a second instead of surfacing minutes later as a hang.
 
-**Four bring-up failures worth recording, none of them the datapath.**
+Four bring-up failures worth recording, none of them the datapath.
 
 | symptom | cause |
 |---|---|
@@ -1349,7 +1349,7 @@ budget is essentially unspent.
 
 **A build-flow trap worth its own line.** `reset_run synth_1` does not reset a
 block design's out-of-context child runs, so an edit to `attn_top.sv` rebuilt
-the PREVIOUS netlist and reported the previous utilisation to the digit and the
+the previous netlist and reported the previous utilisation to the digit and the
 previous WNS to the picosecond. Nothing in the log says so. `build_attn_bit.tcl`
 now resets every child run and prints the flop count, so a stale DCP shows up as
 a number that did not move.
@@ -1359,20 +1359,20 @@ green on all twelve benches, `tb_attn_ctrl` being the twelfth; `scripts/jtag_att
 board.
 
 **Step 13 — PS/DMA, baremetal A53.** Vitis SDT flow, `xsdb`, UART capture.
-*Exit:* multi-token, multi-context, bit-exact; device-side µs reported; **measured
-DDR bandwidth under real load matches step 1**.
+*Exit:* multi-token, multi-context, bit-exact; device-side µs reported; measured
+DDR bandwidth under real load matches step 1.
 
 **Status: DONE, at 250 MHz.** `hw/board_vectors.py`, `tests/test_board_vectors.py`,
 `sw/attn_main.c`, `scripts/create_bd_attn_ps.tcl`, `scripts/build_vitis_attn.py`,
 `host/run_attn_a53.tcl`. Log in `results/step13_a53_f250.log`.
 
-**Twelve decode steps, three contexts, every one of 18,432 channels bit-exact.**
+Twelve decode steps, three contexts, every one of 18,432 channels bit-exact.
 Four steps at each of 64, 256 and 1,024 cached tokens, run back to back on one
 loaded image. No clips, no accumulator overflow, no channel outside the 24-bit
 seam, at any context.
 
-**And the write path is what the multi-step run was for.** Each case loads an
-image holding tokens `0..ctx0-1` and NOTHING else. Token `ctx0+n` therefore
+And the write path is what the multi-step run was for. Each case loads an
+image holding tokens `0..ctx0-1` and nothing else. Token `ctx0+n` therefore
 scores against `n` rows that exist only because the block's own AXI write
 master put them in DDR and the *next* scan's address generator found them
 again. Step 12 ran one step and could not see that; `tb_attn` blanks one token
@@ -1380,10 +1380,10 @@ and cannot either. A write off by one plane or one token answers step 0
 correctly and every step after it wrongly, and that is now checked twelve times
 over three different plane geometries.
 
-**A layout bug that capacity 65 was hiding, found before the board ran.**
+A layout bug that capacity 65 was hiding, found before the board ran.
 `DdrLayout` gave each plane the pages its own width needed — at capacity 1,025
 that is 20,480 B for the code planes and 8,192 for the norms. `attn_top` cannot
-address it: its generator is ONE `plane_span` register walked as `cache_base +
+address it: its generator is one `plane_span` register walked as `cache_base +
 p*plane_span`, because per-plane bases were the 49-bit multiply that missed
 250 MHz by 1.953 ns (step 12, fix 2). Every plane now takes the widest plane's
 span. It is invisible at capacity 65, where all four planes round to one page
@@ -1404,15 +1404,15 @@ rows are not, so it amortises — 74% of the scan at ctx 64 and 20% at ctx 1,024
 `PARALLEL_KV = 1` retires one row per cycle once the pipe is full, and 1.24 is
 that number plus a fill and a drain paid eight times per step.
 
-**So the ctx-64 bandwidth figure is a statement about pipeline fill, not about
-DDR, and it would have been the only figure a single short case produced.**
+So the ctx-64 bandwidth figure is a statement about pipeline fill, not about
+DDR, and it would have been the only figure a single short case produced.
 That is why three contexts were run and why the longest is the one quoted.
 
 ### The DDR gate holds, and the starve fraction is what says so
 
-**No run here can reproduce 14.7 GB/s, and one that claimed to would be
-measuring the wrong thing.** Step 1 measured SUPPLY with four synthetic read
-engines and no consumer. The engine's DEMAND is capped at 13.0 GB/s by the
+No run here can reproduce 14.7 GB/s, and one that claimed to would be
+measuring the wrong thing. Step 1 measured supply with four synthetic read
+engines and no consumer. The engine's demand is capped at 13.0 GB/s by the
 datapath — one row per cycle, 52 B — and the measured 10.4 GB/s at ctx 1,024 is
 that ceiling less the fill and drain above. Demand-limited, not supply-limited.
 
@@ -1421,14 +1421,14 @@ these three contexts it **falls**: 3.1% → 1.8% → 0.7%. The absolute count
 barely moves — 64, 70, 76 cycles per step — which reads as a fixed DDR round
 trip paid once per group and then amortised over a longer scan.
 
-> **CORRECTED BY STEP 14, AND THE CORRECTION MATTERS.** The paragraph that
+> CORRECTED BY step 14, and the CORRECTION MATTERS. The paragraph that
 > stood here concluded "a supply that could not keep up would stall a
 > proportional share of every scan and the fraction would be flat or rising; it
 > is neither." At **ctx 8,192 the fraction rises again, to 1.6%**, and the
 > per-group starve goes from 9.6 cycles to **154.5** — 16× for an 8× context.
 > Three points that happened to be monotone were read as a trend, and the trend
 > was an artifact of never having measured past ctx 1,024. What the four points
-> actually show is TWO components: a fixed per-group round trip, which does
+> actually show is two components: a fixed per-group round trip, which does
 > amortise, and a **per-row** term that does not — 0.0094 cyc/row at ctx 1,025
 > against 0.0189 at ctx 8,193. The conclusion that the engine is fed survives;
 > the reasoning that got there did not. See step 14.
@@ -1442,12 +1442,12 @@ trip paid once per group and then amortised over a longer scan.
 | 1,024 | 433 µs | **67 µs (15%)** | 366 µs | 2,309 | 14,981 |
 
 `attn_main.c` reports load, run and read separately rather than one µs/token,
-and this table is why: **85% of a decode step is the A53 moving 15 KB through a
-32-bit AXI-Lite window one store at a time.** Reads cost 156 ns/word against
+and this table is why: 85% of a decode step is the A53 moving 15 KB through a
+32-bit AXI-Lite window one store at a time. Reads cost 156 ns/word against
 55 ns for writes — a write is posted and a read is a blocking round trip — so
 the 6 KB read back costs 239 µs against 127 µs for the 9 KB written in.
 
-**This is the measured case for a DMA, and it is deliberately not built yet.**
+This is the measured case for a DMA, and it is deliberately not built yet.
 The plan's heading says "PS/DMA"; what was built is the PS as master with no
 DMA, because `create_bd_attn.tcl` promised step 13 would replace the JTAG
 master "and keep everything below it identical", and the shim is addressed
@@ -1477,7 +1477,7 @@ It is not there to calibrate anything. It is there so that a bitstream built at
 150 MHz announces itself instead of quietly making every GB/s in the tables
 above 40% too high.
 
-**A note on what is NOT checked here.** The A53 reads back all 2,304 input
+**A note on what is not checked here.** The A53 reads back all 2,304 input
 words before the first step of each case, so a dropped store on the AXI-Lite
 path is caught where it happens rather than as a wrong answer three steps
 later. It does not read them back on steps 1–3: by then the path has been
@@ -1489,7 +1489,7 @@ x86 first.
 *Exit:* end-to-end from the host with the GPU running the rest of the model;
 report tok/s at ctx 8k / 16k / 32k against the table above.
 
-**Step 13 handed this step its first requirement, measured.** 366 µs of every
+Step 13 handed this step its first requirement, measured. 366 µs of every
 433 µs decode step is the A53 walking 15 KB through a 32-bit AXI-Lite window,
 against 67 µs of block. A GbE frame is 125 µs of wire time for 15 KB before
 anything else, so a transport built on top of the current shim path would be
@@ -1497,8 +1497,8 @@ paying the 366 µs twice over. The DMA the system diagram already shows belongs
 here, sized against that number rather than against a guess — and it is the
 one change that needs the shim to grow a stream alongside its buffers.
 
-**Status: PARTLY DONE. The transport exists and is tested; the board half of
-the network does not.**
+Status: PARTLY DONE. The transport exists and is tested; the board half of
+the network does not.
 
 Done, and in the bitstream:
 
@@ -1508,31 +1508,31 @@ Done, and in the bitstream:
   and the design is sized against them delivering 16.0 GB/s, so 15 KB a token
   would tax the one resource the architecture is short of. The buffers stay as
   MODE 0, because a bring-up that cannot re-read what it loaded cannot
-  interpret what it gets out — and `attn_main.c` runs every case BOTH ways,
+  interpret what it gets out — and `attn_main.c` runs every case both ways,
   checking each against the goldens, so the fast path agreeing with the slow
   one is not enough to pass.
 - **`s_axis_tready` is gated on `busy`.** `attn_ingress` clears its beat
   counter on `start`, so a beat accepted before the step begins is swallowed
   and then discarded, leaving the stream one vector short — which surfaces as
-  the LAST group hanging in S_RECV with every beat apparently delivered. The
+  the last group hanging in S_RECV with every beat apparently delivered. The
   buffered path cannot reach it, because its feeder is armed by `start`
   itself. Software ordering would also fix it and would be a rule nothing
   enforces.
 - **The wire format**, `host/attn_proto.h` and `host/attn_proto.py`. The
-  payload is EXACTLY the beat stream the core consumes, so the A53 hands
+  payload is exactly the beat stream the core consumes, so the A53 hands
   received bytes to the DMA untouched. The host owns the cache map —
   `cache_base`, `head_stride`, `plane_span` travel with every step and the
   board keeps no copy, because `hw/ddr_layout.py` computed the layout and also
   built the image.
-- **`tests/test_proto.py` compiles the header and asks the compiler for the
-  offsets**, rather than reading them off the source. Two definitions of one
+- `tests/test_proto.py` compiles the header and asks the compiler for the
+  offsets, rather than reading them off the source. Two definitions of one
   format is the bug that survives every unit test on both sides. It caught
   `uint64_t cache_base` twice — padding inserted before the field, then
   trailing padding because `sizeof` must be a multiple of the alignment — so
   the address is split into lo/hi words the way `attn_ctrl`'s own register map
   splits it.
-- **`host/attn_mock.py` and `host/attn_client.py`.** The mock answers from
-  `board_vectors`' table and does NOT recompute attention: a second golden
+- `host/attn_mock.py` and `host/attn_client.py`. The mock answers from
+  `board_vectors`' table and does not recompute attention: a second golden
   model would prove nothing and would drift. A mismatch there means the
   transport is wrong; it cannot mean attention is.
 - **ctx 8,192 added to the board cases** — the first row of the table below,
@@ -1545,13 +1545,13 @@ Not done:
   the mock; the board side is not.
 - **The host integration** — `adapters/torch_llama.py` routing attention to a
   client instead of to numpy, with the GPU running the rest of the model. That
-  is what the exit criterion's tok/s comes from, so **step 14 is not closed and
-  no end-to-end throughput is claimed yet.**
+  is what the exit criterion's tok/s comes from, so step 14 is not closed and
+  no end-to-end throughput is claimed yet.
 
-### IT RUNS: every layer, live, on real text
+### IT runs: every layer, live, on real text
 
-`results/step14_all_layers_jtag.log`. Llama 3.2 1B generating text with **all
-sixteen layers' attention computed on the ZCU104**, one token at a time, no
+`results/step14_all_layers_jtag.log`. Llama 3.2 1B generating text with all
+sixteen layers' attention computed on the ZCU104, one token at a time, no
 prefill anywhere, every row of every cache written by the block's own AXI write
 master.
 
@@ -1569,24 +1569,24 @@ decode steps on the FPGA: 208 (16 layers x 13 tokens)
 them. Nothing was preloaded: the first token scanned one row it had just
 written, and the last scanned thirteen, all its own.
 
-**358 µs a token across sixteen layers, which is 2,796 tok/s if the transport
-were free.** It is not free here: this ran over the JTAG mailbox at 999 ms a
+358 µs a token across sixteen layers, which is 2,796 tok/s if the transport
+were free. It is not free here: this ran over the JTAG mailbox at 999 ms a
 step, so **0.0% of the wall clock is the block**. The context is 1..13 tokens,
 so the scan is almost entirely per-group fill and starving is 7.4% -- both
 figures are about a cold cache, not about the design, and the ctx-8k and ctx-32k
 numbers above are the ones that mean anything.
 
-**And it found the bug that hid behind a day of transport failures.**
+And it found the bug that hid behind a day of transport failures.
 `QuantConfig()` defaults to `key_bits=3`; the bitstream is synthesised with
 `KEY_BITS=4`. `graft()` took the default, so the host computed 3-bit key codes
 -- a 44-byte row -- for hardware that decodes 4-bit ones and writes 52. Every
 symptom followed:
 
 - **token 1 always agreed**, because at T = 1 the softmax is over one element,
-  `p/l = 1`, and the output is the decoded VALUE alone -- the stored key cannot
+  `p/l = 1`, and the output is the decoded value alone -- the stored key cannot
   affect it;
 - **values and norms always agreed**, because both sides use 2-bit values;
-- **the failures were identical over JTAG and over Ethernet**, because it was
+- the failures were identical over JTAG and over Ethernet, because it was
   never the transport;
 - **the self-test never saw it**, because `board_vectors` passes `key_bits=4`
   explicitly and only the torch adapter took the default.
@@ -1613,12 +1613,12 @@ decode steps on the FPGA: 304 (16 layers x 19 tokens)
 > The history of computing hardware spans centuries, from mechanical
 > calculators to the modern-day desktop computer.
 
-**666x faster per step than JTAG, and 23x faster end to end** -- 722 ms a token
+666x faster per step than JTAG, and 23x faster end to end -- 722 ms a token
 against 16,591. The block is now 1.5% of the wall clock rather than 0.0%, which
 is the first time the transport has been the same order as the work.
 
-**The hand-rolled GEM driver was the mistake, and it should have been abandoned
-four bugs earlier.** `sw/attn_eth.c` produced five real faults -- the driver
+The hand-rolled GEM driver was the mistake, and it should have been abandoned
+four bugs earlier. `sw/attn_eth.c` produced five real faults -- the driver
 does no descriptor cache maintenance, `RXBUF_NEW` is the caller's to clear,
 four descriptors shared a cache line so a flush erased its neighbours, a ring
 array was a quarter of what its alignment demanded, a frame buffer stayed at
@@ -1662,7 +1662,7 @@ What is known, from the board's own counters rather than inference:
 - `RXSR` error bits are **never set** -- BUFFNA, overrun and HRESPNOK were the
   obvious suspects and the hardware says no;
 - single-frame replies (the 256 loads) never trigger it; five-frame replies do;
-- **the step count before death varies between runs**, which rules out a
+- the step count before death varies between runs, which rules out a
   deterministic logic error and points at a race or at contention between the
   GEM and the AXI DMA, both of which master DDR.
 
@@ -1675,18 +1675,18 @@ than the reassembly buffer. Four of the five were found by reading the driver
 or the hardware definition; every attempt to reason about what the GEM *ought*
 to do was wrong.
 
-**The recommendation is to stop hand-rolling this.** The datapath is proven
+The recommendation is to stop hand-rolling this. The datapath is proven
 without it -- 208/208 exact over JTAG, all sixteen layers, real generated text
 -- and Ethernet buys throughput, not capability. Two options, in order of
 preference:
 
-1. **Adopt Xilinx's interrupt-driven example structure wholesale** rather than
+1. Adopt Xilinx's interrupt-driven example structure wholesale rather than
    a polled loop. The status bits this design has to acknowledge by hand are
    exactly the ones the handler exists to service, and a bug list five long is
    evidence that the polled shape is fighting the hardware.
-2. **Eliminate multi-frame replies with jumbo frames.** The GEM supports
+2. Eliminate multi-frame replies with jumbo frames. The GEM supports
    `XEMACPS_JUMBO_ENABLE_OPTION` up to 10,240 bytes; at an MTU of 9,000 a
-   6,188-byte reply is ONE frame and a 9,252-byte request is two. Since
+   6,188-byte reply is one frame and a 9,252-byte request is two. Since
    single-frame replies have never triggered the fault in 256 consecutive
    attempts, this may sidestep it entirely -- and it is a smaller change than
    rewriting the driver.
@@ -1699,11 +1699,11 @@ dependable, and the one every correctness result above was taken through.
 `results/step14_dma_f250.log`. Every case runs twice — once through the
 AXI-Lite buffers, once through the DMA — and both are checked against the
 goldens, so the fast path agreeing with the slow one is not what passes it.
-**This is also the first hardware run of the normalised divide**, so every
+This is also the first hardware run of the normalised divide, so every
 golden in it is new.
 
-**The DMA removes the transport, and the shorter the context the more it
-matters.**
+The DMA removes the transport, and the shorter the context the more it
+matters.
 
 | ctx | AXI-Lite µs/step | DMA µs/step | speedup | transport, AXI-Lite → DMA |
 |---|---|---|---|---|
@@ -1718,24 +1718,24 @@ DMA row, and that is not a missing measurement but a transfer that finished
 inside the run. At ctx 64 the step is now 30 µs against a 27 µs block: the
 shim has stopped being the measurement.
 
-**The scan keeps converging on one row per cycle: 3.86 → 1.85 → 1.25 → 1.17.**
+The scan keeps converging on one row per cycle: 3.86 → 1.85 → 1.25 → 1.17.
 At ctx 8,192 the engine sustains **11.1 GB/s**, 85% of the 13.0 GB/s its
 datapath can consume, and the remaining 15% is the per-group fill plus starve.
 
-**Where that leaves the headline number, honestly.** At ctx 8,192 one layer's
+Where that leaves the headline number, honestly. At ctx 8,192 one layer's
 attention is **325 µs** on the DMA path. Over Llama 3.2 1B's 16 layers that is
 **5.20 ms/token, or 192 tok/s** — against the **234 tok/s** the table below
 predicts. The 18% gap is not mysterious and is not measurement noise: the table
 assumes the scan retires one row per cycle at the full 14.7 GB/s, and the
 hardware retires 1.17 rows-worth of cycles per row at 11.1 GB/s.
 
-**And the starve number is the one to carry forward.** Per group it is 8.0,
+And the starve number is the one to carry forward. Per group it is 8.0,
 8.8, 9.6 and then **154.5** cycles at ctx 8,192. As a share of the scan it
 falls, falls, falls and then rises — 3.1%, 1.8%, 0.7%, **1.6%**. Two
 components, not one: a fixed round trip per group, and a per-row term that
 roughly doubled between ctx 1,024 and 8,192 (0.0094 → 0.0189 cyc/row).
 
-> **MEASURED, AND IT PLATEAUS.** The guess written here was "extrapolated to
+> **Measured, and IT PLATEAUS.** The guess written here was "extrapolated to
 > ctx 32,768 it is 3–4% of the scan". It is **1.5%**. The per-row term stops
 > growing: **0.0202, 0.0184, 0.0183 cyc/row** at ctx 8k, 16k and 32k. See the
 > probe below. Two guesses about this number in two days, both wrong in
@@ -1745,7 +1745,7 @@ roughly doubled between ctx 1,024 and 8,192 (0.0094 → 0.0189 cyc/row).
 
 `results/step14_longctx_probe.log`. Answering this bit-exactly needs a 16.9 MB
 image in the ELF and an O(T²) numpy prefill, and neither is needed to measure
-an ADDRESS PATTERN — so the A53 fills DDR itself and **nothing here is compared
+an address pattern — so the A53 fills DDR itself and **nothing here is compared
 against a golden**. The answers are wrong by construction and are never looked
 at.
 
@@ -1755,14 +1755,14 @@ at.
 | 16,385 | 1.15 | 11,273 | 302.7 | **0.0185** | 1.6% |
 | 32,769 | **1.14** | **11,331** | 601.1 | **0.0183** | **1.6%** |
 
-**The per-row starve is flat and the per-group figure simply tracks the row
-count** — 165.7, 302.7, 601.1 for 8k, 16k, 32k, which is linear. So above ctx
+The per-row starve is flat and the per-group figure simply tracks the row
+count — 165.7, 302.7, 601.1 for 8k, 16k, 32k, which is linear. So above ctx
 8k the fixed round trip is gone into the noise and starving is one steady-state
-rate: about one cycle in fifty-five. It does not compound. **`PARALLEL_KV = 1`
-at 4b/2b is fed at every context this design targets**, which is what step 1's
+rate: about one cycle in fifty-five. It does not compound. `PARALLEL_KV = 1`
+at 4b/2b is fed at every context this design targets, which is what step 1's
 gate was for, now measured at the far end rather than extrapolated to it.
 
-**The control is what makes the other two rows worth reading.** `probe8192` runs
+The control is what makes the other two rows worth reading. `probe8192` runs
 the same geometry as the bit-exact ctx-8,192 case and recomputes its span and
 stride from the same rule `ddr_layout.py` uses:
 
@@ -1803,11 +1803,11 @@ rather than from the bandwidth:
 
 The table below is left as written, because it is what the design was sized
 from and the sizing decisions it drove — four ports, `PARALLEL_KV = 1`, 4b/2b —
-are all still correct. But **no throughput number in it should be quoted
-without this correction**, and the 32k row in particular is **52 tok/s, not
+are all still correct. But no throughput number in it should be quoted
+without this correction, and the 32k row in particular is **52 tok/s, not
 65**.
 
-**A measurement artifact worth naming so nobody chases it.** The implied PL
+A measurement artifact worth naming so nobody chases it. The implied PL
 clock reads 226–249 MHz and the low readings are all in DMA mode at short
 context. It is integer-µs truncation: at ctx 64 the DMA step is 27 µs, so ±1 µs
 is ±3.7%. The ctx-8,192 rows, where the step is 325 µs, read 248–249 MHz. The
@@ -1836,32 +1836,80 @@ executed on the FPGA, then sweep `KEY_BITS`/`VAL_BITS`.
 *Exit:* measured bytes, cycles and throughput move as `config.py` predicts, and
 throughput is a linear function of the compression ratio.
 
-**Status: THE PERPLEXITY HALF IS MEASURED.** `results/step15_perplexity.log`.
+Status: The PERPLEXITY HALF IS measured, now AT 4,096 TOKENS.
 
-| | perplexity |
-|---|---|
-| baseline, fp32 attention, host | **11.279** |
-| compressed 4b/2b, **every layer on the FPGA** | **14.102** |
-| ratio | **1.250** |
+| tokens | baseline | 4b/2b on the FPGA | ratio |
+|---|---|---|---|
+| 32 | 46.530 | 70.960 | 1.525 |
+| 256 | 11.279 | 14.102 | 1.250 |
+| **4,096** | **9.074** | **10.640** | **1.1726** |
 
-256 tokens of WikiText-2, no prefill, every cache row written by the block's
-own write master, and **4,096 of 4,096 decode steps bit-exact against the
-numpy kernel**. Zero clips, zero accumulator overflows, no channel outside the
-24-bit seam.
+`results/step15_perplexity.log` is the 256-token run;
+`results/step15_perplexity_4096.log` is the 4,096-token one, transcribed from
+the terminal rather than captured (the wrapper tees only the board's UART).
 
-**So 4b/2b costs 25% of perplexity for 4.92x of cache.** That is the trade this
-whole design exists to make, measured end to end with the hardware in the loop
-rather than modelled. It inherits limit 8: 256 tokens of one passage separates
-a 25% effect from a 2% one and nothing finer, and a longer corpus is the
-obvious next measurement.
+So 4b/2b costs 17% of perplexity for 4.92x of cache — not the 25% the
+256-token run reported. The trade this design exists to make is better than it
+looked, and it took 16x the corpus to see that.
 
-**The host is now the bottleneck, by a long way.** 336 s of wall clock against
-6.7 s of wire and 108 ms of device: **98% of the run is numpy**. `collect()`
-has to run to produce the ingress -- the projections, RoPE and the rotation
-taps -- but it also runs the full numpy attention, scores, softmax and
-accumulate, which is needed only for the per-step exactness check. Splitting
-those two would cut a perplexity run by an order of magnitude and is the
-cheapest remaining speedup anywhere in this project.
+**Both columns moved, and that is expected.** The baseline fell 11.279 -> 9.074
+because a longer passage gives the model more context to predict from; it is a
+different measurement, not a better run of the same one. Only the ratio is
+comparable across rows.
+
+The ratio falls monotonically with corpus length: 1.525, 1.250, 1.173. Two
+effects are conflated in that and this data cannot separate them: fewer tokens
+is a noisier estimate, and a shorter run spends proportionally more of its life
+at tiny contexts, where the softmax is over a handful of entries and
+quantisation error has nothing to average against. The 32-token row is mostly
+the second effect — at T = 1 the output is the decoded value alone. Separating
+them needs perplexity at a fixed context, which is not what this experiment
+measures.
+
+What was not checked: this run had `--no-verify`. Nothing in these 65,536
+decode steps was compared against the numpy kernel. What carries the result is
+the evidence either side of it:
+
+- the datapath is bit-exact at **ctx 64, 256, 1,024 and 8,192** on both the
+  AXI-Lite and DMA paths (step 14's `step14_dma_f250.log`), which brackets
+  every context this run reached;
+- **live** activations through all 16 layers are bit-exact to ctx 256 (4,096 of
+  4,096 steps) and, in the control run immediately before this one, to ctx 32
+  (512 of 512);
+- this run reported zero clips, zero accumulator overflows and no channel
+  outside the 24-bit seam, across all 65,536 steps.
+
+So the gap is narrow and specific: no run has checked live model activations
+against the host between ctx 257 and 4,096. The arithmetic at those contexts is
+covered by synthetic vectors and the ingress is checked at both ends of the
+range. That is a good deal stronger than "unverified", and still not the same
+as a checked run — "no counter fired" is not "the answer was right". Closing it
+costs one `--tokens 1024` run with the check on. Next-step 5 is the same
+question at 32k, where nothing brackets it at all.
+
+**The scan at a mean context of 2,048.** 1,378,662,772 cycles over
+1,074,003,968 rows (16 layers x 8 heads x sum of 1..4,096) is **1.284
+cyc/row**, sitting exactly where the 1.85 -> 1.25 -> 1.17 -> 1.14 series says
+it should for this context. 55.85 GB read in 5.515 s of scan is **10.1 GB/s**,
+below the 11.1 at ctx 8,192 because a short scan pays proportionally more
+per-group fill. Starving is **2.62%**, between the 6.99% of the 32-token
+control and the 1.5% measured at 32k. Nothing here is new behaviour; it is the
+known curve, sampled at a new point.
+
+~~The host is now the bottleneck, by a long way.~~ Fixed, and it is still the
+bottleneck. The 256-token run was 336 s against 6.7 s of wire and 108 ms of
+device — 98% numpy, because `collect()` ran the full attention for a per-step
+check. That is now gated on `verify` (next-step 1). This 4,096-token run would
+have taken **12.3 hours** with the check on; it took **29.2 minutes**, a 25x
+saving that grows with context because the removed work was the O(context)
+half.
+
+What remains is not the check. Of 427 ms/token: 24.7 ms is wire, 1.6 ms is
+device, and 401 ms — 94% — is still the host. About 139 ms of that is the
+ingress `collect()` genuinely has to compute; the rest is the other 15/16 of
+the model. The block is now 6.6% of the wire time and 0.4% of the wall clock.
+Any further speedup is a host-side or transport problem and has nothing left to
+do with the FPGA.
 
 **Still to do for step 15:** the `KEY_BITS`/`VAL_BITS` sweep, which needs a
 synthesis run per format because the widths are RTL parameters. `config.py`
@@ -1894,8 +1942,8 @@ host GPU (torch)  ──►  numpy, Q8.16 packed 24-bit
 ```
 
 Reuse the protocol pattern in `fpga_work/systolic_zcu104/host/sa_proto.h`: a fixed
-header plus a payload that is **exactly the beat stream the accelerator
-consumes**, so the PS hands it to the DMA without repacking. Add an `ATTN` command
+header plus a payload that is exactly the beat stream the accelerator
+consumes, so the PS hands it to the DMA without repacking. Add an `ATTN` command
 alongside `SA_CMD_GEMM`. Reuse `mock_server.c` — an x86 stand-in that unpacks
 beats the way the RTL does — to validate the wire format and the host client
 before board-side software exists. The 24-bit packer must be checked against the
@@ -1903,8 +1951,8 @@ RTL unpacker the way `quantize.pack` already is.
 
 ### Where the time goes
 
-At the long contexts this plan targets, **DRAM dominates and the network is a
-minor term.** Per layer, per token:
+At the long contexts this plan targets, DRAM dominates and the network is a
+minor term. Per layer, per token:
 
 | ctx | cache/layer | DDR read | wire | RTT (raw Eth) | **ms/token** | **tok/s** |
 |---|---|---|---|---|---|---|
@@ -1925,7 +1973,7 @@ header, polled, no OS on the A53, is still the right target — it takes RTT fro
 250 µs to 35 µs, worth ~17% at ctx 32k. Do it, but after the DDR path works. Keep
 a TCP mode for the mock server and bring-up.
 
-**The one lever with real leverage is bytes, not logic:**
+The one lever with real leverage is bytes, not logic:
 
 | format | row | ports = ceil(row/16) | ctx 32k traffic | tok/s |
 |---|---|---|---|---|
@@ -1933,8 +1981,8 @@ a TCP mode for the mock server and bring-up.
 | **4b/2b** | **52 B** | **4** | **218 MB** | **65** |
 | 3b/2b | 44 B | 3 | 185 MB | 77 |
 
-On a DDR-bound build, **throughput is a direct linear function of the compression
-ratio.** That makes the cache format the measured variable — which is exactly the
+On a DDR-bound build, throughput is a direct linear function of the compression
+ratio. That makes the cache format the measured variable — which is exactly the
 claim this project exists to support.
 
 ### Considered and rejected: USB as the data path
@@ -1963,8 +2011,8 @@ layer per token = **262,144 cycles** on a 256-bit port. Spending 262,144 cycles 
 save 32 is **8,192× the wrong direction**, and it takes device traffic from 100%
 cache to **91% weights** — exactly the outcome the RoPE split exists to avoid.
 
-**Rule: fold `R⁻¹` into `W_o` wherever `W_o` already is; never move `W_o` to get
-the fold.** The `folded` flag at `weights.py:39` keeps both paths available.
+Rule: fold `R⁻¹` into `W_o` wherever `W_o` already is; never move `W_o` to get
+the fold. The `folded` flag at `weights.py:39` keeps both paths available.
 
 ---
 
@@ -1979,7 +2027,7 @@ Nothing in this plan touches a numeric path, so both must pass **unchanged**
 throughout. If the dense control moves off cosine 1.000000, something that was
 supposed to be cost modelling has leaked into the datapath — stop and find it.
 
-**Saturation gate — before the wire format is locked in.** The 24-bit lane width
+Saturation gate — before the wire format is locked in. The 24-bit lane width
 rests on a peak of 21.06 over 400 tokens of one passage, which is not enough
 evidence on its own.
 ```bash
@@ -2038,10 +2086,16 @@ the board — it does not, and the weight analysis says why.
 7. Targets Llama 3.2 1B specifically: no QK-norm, `d=64`, 8 KV heads. A model with
    QK-norm or a different head dim changes the host half and, for a
    non-power-of-two `d`, the rotation itself.
-8. Perplexity claims inherit the README's limits — 400 tokens of one in-domain
-   passage separates a 2% effect from a 22% one and nothing finer.
-9. **THE FINAL DIVIDE LOSES PRECISION LINEARLY IN CONTEXT, AND EVERY CONTEXT
-   THIS PROJECT HAS TESTED IS A LUCKY ONE.** `finalize` computes
+8. ~~Perplexity claims inherit the README's limits — 400 tokens of one in-domain
+   passage separates a 2% effect from a 22% one and nothing finer.~~ Widened
+   by step 15: 4,096 tokens of WikiText-2 test, ratio 1.1726. Still one
+   corpus and one checkpoint, and still one contiguous passage rather than
+   sampled windows, so an out-of-domain text could move it. The remaining
+   softness is that the ratio is measured over contexts 1..4,096 growing, not
+   at a fixed context, so it mixes "how good is 4b/2b" with "how much context
+   was available".
+9. The final divide loses precision linearly in context, and every context
+   this project has tested is a lucky one. `finalize` computes
    `recip = floor(2**31 / l)` in Q16 (`ops/attention.py:170`,
    `rtl/finalize.sv`), and the online denominator measures
    `l = T * 2**15` to within 0.2% across six contexts — every score is near
@@ -2053,7 +2107,7 @@ the board — it does not, and the weight analysis says why.
    | `recip` | 64 | 8 | 4 | 3 | 2 | 2 | 1 | **0** |
    | rel err | 0.2% | 0.2% | 0.2% | 8.6% | **25.2%** | 0.2% | 0.2% | **100%** |
 
-   The error is the fractional part of `2**31/l`, so it is a LOTTERY: at powers
+   The error is the fractional part of `2**31/l`, so it is a lottery: at powers
    of two `l` lands just above an integer and the error is 0.2%, and at ctx
    24,576 it is 25%. The tested contexts are 32, 64, 256, 1,024 and 4,096 —
    all powers of two, all winning tickets. The guaranteed bound is `T/2**16`,
@@ -2065,8 +2119,8 @@ the board — it does not, and the weight analysis says why.
    together and every check in the project passes. Step 13 passed at ctx 1,024
    because `recip` was still 64 there.
 
-   This bites inside the target range: **ctx 32,768 is the bolded row of the
-   throughput table above and ctx 131,072 is its last row.** No throughput or
+   This bites inside the target range: ctx 32,768 is the bolded row of the
+   throughput table above and ctx 131,072 is its last row. No throughput or
    perplexity number may be quoted at a context past ~16k until the divide is
    normalised — shift `l` to its leading one, divide, and carry the shift into
    the final right-shift, which holds ~31 bits at every context. That is a
@@ -2099,26 +2153,30 @@ it lives in DDR. Those two facts together define the split.
 
 ## State, and what to do next
 
-*Rewritten at the end of the session that did steps 13 and 14 and half of 15.
-Everything below is either measured on hardware or explicitly marked as not
-run.*
+*Rewritten at the end of the session that did steps 13 and 14 and half of 15,
+then updated when next-steps (1) and (2) landed and again after the cleanup
+pass. Everything below is either measured on hardware or explicitly marked as
+not run. The (1) timings are host numpy with no board involved, and the
+cleanup section's figures come from the two test suites rather than the
+board.*
 
 ### Where the spine is
 
-`1 → 3 → 11 → 12 → 13 → 14 → 15`. **Steps 1–14 are done and measured on the
-board.** Step 15's perplexity half is measured; its `KEY_BITS`/`VAL_BITS` sweep
-is not started.
+`1 → 3 → 11 → 12 → 13 → 14 → 15`. Steps 1–14 are done and measured on the
+board. Step 15's perplexity half is measured at 4,096 tokens; its
+`KEY_BITS`/`VAL_BITS` sweep is not started.
 
 The headline results, all with the hardware in the loop:
 
 | | |
 |---|---|
 | Llama 3.2 1B, all 16 layers' attention on the ZCU104 | **4,096/4,096 steps bit-exact** |
-| perplexity, fp32 baseline → compressed 4b/2b on the FPGA | **11.279 → 14.102 (1.250×)** |
+| perplexity, fp32 baseline → compressed 4b/2b, 4,096 tokens | **9.074 → 10.640 (1.173×)** |
 | decode step, device | **22–26 µs** |
 | decode step, wire (UDP/lwIP) | **1.5 ms** |
 | scan at ctx 32,768 | 1.14 cyc/row, 11.3 GB/s, 1.5% starving |
 | full system at 250 MHz | WNS **+0.161 ns**, 143,181 FF |
+| self-checking suites | **170 host checks, 12 RTL benches, all green** |
 
 ### How to run it
 
@@ -2130,15 +2188,31 @@ end:
 ```
 ./scripts/attn reset                      # reprogram and stop
 ./scripts/attn infer --tokens 8 --trace   # all 16 layers, live, over UDP
-./scripts/attn ppl   --tokens 256         # perplexity, board vs baseline
+./scripts/attn ppl   --tokens 4096        # perplexity, board vs baseline
 ./scripts/attn diff                       # board's cache bytes vs the host's
 ./scripts/attn probe                      # diagnose the link
 ./scripts/attn infer --cpu-only           # the control: no board, no sudo
 ```
 
+Add `--no-verify` to `infer` or `ppl` to skip the per-step comparison against
+numpy. That check is O(context) and dominates a long run — 675 ms a layer-step
+at ctx 4,096 against 9 ms for the ingress the board actually needs. Verify
+while establishing that a configuration is exact; turn it off to measure.
+
 `NORESET=1` keeps a wedged board wedged, which is the only way to ask it
 anything after a failure. **Reprogram after every ELF rebuild** — a board still
 running an older ELF answers pings, so the auto-bringup will not replace it.
+
+The RTL benches are self-checking and run under Icarus, which lives in the
+`ubuntu-work` distrobox rather than on the RHEL host. Vivado and Vitis are the
+other way round, host only. `regress.sh` enters the container for you; set
+`KERNEL_NO_DISTROBOX=1` if you are already inside it.
+
+```
+./scripts/regress.sh                      # all 12 benches
+./scripts/regress.sh finalize             # only names matching "finalize"
+python -m kernel.tests.run                # the 170 host-side checks
+```
 
 Rebuilding, in the order the dependencies run:
 
@@ -2166,25 +2240,122 @@ nothing above them knows which is in use.
 - **Raw Ethernet** (`sw/attn_eth.c`) is superseded and kept only for the
   record. Do not build on it.
 
+### The cleanup pass, and the one real bug it found
+
+A read of the whole package — 13k lines of Python, 6.8k of SystemVerilog, 2k of
+C — looking for defects and for documentation that had stopped being true. Both
+suites pass afterwards: 170 host checks and all 12 RTL benches.
+
+The bug worth recording is a model/hardware divergence that nothing in the
+project could have caught.
+
+`rtl/finalize.sv` sizes its divider as `RECIP_BITS = RECIP_FRAC + PROB_FRAC + 1`
+while `ops/attention.py` uses a standalone `RECIP_NORM_BITS = 32`. Those agree
+today, at 16 + 15 + 1, purely by coincidence: normalising the divide (correction
+1 above) stopped the arithmetic depending on either field, and nobody went back
+to change how the RTL derived its width. So a change to `prob_frac` — an
+ordinary thing to want — would have resized the hardware's divider and left the
+model's alone.
+
+This is the same shape as limit 9 and would have been just as invisible.
+Bit-exactness cannot see it, because the goldens come from the model; the
+board would have been wrong and agreed with itself. Fixed in three places so
+it cannot come back: `FixedFormat.recip_frac` is now `recip_norm_bits` and
+documented for what it actually does, `finalize.sv` has an elaboration check
+that fails the build if the three definitions disagree, and
+`check_the_reciprocal_width_is_one_number_everywhere` reads the RTL and pins
+all three together.
+
+Four documentation claims rested on tests that were never written:
+`test_rotation_gaussianity.py`, `test_softmax_equivalence.py`,
+`test_pe_array.py`, and `check_view_records_one_read_per_call`. Three had real
+tests under other names and were redirected. The fourth was worse than stale:
+`numerics/fp.py` claimed `matvec_ordered` was pinned bit-for-bit against
+`hw/pe_array.py`, but that is a cycle model — handed shapes, never values — so
+no such test could exist. The claim is gone.
+
+Also removed: `ArrayConfig.load_weight_cycles`, which nothing read, and 13
+unused imports.
+
+The README was describing a different project. It said the rotation used two
+rounds in its pipeline diagram while the default is one — and explained the one
+round correctly sixty lines further down. It had the same "three rules" block
+twice, the second copy with two sentences run together. It claimed 74 checks
+when there were 170, pointed at `software/`, `hls/` and `chisel/` which do not
+exist, and never mentioned the FPGA at all, so a reader learned this was a
+numpy modelling project. Rewritten around the board results, with the numpy
+material kept below them.
+
+On style, across every source file: 122 all-caps section headers became
+sentence case and about 465 words that were shouted for emphasis were lowered.
+Every RTL and C edit is verified in place — line counts unchanged in all 32
+files, block-comment delimiters balancing as before, and the only non-comment
+lines in the whole RTL diff are the two added for the elaboration guard.
+
+The check that makes this trustworthy: the golden vectors were regenerated with
+the edited `hw/vectors.py` and diffed against the committed set. All 66 hex
+files are byte-identical. The only difference in the whole tree is the manifest
+key rename, `recip_frac` to `recip_norm_bits`, which was the point.
+
+One bench had been printing a warning on every run — `tb_kv_store` read
+`ddr_image.hex` into an array twice the image's size, which is deliberate but
+made Icarus warn about a short file every time. A real short-file warning would
+have been lost in it. The array size is now derived from the head stride and
+the read range is explicit.
+
 ### What to do next, in order
 
-**1. Stop `collect()` doing the numpy attention (cheapest win anywhere).**
-A perplexity run is 336 s of wall clock against 6.7 s of wire and 108 ms of
-device: **98% is numpy**. `collect()` must run to produce the ingress — the
-projections, RoPE and the rotation taps — but it also runs scores, softmax and
-accumulate, which are needed only for the per-step exactness check. Split them
-and gate the second on `verify`. That is roughly a 10× speedup on every
-board-in-the-loop experiment and it unblocks everything below.
+1. ~~Stop `collect()` doing the numpy attention.~~ DONE.
+A perplexity run was 336 s of wall clock against 6.7 s of wire and 108 ms of
+device: **98% was numpy**. `collect()` has to run to produce the ingress — the
+projections, RoPE and the rotation taps, all O(1) in context — but it also ran
+scores, softmax and accumulate, which are O(context) and serve only the
+per-step exactness check.
 
-**2. Perplexity on a longer corpus.** 256 tokens of one passage separates a 25%
-effect from a 2% one and nothing finer (limit 8). With (1) done, a few thousand
-tokens is minutes. This is the number the project will be judged on.
+`verify` now reaches all the way down. `collect(..., verify=False)` sets the
+kernel's new `ingress_only`, which returns straight after the cache write, and
+skips the checking half of `collect` itself. Measured, one layer-step of the
+reference shape:
+
+| context | verify | ingress only | |
+|---|---|---|---|
+| 256 | 85 ms | 9.1 ms | 9× |
+| 1,024 | 204 ms | 8.7 ms | 23× |
+| 4,096 | 675 ms | 8.7 ms | **77×** |
+
+The ingress-only cost is flat, as it must be: nothing left in it touches the
+cache. `check_ingress_only_sends_the_board_the_same_bytes` pins the thing that
+matters — the board's stimulus, the stored row and the whole cache are
+bit-identical with the check off — so `--no-verify` is the same experiment
+measured faster and not a different one.
+
+It also shuts the silent-fallback door rather than opening it. A kernel stopped
+at the seam returns `None`, so a fallback crashes instead of quietly producing
+the same text with the board idle
+(`check_a_kernel_stopped_at_the_seam_returns_no_answer`).
+
+`--no-verify` stays opt-in on both runners. Verify while establishing that a
+configuration is exact — that is what the 4,096/4,096 result is — then turn it
+off to measure or to run a corpus.
+
+2. ~~Perplexity on a longer corpus.~~ DONE: 4,096 tokens, ratio 1.1726.
+16× the corpus, and the answer moved: 4b/2b costs **17%** of perplexity, not
+the 25% the 256-token run reported. 29.2 minutes with `--no-verify`, against
+12.3 hours the same run would have taken before (1). The corpus slice now
+scales with `--tokens` and the run refuses to start if it comes up short —
+the old fixed 8,000 characters was 1,825 tokens, so `--tokens 4096` would
+silently have measured a quarter of what it claimed.
+
+The run used `--no-verify`, so no live step between ctx 257 and 4,096 was
+compared against the host. Step 14 proves the datapath bit-exact at ctx 1,024
+and 8,192 on synthetic vectors, which brackets it, so this is a narrow gap
+rather than an open one — one `--tokens 1024` run with the check on closes it.
 
 **3. Step 15's `KEY_BITS`/`VAL_BITS` sweep.** One synthesis run per format
 (~1 hour each), because the widths are RTL parameters. `config.py` now predicts
 the board to within 1%, so the results are interpretable when they arrive. The
-claim to test is that throughput is linear in the compression ratio. **4b/4b is
-a 68-byte row needing five HP ports the PS does not have** — this plan predicts
+claim to test is that throughput is linear in the compression ratio. 4b/4b is
+a 68-byte row needing five HP ports the PS does not have — this plan predicts
 that and the build would confirm it by failing, which is worth doing once.
 
 **4. Chase the 0.129 cyc/row.** Measured, unexplained, 11% of the scan at long
@@ -2199,14 +2370,14 @@ UDP — the host can push it in 8 KB chunks in about two seconds.
 
 ### Traps a fresh session should not have to rediscover
 
-- **A silent numpy fallback is this project's most dangerous failure mode.** The
+- A silent numpy fallback is this project's most dangerous failure mode. The
   host kernel produces the same text as the board, so "board idle" and "board
   correct" are indistinguishable from the output. It has happened: patching
   `attn.forward` on the *instance* does nothing, because `KernelAttention`
   assigns `__call__ = forward` at class scope and Python resolves dunders on the
   type. `fpga_layers.py` patches `type(attn)` and raises rather than falling
   back; both runners hard-fail if zero steps reached the board.
-- **`QuantConfig()` defaults to 3-bit keys and the bitstream is built for 4.**
+- `QuantConfig()` defaults to 3-bit keys and the bitstream is built for 4.
   This cost most of a day. Every symptom looked like hardware: token 1 always
   agreed (at T=1 the softmax is over one element, so the key cannot affect the
   output), values and norms always agreed (2-bit on both sides), and the
@@ -2216,16 +2387,27 @@ UDP — the host can push it in 8 KB chunks in about two seconds.
   cache rows and diffs them against `kernel.cache.buf`, naming which field
   differs. It found the above in one run, after four rounds of transport
   theories.
-- **`mwr` over xsdb prints nothing whether it worked or not**, and **`mrd`
-  returns nothing when xsdb is driven from a pipe** — a TCL REPL echoes results
+- `mwr` over xsdb prints nothing whether it worked or not, and `mrd`
+  returns nothing when xsdb is driven from a pipe — a TCL REPL echoes results
   only to a terminal, so reads must be `puts [mrd ...]`.
-- **`reset_run synth_1` does not reset a block design's out-of-context child
-  runs**, so an RTL edit can rebuild the previous netlist and report the
+- `reset_run synth_1` does not reset a block design's out-of-context child
+  runs, so an RTL edit can rebuild the previous netlist and report the
   previous numbers to the digit.
 - **Do not hand-roll the GEM driver again.** `sw/attn_eth.c` produced five real
   faults and a sixth never found; the pattern was that every attempt to reason
   about what the controller ought to do was wrong and every reading of what it
   actually does was right in one round. lwIP owns that now.
+- **A number that is right by coincidence is a bug waiting for a config
+  change.** Twice now a width has been derived from fields that no longer take
+  any part in the arithmetic and happened to add up: `RECIP_BITS` in
+  `finalize.sv`, and the same expression in a test. Both were correct and both
+  would have broken, or worse diverged silently, on a change to `prob_frac`.
+  When a constant has one meaning, give it one name and pin the copies against
+  each other with a test.
+- **Icarus is in the `ubuntu-work` distrobox; Vivado and Vitis are host only.**
+  `./scripts/regress.sh` enters the container for you and runs all 12 benches,
+  so there is no reason to reason about the RTL when you can run it.
+  `KERNEL_NO_DISTROBOX=1` if you are already inside.
 
 ### Corrections this document has already absorbed
 
@@ -2235,9 +2417,17 @@ Recorded where they were made rather than quietly fixed:
    quantisation levels at ctx 32,768 and **zero at 131,072**, with an error that
    was a lottery — 0.2% at powers of two, 25% at ctx 24,576, and every context
    ever tested was a power of two. Fixed by normalising the divide.
-2. **The throughput table divides by supply where demand binds.** It uses
+2. The throughput table divides by supply where demand binds. It uses
    14.7 GB/s, measured with four synthetic engines and no consumer; the engine
    can only eat 13.0. **ctx 32,768 is 52 tok/s, not 65.**
 3. **The starve trend.** Step 13 read three monotone points as falling; step 14
    extrapolated the reversal to 3–4% at 32k. Measured, it plateaus at
    0.018 cyc/row and 1.5%.
+4. **The reciprocal's width was derived from fields it no longer uses.**
+   `RECIP_BITS = RECIP_FRAC + PROB_FRAC + 1` in `finalize.sv` and
+   `1 << (recip_frac + prob_frac)` in `test_vectors.py` both came to the right
+   answer, 32 and 2**31, by coincidence after correction 1 normalised the
+   divide. A change to `prob_frac` would have resized the hardware's divider
+   and left the model's alone, with the goldens agreeing with the model. Now
+   one name, `recip_norm_bits`, with an elaboration check in the RTL and a test
+   that reads the RTL back.

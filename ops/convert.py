@@ -10,7 +10,7 @@ implementations of the same arithmetic come to disagree on inputs nobody
 tested, and it is invisible in review because each individual cast looks
 harmless.
 
-The conversion SATURATES rather than wrapping, and reports how often it had
+The conversion saturates rather than wrapping, and reports how often it had
 to. A saturating Q/K/V element is a scaling problem in the weights; silently
 wrapping it produces a large-magnitude value of the wrong sign, which softmax
 then turns into a confidently wrong attention distribution.

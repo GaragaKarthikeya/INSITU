@@ -1,6 +1,6 @@
 """Rotary position embedding, applied where the hardware would apply it.
 
-POSITION IN THE PIPELINE IS NOT NEGOTIABLE
+Position in the pipeline is not negotiable
 ------------------------------------------
 RoPE sits between the projection and the Hadamard rotation:
 
@@ -18,7 +18,7 @@ position-dependent transform into the offline `W_o` fold is not possible.
 There is deliberately NO RoPE between the attention output and the output
 projection. The value path carries no position, so `W_o'` sees only `R^-1`.
 
-FREQUENCY SCALING
+Frequency scaling
 -----------------
 Llama 3 rescales `inv_freq` by wavelength before the table is built (
 `RopeScaling`, below). It is a change to the table and nothing else: the
@@ -27,7 +27,7 @@ are identical either way. That is the only reason it belongs here rather than
 in the pipeline -- a position-dependent transform that cost cycles could not be
 folded into a precomputed table.
 
-FIXED POINT
+Fixed point
 -----------
 The sin/cos table is computed once in float64 and stored in Q(centroid_frac).
 The rotation itself is two multiplies and an add per channel pair, with a
@@ -61,7 +61,7 @@ class RopeScaling:
         whole point of the scheme: a hard switch would put a discontinuity in
         the middle of the frequency band.
 
-    It is NOT a position-dependent transform. Every channel's frequency is
+    It is not a position-dependent transform. Every channel's frequency is
     fixed once, so this is a change to the table alone -- see the module
     docstring.
 
@@ -147,7 +147,7 @@ class RoPE:
 
         Channel pairing is the half-split `(x[:half], x[half:])` that Llama
         uses, not the interleaved `(x[0::2], x[1::2])` of the original paper.
-        The two are related by a fixed permutation and are NOT interchangeable
+        The two are related by a fixed permutation and are not interchangeable
         against a trained checkpoint -- a model trained under one and served
         under the other produces fluent nonsense rather than an obvious error.
         """

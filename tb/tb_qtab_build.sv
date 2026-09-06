@@ -1,6 +1,6 @@
 // Self-checking testbench for qtab_build.sv.
 //
-// EVERY ENTRY, NOT THE ONES SOME TOKEN HAPPENS TO SELECT
+// Every entry, not the ones some token happens to select
 // ------------------------------------------------------
 // The table has D * 2**BITS entries and a cached token reads exactly D of
 // them.  Driving real cache codes would leave most of the table untested and
@@ -10,16 +10,16 @@
 // fails immediately.
 //
 // The golden is `qtab_table.hex` -- `q_rot[ch] * centroid[i]` computed in
-// numpy from the SAME rotated queries the kernel scored with, at the same
+// numpy from the same rotated queries the kernel scored with, at the same
 // PROD_W the RTL uses.  `hw/vectors.py` refuses to emit a product that does
 // not fit that width, so an overflow is a Python failure, not a silent wrap
 // here.
 //
-// THE PING-PONG IS THE OTHER HALF OF THE TEST
+// The PING-PONG is the other half of the test
 // -------------------------------------------
 // A table under construction must not disturb the one being read.  Head j+1
 // is built while head j's table is still gathered from, and the bench checks
-// head j's values DURING that build -- an unbanked implementation passes the
+// head j's values during that build -- an unbanked implementation passes the
 // per-head sweep and fails here.
 `timescale 1ns/1ps
 module tb_qtab_build;
@@ -40,7 +40,7 @@ module tb_qtab_build;
 
     int errors = 0;
     // Set whenever the builder is mid-table, so "read through a build" is a
-    // MEASURED overlap and not an assumption about relative durations.
+    // Measured overlap and not an assumption about relative durations.
     logic overlapped;
     always @(posedge clk) if (rstn && dut.busy) overlapped <= 1'b1;
 
@@ -94,7 +94,7 @@ module tb_qtab_build;
         $readmemh("tb/vectors/qtab_table.hex", gold);
         $readmemh("tb/vectors/cb_centroids_key.hex", cents);
 
-        // The centroids are a format artifact.  A stale parameter fails HERE
+        // The centroids are a format artifact.  A stale parameter fails here
         // and not as 1,024 wrong products.
         for (int i = 0; i < NB; i++)
             check(dut.CENTROIDS[i*CB +: CB] === cents[i],
@@ -112,7 +112,7 @@ module tb_qtab_build;
         commit = 1; tick; commit = 0;
         sweep_head(0);
 
-        // Ping-pong: start head 1's build and read head 0 THROUGH it.  The
+        // Ping-pong: start head 1's build and read head 0 through it.  The
         // builder is writing the spare bank for all 64 of those cycles.
         overlapped = 0;
         build(1);

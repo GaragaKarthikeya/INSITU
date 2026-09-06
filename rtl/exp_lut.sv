@@ -1,7 +1,7 @@
 // `exp(-delta)` as `2^-i * 2^-f`: a 256-entry table on the fraction and a
 // shift on the integer part.  `ops/attention.py::ExpLut`.
 //
-// WHY A TABLE ON [0,1) AND NOT ON THE RANGE
+// Why a table on [0,1) and not on the whole range
 // -----------------------------------------
 // `delta` is a distance below a running maximum, in Q(acc_frac), and it is
 // unbounded above.  Converting to base 2 -- `exp(-d) = 2^(-d*log2e)` -- splits
@@ -9,9 +9,9 @@
 // [0,1), which is all the table has to cover.  So the table is 2**LUT_BITS
 // entries no matter how large delta gets.
 //
-// THE TWO-STEP FORM, NOT THE FLAT ONE
+// The two-step form, not the flat one
 // -----------------------------------
-// `ExpLut.__call__` collapses table-then-shift into ONE gather over 4,353
+// `ExpLut.__call__` collapses table-then-shift into one gather over 4,353
 // entries.  That is a numpy optimisation -- it was 28% of the model's runtime
 // as two passes -- and `check_exp_lut_flat_matches_two_step` asserts the two
 // agree on every reachable input.  In hardware the collapse is a pessimisation:
@@ -19,7 +19,7 @@
 // 256 x 16 b of distributed ROM and a barrel shift.  `ExpLut.two_step` is the
 // hardware form and the flat one is the model's.
 //
-// CLAMPING DELTA IS EXACT, NOT A SAFETY NET
+// Clamping delta is exact, not a safety net
 // -----------------------------------------
 // Every delta at or above `DELTA_MAX` maps to the table's terminal zero, so
 // the clamp cannot change a result -- it only keeps the multiply at 20x17
@@ -45,10 +45,10 @@ module exp_lut #(
     localparam int T_W   = SAT_W + $clog2(LOG2E + 1) - ACC_FRAC + 1;
     localparam int I_W   = $clog2(MAX_INT_PART + 2);
 
-    // The fraction table, a FORMAT artifact of `ExpLut.__init__` -- never a
+    // The fraction table, a format artifact of `ExpLut.__init__` -- never a
     // second evaluation of 2**-f here.  Packed LSB-first -- entry `i` at
     // [PROB_BITS*i +: PROB_BITS] -- the same convention as `rot_encode`'s
-    // BOUNDS and `qtab_build`'s CENTROIDS.
+    // Bounds and `qtab_build`'s centroids.
     localparam logic [(1<<LUT_BITS)*PROB_BITS-1:0] TABLE = {
         16'h402c, 16'h4059, 16'h4086, 16'h40b2, 16'h40df, 16'h410c, 16'h4139, 16'h4167,
         16'h4194, 16'h41c2, 16'h41ef, 16'h421d, 16'h424b, 16'h4279, 16'h42a7, 16'h42d5,

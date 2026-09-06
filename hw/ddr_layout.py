@@ -1,11 +1,11 @@
 """Where a compressed KV cache lives in DDR, and why it is not laid out in rows.
 
-THE FLAT ROW LAYOUT CANNOT FEED FOUR PORTS
+The flat row layout cannot feed four ports
 ------------------------------------------
 `plan.MD` specified the cache as packed 52-byte rows at a flat stride, on the
 reasoning that a sequential address pattern is what a prefetcher wants. It is --
 but a row is 52 B and one 128-bit AXI-HP port carries 16 B per cycle, so the
-engine needs FOUR ports running at once and each of them needs its own
+engine needs four ports running at once and each of them needs its own
 sequential stream. A flat row layout gives you one stream, not four.
 
 Splitting the token range into quarters -- port `p` reads tokens
@@ -16,9 +16,9 @@ lane eats, so it can only keep up if its whole quarter is already on chip; the
 same holds for the other three, which is the entire cache resident in BRAM. That
 is precisely the design this project exists to avoid.
 
-SO THE CACHE IS TRANSPOSED: PLANES, NOT ROWS
+So the cache is transposed: planes, not rows
 --------------------------------------------
-Split each row at its FIELD boundaries -- key codes, value codes, norms -- and
+Split each row at its field boundaries -- key codes, value codes, norms -- and
 chop any field longer than a beat into beats. At 4b/2b that is four planes of
 16, 16, 16 and 4 bytes:
 
@@ -27,7 +27,7 @@ chop any field longer than a beat into beats. At 4b/2b that is four planes of
     plane 2   row bytes 32..48   for every token      16 B/token
     plane 3   row bytes 48..52   for every token       4 B/token
 
-Now every port reads ONE plane, perfectly sequentially, and the four together
+Now every port reads one plane, perfectly sequentially, and the four together
 deliver exactly one row per cycle: three ports at a beat per token and the
 fourth at a beat per four tokens. 52 B/cycle out of 64 B/cycle of interface,
 with no reassembly buffer beyond a burst and no port ever reading out of order.
@@ -35,7 +35,7 @@ with no reassembly buffer beyond a burst and no port ever reading out of order.
 The port count falls out rather than being chosen -- it is `ceil(row_bytes/16)`,
 which is the number `plan.MD` already derived from the bandwidth side.
 
-WHY FIELDS AND NOT JUST EVERY 16 BYTES
+Why fields and not just every 16 bytes
 --------------------------------------
 Chopping the row blindly every 16 bytes is simpler and is wrong for half the
 `(key_bits, value_bits)` grid step 15 sweeps. A row is `8*kb + 8*vb + 4` bytes,
@@ -49,7 +49,7 @@ Splitting at fields first cannot produce that. Every field is `8*kb`, `8*vb` or
 `check_every_quantisation_width_gives_beat_friendly_planes` sweeps all 64
 combinations.
 
-THE ROW FORMAT IS UNCHANGED
+The row format is unchanged
 ---------------------------
 This is a layout, not a format. The bytes are the bytes `KVQuantizer.pack`
 wrote, in the order it wrote them; they are grouped differently in memory.
@@ -57,7 +57,7 @@ wrote, in the order it wrote them; they are grouped differently in memory.
 is byte-exact against `pack` for every token and every head, which is the only
 property anything downstream depends on.
 
-PLANES ARE 4 KB ALIGNED, AND PACKED TIGHT WITHIN
+Planes are 4 kb aligned, and packed tight within
 ------------------------------------------------
 Each plane starts on a 4 KB boundary so a burst never straddles a DRAM page
 boundary it did not have to. Within a plane the stride is the plane's own width
@@ -167,11 +167,11 @@ class DdrLayout:
         return len(self.planes)
 
     def plane_span(self, p: int) -> int:
-        """Bytes one plane occupies for one head. The SAME for every plane.
+        """Bytes one plane occupies for one head. The same for every plane.
 
-        EVERY PLANE GETS THE WIDEST PLANE'S SPAN, AND THAT IS THE HARDWARE'S
-        CONSTRAINT SPEAKING
-        ------------------------------------------------------------------
+        Every plane gets the widest plane's span, and that is the hardware's
+        Constraint speaking
+        -------------------
         The obvious map gives each plane exactly the pages its own width needs
         -- at capacity 1,025 that is 20,480 B for the three code planes and
         8,192 B for the 4-byte norms. `attn_top.sv` cannot address it. Its

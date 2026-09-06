@@ -1,104 +1,181 @@
-# `kernel/` — a compressed-KV attention block, from scratch
+# `kernel/` — a compressed KV cache, in numpy and on an FPGA
 
-One attention block as a function: token embeddings in, token embeddings out.
-Written to be dropped into a real LLM, and instrumented so the same code also
-answers what it would cost in hardware.
+One attention block, written twice and checked against itself: a numpy model
+you can drop into a real LLM, and RTL that runs the same arithmetic on a
+ZCU104. The two agree bit for bit.
 
-```python
-from kernel import AttentionKernel, KernelConfig, ModelConfig
-
-k = AttentionKernel(KernelConfig(model=ModelConfig.tinyllama()))
-y, report = k.forward(x)          # (tokens, hidden) -> (tokens, hidden)
-```
-
-Nothing here is shared with `software/`, `hls/` or `chisel/`. It is a separate,
-self-contained package with numpy as its only hard dependency.
-
-## The idea
-
-A cached key is stored as `norm * centroid[code]` in a rotated domain. The
-conventional thing is to rebuild the dense vector and then dot it with the
-query. This never does:
+The point of the design is that a cached key is never decompressed. It is
+stored as `norm * centroid[code]` in a rotated space, and the score is computed
+straight off the codes:
 
 ```
 <q, k>  =  <R q, R k>                     R is orthonormal
         =  <rq, norm * centroid[code]>
 ```
 
-so the dot product runs directly on the codes. The query is rotated **once**
-per step; no cached token is ever touched by a rotation and no dense key or
-value is ever materialised. The same holds on the value side, which is why the
-output stays in the rotated domain and `R⁻¹` is folded into `W_o` offline.
+The query is rotated once per step. No cached token is ever rotated, and no
+dense key or value is ever built. The same trick works on the value side, so
+the output stays in the rotated space and `R⁻¹` is folded into `W_o` once,
+offline.
 
-## The pipeline
+## Where it runs
+
+Llama 3.2 1B, all sixteen layers' attention on the board, one token at a time,
+with every cache row written by the FPGA's own AXI write master. Nothing is
+preloaded and there is no prefill anywhere.
+
+| | |
+|---|---|
+| decode steps checked against numpy | **4,096 of 4,096 bit-exact** |
+| perplexity, fp32 → 4b/2b on the board (4,096 tokens) | **9.074 → 10.640 (1.173×)** |
+| cache size | **4.92× smaller** |
+| decode step, on the device | 22–26 µs |
+| decode step, over the wire (UDP) | 1.5 ms |
+| scan rate at context 32,768 | 1.14 cycles/row, 11.3 GB/s |
+| timing, whole system at 250 MHz | WNS +0.161 ns, 143,181 FF |
+
+So 4-bit keys and 2-bit values cost about 17% of perplexity and save about 5×
+of cache. That is the trade the whole design exists to make, and it is measured
+end to end with the hardware in the loop rather than modelled.
+
+`plan.MD` is the engineering log: what was built, in what order, what broke,
+and what is still open.
+
+## The two halves, and the seam between them
+
+Attention is split in one place, right after RoPE:
 
 ```
 x ─┬─ W_q ─┐
-   ├─ W_k ─┼─ 3 systolic arrays, fp16 × fp16 → fp32
+   ├─ W_k ─┼─ projections                        HOST
    └─ W_v ─┘
           │
-     fp32 → Q(qk_frac)        ← ops/convert.py, the ONE cast in the package
+     fp32 → Q8.16                 ← ops/convert.py, the one cast in the package
           │
-        RoPE                  ← position enters here, before the cache
+        RoPE                      ← position enters here, before the cache
           │
-     R (randomized Hadamard)  ← q, k and v, two rounds
+════════════ the seam: 24-bit lanes, 3 beats a vector ════════════
           │
-   quantize K,V → cache       ← never rotated or dequantized again
+     R (randomized Hadamard)      ← one round, on q, k and v
           │
-     attend on codes          ← online or two-pass softmax, fixed point
+   quantize K,V → DDR cache       ← never rotated or decompressed again        FPGA
           │
-        W_o'                  ← R⁻¹ already folded in
+     score on codes → online softmax → accumulate
+          │
+════════════ back across the seam: Q16, merge_heads order ════════════
+          │
+        W_o'                      ← R⁻¹ already folded in                      HOST
 ```
 
-## Architecture
+Everything above the seam is O(1) in context. Everything below it is the KV
+cache, which is the thing being measured — so 100% of the FPGA's DDR traffic is
+cache traffic, and no byte of it is weight streaming.
 
-**Ops emit values and a trace; the hardware model replays the trace to produce
-cycles.** Timing is an observer, never a participant. No op can see a
-`HardwareConfig`, so the hardware model cannot change a numeric result —
-asserted directly in `tests/test_kernel.py::check_hardware_config_cannot_change_a_value`.
+## Running it
 
-The consequence that matters: with timing off this is a plain attention module
-you can graft into a model; with timing on it is an accelerator model. Same
-code, not two implementations kept in agreement by hand.
+The numpy side needs only numpy:
 
-| module | responsibility |
+```bash
+.venv/bin/python -m kernel.tests.run          # 170 checks, no pytest needed
+.venv/bin/python -m kernel.demo 512           # cost of a decode step at context 512
+```
+
+The RTL benches are self-checking and run under Icarus:
+
+```bash
+./scripts/regress.sh                          # all 12 benches
+./scripts/regress.sh finalize                 # just the ones matching "finalize"
+```
+
+Icarus lives in the `ubuntu-work` distrobox rather than on the RHEL host, and
+the script enters it for you. Vivado and Vitis are the other way round, host
+only. Set `KERNEL_NO_DISTROBOX=1` if you are already inside the container.
+
+The benches read their goldens out of `tb/vectors/`, which comes from
+`python -m kernel.hw.vectors`. Regenerating those files and re-running the
+benches is what checks the model and the RTL against each other.
+
+The board goes through one wrapper, which picks the working directory and the
+interpreter, reprograms the board if it does not answer a ping, captures the
+UART to `/tmp/attn.log`, and prints the board's own lines at the end:
+
+```bash
+./scripts/attn infer --tokens 8 --trace    # all 16 layers, live, over UDP
+./scripts/attn ppl   --tokens 4096         # perplexity, board against baseline
+./scripts/attn diff                        # board's cache bytes vs the host's
+./scripts/attn infer --cpu-only            # the control: no board, no sudo
+```
+
+Add `--no-verify` to skip the per-step comparison against numpy. That check is
+O(context) and dominates a long run — at context 4,096 it is 675 ms a
+layer-step against 9 ms for the ingress the board actually needs. Verify while
+you are establishing that a configuration is exact; turn it off to measure.
+
+Against the real model on the host alone (needs `transformers`):
+
+```bash
+.venv/bin/python kernel/experiments/single_layer.py     # one layer vs LlamaAttention
+.venv/bin/python kernel/experiments/full_model.py 400   # every layer, perplexity
+.venv/bin/python -m kernel.experiments.ablate_bits 400  # keys vs values
+.venv/bin/python kernel/experiments/generate.py         # actual text
+```
+
+## How the package is put together
+
+The rule that shapes everything: **ops produce values and a trace; the hardware
+model replays the trace to produce cycles.** Timing watches, it never takes
+part. No op can see a `HardwareConfig`, so the hardware model cannot change a
+number — `tests/test_kernel.py::check_hardware_config_cannot_change_a_value`
+asserts exactly that.
+
+What that buys: with timing off this is an ordinary attention module you can
+graft into a model, and with timing on it is an accelerator model. One
+implementation, not two kept in step by hand.
+
+| module | what it is for |
 |---|---|
 | `kernel.py` | composition — the only file that knows the pipeline order |
 | `weights.py` | the four projections, with the offline folds applied |
 | `ops/` | pure functions: project, rope, rotate, quantize, attention, output |
-| `hw/` | cycles and bytes, replayed from a trace |
-| `cache/` | `KVCache` interface; dense fp16 and compressed implementations |
-| `numerics/` | `fp.py` (fp16×fp16→fp32) and `fixed.py` (**the only narrowing**) |
-| `trace.py` | the seam between the two halves |
+| `cache/` | the `KVCache` interface, dense fp16 and compressed |
+| `numerics/` | `fp.py` (fp16×fp16→fp32) and `fixed.py` (the only narrowing) |
+| `hw/` | cycles and bytes replayed from a trace, and the golden vectors |
+| `host/` | talking to the board: UDP, raw Ethernet, JTAG |
+| `rtl/`, `tb/` | the SystemVerilog and its benches |
+| `sw/` | what runs on the board's A53 |
+| `trace.py` | the seam between values and timing |
 | `config.py` | one validated dataclass tree |
 
 Three rules the package holds itself to:
 
-1. **One float→fixed cast**, in `ops/convert.py`. A cast added wherever
-   convenient is how two implementations of the same arithmetic come to
-   disagree on inputs nobody tested.
-2. **One narrowing module.** Intermediates are int64 and grow naturally; a
-   value narrows only at a named `Q.rshift` / `Q.clamp` / `Q.from_float`.
-3. **Prefill and decode are the same code.** `forward` takes `(tokens, hidden)`;
-   one row is a decode step. There is no separate steady-state path.
+1. **One float→fixed cast**, in `ops/convert.py`. A cast added wherever it was
+   convenient is how two implementations of the same arithmetic end up
+   disagreeing on inputs nobody tested.
+2. **One narrowing module.** Intermediates stay int64 and grow. A value only
+   gets narrower at a named `Q.rshift`, `Q.clamp` or `Q.from_float`.
+3. **Prefill and decode are the same code.** `forward` takes
+   `(tokens, hidden)`; one row is a decode step. There is no separate
+   steady-state path.
 
 ## No calibration files
 
-Rotating by a randomized Hadamard makes the channels near-Gaussian — that is
-what the rotation is *for* — so the optimal scalar codebook afterwards is the
-Lloyd–Max quantizer for `N(0,1)`, a pure function of the bit-width.
-`Codebook.gaussian(bits)` derives it at construction.
+Rotating by a randomized Hadamard makes the channels close to Gaussian — that
+is what the rotation is *for* — so the best scalar codebook afterwards is the
+Lloyd–Max quantizer for `N(0,1)`, which depends on the bit-width and nothing
+else. `Codebook.gaussian(bits)` works it out at construction.
 
-That deletes a whole class of infrastructure: no calibration pass, no exported
-ROM, no JSON that hardware and golden model must be kept in sync on, and no way
-for a cache written under one calibration to be read under another. It is
+That removes a whole class of infrastructure: no calibration pass, no exported
+ROM, no JSON the hardware and the model have to be kept in sync on, and no way
+to write a cache under one calibration and read it under another. The result is
 checked against the published Max & Lloyd optima
 (`tests/test_codebook.py::check_matches_published_lloyd_max`).
 
-**The rotation uses one round, and that is a measured choice.** It was two for a
-while, on the grounds that a single `HD` overshoots: applied to a one-hot vector
-it gives `±1/√d` in every channel — a two-point distribution, excess kurtosis
-exactly −2. Measured:
+## One rotation round, not two
+
+The default is one round, and that was a measured decision rather than a
+guess. Two rounds looks better on paper: a single `HD` applied to a one-hot
+vector gives `±1/√d` in every channel, which is a two-point distribution with
+excess kurtosis of exactly −2.
 
 | input | 1 round | 2 rounds |
 |---|---|---|
@@ -106,33 +183,25 @@ exactly −2. Measured:
 | 4 outlier channels ×30 | −0.87 | −0.14 |
 | student-t, df = 2.5 | −0.26 | −0.08 |
 
-All true, and **it does not predict quality**. Measured end to end on WikiText-2
-(12 windows, paired, TinyLlama at 1024 context, 4b keys / 2b values), one round
-beats two by **1.3% perplexity, significant at 2.8 standard errors**; three
-rounds is indistinguishable from two.
+All of that is true, and none of it predicts quality. Measured end to end on
+WikiText-2 (12 windows, paired, TinyLlama at 1024 context, 4b keys / 2b
+values), one round beats two by **1.3% perplexity, at 2.8 standard errors**.
+Three rounds is indistinguishable from two.
 
-The mechanism is probably the truncation: the `1/√d` scale is applied *inside*
-each round, so a second round floors the value a second time, and that costs
-more than the distributional gain returns. Kurtosis measures how Gaussian the
-channels look, not what the quantizer can cash in — a proxy that resembles the
-objective is not the objective, and the only way to find that out was to measure
-the thing being optimised.
+The likely reason is truncation. The `1/√d` scale is applied *inside* each
+round, so a second round rounds the value off a second time, and that costs
+more than the better distribution gives back. Kurtosis says how Gaussian the
+channels look, not what the quantizer can actually use. A proxy that resembles
+the objective is not the objective, and the only way to find that out was to
+measure the thing we actually cared about.
 
+One round is also half the hardware. See `experiments/ablate.py`.
 
-Three rules the package holds itself to:
+## What the widths cost
 
-1. **One float→fixed cast**, in `ops/convert.py`. A cast added wherever
-   convenient is how two implementations of the same arithmetic come to
-   disagree on inputs nobody tested.
-2. **One narrowing module.** Intermediates are int64 and grow naturally; a
-   value narrows only at a named `Q.rshift` / `Q.clamp` / `Q.from_float`.
-3. **Prefill and decode are the same code.** `forward` takes `(tokens, hidden)`;
-   one row is a decode step. There is no separate steady-state path.One round is also half the butterfly. See `experiments/ablate.py`.
-
-## Measured on the real model
-
-TinyLlama-1.1B, **all 22 layers grafted**, transformers 5.16.1, perplexity over
-400 tokens of real text (`experiments/full_model.py`).
+TinyLlama-1.1B, all 22 layers grafted, perplexity over 400 tokens
+(`experiments/full_model.py`). These are host-side numbers and predate the
+board.
 
 | configuration | ppl | vs base | B/tok/layer | vs fp16 |
 |---|---|---|---|---|
@@ -144,12 +213,12 @@ TinyLlama-1.1B, **all 22 layers grafted**, transformers 5.16.1, perplexity over
 | key 3b / value 2b | 13.902 | 1.223× | 176 | 5.82× |
 | key 2b / value 2b | 34.725 | 3.056× | 144 | 7.11× |
 
-**The control row is the important one.** With quantisation off, the kernel
-reproduces the real model's perplexity exactly — so projection, the fp→fixed
-cast, RoPE, the two-round rotation, the codes path and the `W_o` fold are all
-right, and every row below it is attributable to compression alone. At the
-single-layer level the same control matches `LlamaAttention` to **4.4e-4
-relative, cosine 1.000000** (`experiments/single_layer.py`).
+The control row is the one that matters. With quantisation off the kernel
+reproduces the real model's perplexity exactly, so the projections, the cast,
+RoPE, the rotation, the codes path and the `W_o` fold are all correct, and
+every row below it is attributable to compression alone. At the single-layer
+level the same control matches `LlamaAttention` to 4.4e-4 relative, cosine
+1.000000 (`experiments/single_layer.py`).
 
 ### Keys are expensive; values are nearly free
 
@@ -163,104 +232,63 @@ Sweeping one width with the other fixed at 4 bits (`experiments/ablate_bits.py`)
 | 3 | **1.141×** | 1.044× |
 | 2 | **2.351×** | **1.066×** |
 
-Keys fall off a cliff below 4 bits — 3 bits costs 14%, 2 bits destroys the
-model. Values degrade gracefully: going all the way to 2 bits costs 6.6%.
+Keys fall off a cliff below 4 bits: 3 bits costs 14%, 2 bits destroys the
+model. Values degrade gracefully — going all the way down to 2 bits costs 6.6%.
 
-So the two planes should **not** be the same width, and the value plane is
-where the bits should come from first. `key_bits=4, value_bits=2` is the best
-point measured: **4.92× at +6.6% perplexity**. A symmetric format at the same
-size (3b/2b, 5.82×) costs +22.3% — over three times the damage for 18% more
-compression.
-
-### It generates text
-
-`experiments/generate.py`, greedy decoding, all 22 layers grafted. At 4b/3b the
-output is nearly token-identical to the baseline; at 3b/2b it diverges but
-stays coherent and on-topic.
-
-## What the hardware model says
-
-TinyLlama shape (2048 hidden, 32 heads, 4 KV heads, d=64), 3-bit keys / 2-bit
-values, 128×128 arrays, 256-bit port, one decode step at context 513:
-
-```
-traffic    18,874,368 B weights + 722,480 B KV = 19,596,848 B (96% weights)
-q_array    327,424 cyc  bound by weights  util 0.08%
-```
-
-Two findings fall straight out, and both are asserted as tests rather than
-described:
-
-- **Decode projection is a GEMV, so every array is weight-bound at ~0.08%
-  utilisation.** Every weight is used exactly once, so arithmetic intensity is
-  1 MAC per weight. Growing the array 16× buys under 2×. Widening the *port*
-  is what moves the bound. (`test_hardware.py::check_gemv_is_weight_bound_and_no_array_size_fixes_it`)
-- **Weight streaming is 96% of decode traffic at context 513**, 26× the KV
-  cache. Compressing the cache 5.8× removes 15% of total traffic — real, but
-  not the headline the byte ratio alone suggests.
-
-The crossover where an array stops being weight-bound is computable, not a
-matter of taste: a 128×128 tile on a 256-bit port needs a batch of **1024** to
-saturate, which is far more than decode ever has.
-
-## Running it
-
-```bash
-.venv/bin/python -m kernel.tests.run          # 74 checks, no pytest needed
-.venv/bin/python -m kernel.demo 512           # cost of a decode step at context 512
-```
-
-Against the real model (needs `transformers`; downloads TinyLlama on first run):
-
-```bash
-.venv/bin/python kernel/experiments/probe_contract.py   # what a decoder layer passes
-.venv/bin/python kernel/experiments/single_layer.py     # one layer vs real LlamaAttention
-.venv/bin/python kernel/experiments/full_model.py 400   # all 22 layers, perplexity
-.venv/bin/python -m kernel.experiments.ablate_bits 400  # keys vs values
-.venv/bin/python kernel/experiments/generate.py         # actual text
-```
+So the two planes should not be the same width, and the value plane is where
+the bits should come from first. `key_bits=4, value_bits=2` is the best point
+measured. A symmetric format of about the same size (3b/2b, 5.82×) costs 22.3%,
+which is more than three times the damage for 18% more compression.
 
 ## Grafting into a real model
 
 ```python
-from kernel.adapters.torch_llama import graft, compare_against_original
+from kernel.adapters.torch_llama import graft
+from kernel import QuantConfig
 
-original = graft(model, layers=[10], quant=QuantConfig(key_bits=3, value_bits=2))
+original = graft(model, layers=[10], quant=QuantConfig(key_bits=4, value_bits=2))
 ```
 
 torch is imported lazily and is not a package dependency.
 
+Note that `QuantConfig` defaults to `key_bits=3`, while the bitstream is built
+for 4. Passing the widths explicitly is worth the keystrokes: a mismatch here
+cost a full day once, because it produces a cache the hardware writes at one
+row length and the host computes at another, and almost every symptom looks
+like a datapath fault. `FpgaLayers` now checks the row width against the
+bitstream before the first token.
+
 ## Known limits — carry these, do not drop them
 
-1. **The adapter is verified against transformers 5.16.1 and nothing else.**
-   That contract moves: 5.x nests `rope_theta` inside `rope_parameters`, and the
-   layer passes `position_ids` rather than `cache_position`. Re-run
-   `experiments/single_layer.py` after any version bump — its dense-mode row is
-   the plumbing check, and it must come back at cosine 1.000000.
-2. **`attention_mask` is ignored** and batch > 1 is refused rather than
-   tolerated. The kernel is causal by construction, which covers decoding, but
-   not padded batches or custom masks.
-3. **Prefill and decode are not bit-identical** — they agree to ~2e-7 relative.
-   The fp32 GEMM blocks differently for different batch sizes, so its
-   accumulation order changes. Everything downstream of the fixed-point
-   boundary is exact; this residual is fp32 reassociation and nothing else.
-4. **Online and two-pass softmax are not bit-identical either**, and must not
+1. **Batch > 1 and `attention_mask` are refused**, not tolerated. The kernel is
+   causal by construction, which covers decoding but not padded batches or
+   custom masks. The FPGA block is decode-only by design.
+2. **`head_dim` must be a power of two.** The rotation is a Walsh–Hadamard
+   butterfly and has no other form. This is an architectural limit, not an
+   unimplemented case. `d = 64` also makes the `1/√d` scale an exact shift.
+3. **The adapter is verified against transformers 5.16.1 and nothing else.**
+   That contract moves — 5.x nests `rope_theta` inside `rope_parameters`, and
+   the layer passes `position_ids` rather than `cache_position`. Re-run
+   `experiments/single_layer.py` after any version bump; its dense row must
+   come back at cosine 1.000000.
+4. **Prefill and decode are not bit-identical**, they agree to about 2e-7
+   relative. The fp32 GEMM blocks differently at different batch sizes, so its
+   accumulation order changes. Everything below the fixed-point boundary is
+   exact; this is fp32 reassociation and nothing else.
+5. **Online and two-pass softmax are not bit-identical either**, and must not
    be asserted to be. The online form truncates the accumulator once per
-   rescale event. `forward` uses two-pass; the online form is what hardware
-   would run, and the gap is measured, not assumed.
-5. **`Weights.random` is stimulus, not a quality claim.** Nothing about
-   perplexity can be argued from a run on synthetic weights — `demo.py` uses
-   them, the experiments use the real checkpoint.
-6. **Perplexity is over 400 tokens of one passage.** Enough to separate a 2%
-   effect from a 22% one, which is what the tables above are used for. NOT
-   enough for a publishable quality claim, and the passage is in-domain for the
-   text the sweep discusses. A real evaluation needs a held-out corpus.
-7. **The grafted model writes zeros into `past_key_values`.** That object is
-   bookkeeping only — the kernel never reads it — but it means the model's own
-   cache holds nothing useful, and anything that inspects it will be misled.
-8. **The cycle model is post-synthesis-free.** It is an analytical schedule
-   model with a stated dataflow (output-stationary, tiles not overlapped), not
-   a number from a synthesis tool. Its value is in showing which bound binds.
-9. **`d_head` must be a power of two.** The rotation is a Walsh–Hadamard
-   butterfly and has no non-power-of-two form. This is an architectural limit,
-   not an unimplemented case.
+   rescale. The hardware runs online; `forward` runs two-pass.
+6. **The grafted model writes zeros into `past_key_values`.** That object is
+   bookkeeping only and the kernel never reads it, but anything inspecting it
+   will be misled.
+7. **Bit-exactness is established up to context 4,096**, and only up to 256
+   with live model activations. The datapath is checked at contexts 64, 256,
+   1,024 and 8,192 on synthetic vectors. Nothing has been checked at 32,768.
+8. **Perplexity is one corpus and one checkpoint**, measured over a single
+   contiguous passage of WikiText-2 rather than sampled windows. It also mixes
+   "how good is 4b/2b" with "how much context was available", because the
+   context grows through the run.
+9. **The cycle model in `hw/` is analytical.** It is a schedule model with a
+   stated dataflow, not a number from a synthesis tool. Its value is in showing
+   which bound binds. The board numbers at the top of this file are measured;
+   these are not.

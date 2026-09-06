@@ -1,6 +1,6 @@
 """The Python side of `host/attn_proto.h`, and the packing that feeds it.
 
-TWO DEFINITIONS OF ONE WIRE FORMAT
+Two definitions of one wire format
 ----------------------------------
 The board's server is C and the host is Python, because the host is where torch
 runs. So the format exists twice, and two definitions of one format is exactly
@@ -9,7 +9,7 @@ with itself. `tests/test_proto.py` compiles the header and compares the offsets
 and sizes it reports against the `struct` strings here, so a field added to one
 and not the other fails a test rather than a board run.
 
-THE PAYLOAD IS NOT ENCODED HERE
+The payload is not encoded here
 -------------------------------
 `step_request` takes the ingress bytes as `hw/vectors.py` already packs them
 and puts them on the wire unchanged. There is no second packer: a request's
@@ -46,9 +46,9 @@ STATUS_NAME = {
     EDMA: "dma error", ERANGE: "a channel escaped the 24-bit seam",
 }
 
-# `<` is little-endian AND no padding, and the C header has no field wider
+# `<` is little-endian and no padding, and the C header has no field wider
 # than 4 bytes so that nothing is padded there either. A `uint64_t` for
-# `cache_base` pads twice -- before the field AND at the end of the struct,
+# `cache_base` pads twice -- before the field and at the end of the struct,
 # because `sizeof` must be a multiple of the alignment -- and `tests/
 # test_proto.py` caught both. The address is split the way `attn_ctrl`'s own
 # register map splits it, into BASE_LO and BASE_HI.

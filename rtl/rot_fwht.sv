@@ -1,6 +1,6 @@
 // Forward randomized Walsh-Hadamard rotation for the d=64 attention seam.
 //
-// This is deliberately NOT a generic transform.  The accelerator format is
+// This is deliberately not a generic transform.  The accelerator format is
 // one round of R = H D / sqrt(64): 64 signed Q8.16 lanes, a seed-selected
 // sign diagonal, six add/subtract levels, and an exact arithmetic >> 3.
 // Other dimensions need the reciprocal-multiply path in ops/rotate.py and
@@ -55,7 +55,7 @@ module rot_fwht #(
             wire signed [IN_BITS-1:0] lane = in_vec[g*IN_BITS +: IN_BITS];
             wire signed [WIDE-1:0] lane_extended =
                 {{(WIDE-IN_BITS){lane[IN_BITS-1]}}, lane};
-            // Extend BEFORE negating: -24'sh800000 is +2^23, which does not
+            // Extend before negating: -24'sh800000 is +2^23, which does not
             // fit in 24 signed bits but does fit in this internal width.
             assign signed_in[g] = SIGN_NEG[g] ? -lane_extended : lane_extended;
 
@@ -66,7 +66,7 @@ module rot_fwht #(
     endgenerate
     assign range_error = |range_bad;
 
-    // bN is the combinational result of FWHT stage N.  A stage with h pairs
+    // bN is the combinational result of Hadamard stage N.  A stage with h pairs
     // the low and high halves of each 2h-sized group: [lo+hi, lo-hi].
     integer i, group;
     always_comb begin

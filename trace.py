@@ -8,13 +8,13 @@ None` check.
 The hardware models in `kernel.hw` consume the trace afterwards and turn it
 into cycles. Nothing flows back.
 
-WHY THIS SHAPE
+Why this shape
 --------------
-It makes an invariant mechanical rather than aspirational: **the hardware
-configuration cannot change a numeric result**, because no op can see it. That
-is what lets the same kernel be a plain attention module inside a real model
-(no trace) and an accelerator model (trace attached) without two code paths
-that must be kept in agreement by hand.
+It turns an invariant into something mechanical rather than aspirational: the
+hardware configuration cannot change a numeric result, because no op can see
+it. That is what lets the same kernel be a plain attention module inside a real
+model (no trace) and an accelerator model (trace attached), instead of two code
+paths somebody has to keep in agreement by hand.
 
 It also means a trace is a complete, inspectable account of a step. A
 bytes/token figure is read off `MEM_READ` records, not declared in a document

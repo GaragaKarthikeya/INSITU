@@ -1,16 +1,16 @@
 // 512-bit AXI4-Stream in, one 1,536-bit rotated-lane vector out.
 //
-// WHY THIS IS A SHIFT REGISTER AND A COUNTER, AND NOTHING MORE
-// -----------------------------------------------------------
+// Why this is a shift register and a counter, and nothing more
+// ------------------------------------------------------------
 // `d = 64` lanes of Q8.16 in 24 bits is 1,536 b, which is exactly three
 // 512-bit beats, so there is no TKEEP to decode and no partial beat to hold.
-// A LANE still straddles a beat boundary -- 24 does not divide 512 -- but the
+// A lane still straddles a beat boundary -- 24 does not divide 512 -- but the
 // straddle disappears the moment three beats are concatenated, which is what
 // this block does. `hw/vectors.py::beats` is the other end of the convention:
-// byte 0 of the stream is bits [7:0] of beat 0, so beat 0 is the LOW beat of
+// byte 0 of the stream is bits [7:0] of beat 0, so beat 0 is the low beat of
 // the vector.
 //
-// THE GROUP STRUCTURE IS COUNTED HERE, NOT IN THE FSM
+// The group structure is counted here, not in the FSM
 // ---------------------------------------------------
 // The stream is 8 groups of 6 vectors, `[k][v][q0..q3]`. `out_idx` says which
 // of the six a vector is and `out_group` which group, so `attn_top`'s control

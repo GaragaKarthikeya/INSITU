@@ -141,7 +141,7 @@ def check_the_norm_plane_is_not_padded_to_a_beat():
     lay = DdrLayout.for_quant(QuantConfig(key_bits=4, value_bits=2), 64, 8, 4096)
     norms = lay.planes[-1]
     assert norms.width == 4
-    # The property is the STRIDE WITHIN the plane, not the plane's total span:
+    # The property is the stride within the plane, not the plane's total span:
     # consecutive tokens are 4 B apart, so the port reads 4 B/token and the
     # engine stays at 52 B/cycle. The span itself is padded to the widest
     # plane's, which the hardware requires and which no port ever reads into --

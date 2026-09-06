@@ -1,15 +1,15 @@
 // RMS of a rotated vector, at wire precision.  `ops/quantize.py::_norm_wire`.
 //
-// THE NORM IS QUANTIZED BEFORE THE THRESHOLDS ARE BUILT FROM IT
+// The norm is quantized before the thresholds are built from it
 // -------------------------------------------------------------
 // The decoder only ever sees the norm at Q(NORM_FRAC).  If `rot_encode`
 // thresholded against a wider norm than the one written to the cache row, the
 // encoder and the decoder would be working from different numbers and a
 // channel near a boundary would decode into the wrong bin.  So this block is
-// the ONLY producer of the norm: it rounds to the wire format, and everything
+// the only producer of the norm: it rounds to the wire format, and everything
 // downstream -- the thresholds included -- consumes what it emitted.
 //
-// Rounding is half-to-EVEN, not half-up.  Norms are always positive, so a
+// Rounding is half-to-even, not half-up.  Norms are always positive, so a
 // floor or a half-up biases every one of them the same way and the bias
 // accumulates across a whole cache instead of averaging out.
 `timescale 1ns/1ps
@@ -21,7 +21,7 @@ module rot_norm #(
     parameter int NORM_FRAC = 9,
     // Squarers instantiated.  D/LANES cycles per vector, and the only
     // area/throughput knob in the block.  Phase A runs once per token against
-    // a Phase B that runs once per CACHED token, so this is deliberately not
+    // a Phase B that runs once per cached token, so this is deliberately not
     // 64: 64 squarers would buy back cycles that nothing is waiting on.
     parameter int LANES     = 8
 ) (
@@ -67,7 +67,7 @@ module rot_norm #(
     logic [$clog2(STEPS):0] step;
     logic busy;
     logic [2*IN_BITS-1:0] prod [0:LANES-1];
-    // The SELECTED lanes, registered.  `step` fans out across all 64 words of
+    // The selected lanes, registered.  `step` fans out across all 64 words of
     // `held` and the squarers are DSPs, so reading through that mux and into
     // the multiply in one cycle left 20 endpoints at -0.011 ns once the whole
     // block was placed.  One more cycle on a unit that runs once per token.
@@ -86,7 +86,7 @@ module rot_norm #(
             tree = tree + SQ_W'(prod[l]);
         // `p_first` and not `!busy`: by the time the first group's squares
         // reach this adder the accumulator is already several cycles into the
-        // NEXT vector's schedule, and restarting from a stale acc there is the
+        // Next vector's schedule, and restarting from a stale acc there is the
         // kind of bug that only appears on the second vector.
         sum_next = (p_first ? '0 : acc) + tree;
     end
@@ -126,7 +126,7 @@ module rot_norm #(
     generate
         genvar st;
         for (st = 0; st < ROOT_W; st = st + 1) begin : sqrt_stage
-            // PREV keeps the index inside the array on stage 0, whose real
+            // `prev` keeps the index inside the array on stage 0, whose real
             // inputs are the seed wires; a bare rad[st] there reads element 0,
             // which does not exist.
             localparam int PREV = (st == 0) ? 1 : st;

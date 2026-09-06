@@ -1,6 +1,6 @@
 """Weights for one attention block, with the offline transforms already applied.
 
-WHAT "OFFLINE" MEANS HERE
+What "offline" means here
 -------------------------
 Two transforms belong to weight-loading, not to a decode step:
 
@@ -30,7 +30,7 @@ from .ops.rotate import Rotation
 
 @dataclass(frozen=True)
 class Weights:
-    """The four projections. `o` is ALREADY folded -- see `prepare`."""
+    """The four projections. `o` is already folded -- see `prepare`."""
 
     q: np.ndarray      # (num_heads * head_dim, hidden)
     k: np.ndarray      # (num_kv_heads * head_dim, hidden)
@@ -106,7 +106,7 @@ class Weights:
         `scale` defaults to `1/sqrt(fan_in)`, which is what an initialiser and a
         trained checkpoint both roughly produce, so activations land in the same
         order of magnitude as the real thing. This is stimulus for exercising
-        the datapath, NOT a model-quality claim -- nothing about perplexity can
+        the datapath, not a model-quality claim -- nothing about perplexity can
         be argued from a run on these.
         """
         rng = np.random.default_rng(seed)

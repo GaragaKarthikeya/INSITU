@@ -1,8 +1,8 @@
 // Self-checking testbench for attn_top.sv: the whole block, end to end.
 //
-// THE GOLDEN IS `out.online.hex`, AND IT IS THE SEAM
+// The golden is `out.online.hex`, and it is the seam
 // --------------------------------------------------
-// `forward` runs the two-pass softmax and the two are NOT bit-identical -- the
+// `forward` runs the two-pass softmax and the two are not bit-identical -- the
 // online form truncates the accumulator once per rescale. The hardware is
 // online, so `out.online.hex` is the file this bench checks, exactly as
 // `plan.MD` says. A bench written against `out.hex` can never pass, and both
@@ -15,7 +15,7 @@
 // once, which is the only thing this level can check that the block benches
 // cannot.
 //
-// THE NEW TOKEN IS BLANKED IN DDR, ON PURPOSE
+// The new token is blanked in DDR, on purpose
 // -------------------------------------------
 // `ddr_image.hex` holds all 65 tokens, token 64 included, because the kernel
 // had already appended it when `collect` copied the cache. If the bench left
@@ -25,10 +25,10 @@
 // before the run, and the only way it comes back is through `kv_write`'s four
 // AXI writes. The blanking is asserted to actually break the answer first.
 //
-// BACK-PRESSURE ON BOTH SIDES
+// Back-pressure on both sides
 // ---------------------------
 // The second run stalls the ingress stream, stalls the egress stream, and
-// stalls R at random inside the DDR. The result must be BIT-IDENTICAL to the
+// stalls R at random inside the DDR. The result must be BIT-identical to the
 // first run, not merely still plausible: a block that only works when nothing
 // ever waits is a block that fails the first time the softmax rescales.
 `timescale 1ns/1ps
@@ -204,12 +204,12 @@ module tb_attn;
     int sent = 0, got = 0;
     logic [HEADS*D*W-1:0] result;
     logic stall_in = 0, stall_out = 0;
-    // The stream is fed only AFTER `start`: `attn_ingress` clears its beat
+    // The stream is fed only after `start`: `attn_ingress` clears its beat
     // counter on that pulse, so a beat pushed in beside it is counted by the
     // driver and dropped by the DUT, and the step then waits forever for a
     // vector that is one beat short.
     logic feeding = 0;
-    // A CYCLE counter, not `$time`: the clock period is 4 time units and any
+    // A cycle counter, not `$time`: the clock period is 4 time units and any
     // modulus that divides it turns a random-looking stall into a permanent
     // one -- `($time/4) % 5` is zero on every single cycle, which held the
     // egress stream off forever and looked exactly like a deadlocked DUT.
@@ -293,7 +293,7 @@ module tb_attn;
         $display("  scan %0d cycles, busy %0d (bench measured %0d)",
                  scan_cycles, busy_cycles, cycles);
         // The counters step 13 divides a bandwidth by. `busy_cycles` is
-        // checked against the bench's OWN clock rather than against itself:
+        // checked against the bench's own clock rather than against itself:
         // a counter that only agrees with the design it lives in would report
         // a confident number for a step that never happened.
         check(busy_cycles >= cycles - 2 && busy_cycles <= cycles + 2,
@@ -315,7 +315,7 @@ module tb_attn;
         //
         // Without this the run above proves nothing about the write path: the
         // image already contained token 64, so a DUT that wrote nothing would
-        // have read the right row anyway. Here the row is blanked AND the write
+        // have read the right row anyway. Here the row is blanked and the write
         // path is starved of its own data by holding the memory unwritten, so
         // the answer must change.
         reload_image(1);

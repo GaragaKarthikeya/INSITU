@@ -29,10 +29,15 @@ def matvec(w: np.ndarray, x: np.ndarray) -> np.ndarray:
     layout every checkpoint uses, kept rather than transposed so a weight
     tensor can be handed over without a copy.
 
-    The accumulation ORDER is left to numpy here. Order matters in floating
-    point, and the cycle-accurate array in `hw.pe_array` reduces in its own
-    order; `tests/test_pe_array.py` pins the two together rather than assuming
-    they agree.
+    The accumulation order is left to numpy here. Order matters in floating
+    point, so if you need a specific order, use `matvec_ordered` instead and
+    say what the chunk size is.
+
+    Note that `hw/pe_array.py` cannot be compared against this. It is a cycle
+    model: it is handed shapes, never values, and it returns cycle counts. A
+    comment here used to claim the two were pinned bit-for-bit by a test, and
+    that test never existed -- it could not have, because there is no number
+    coming out of the array model to compare.
     """
     w16 = to_fp16(w)
     x16 = to_fp16(x)
@@ -42,11 +47,10 @@ def matvec(w: np.ndarray, x: np.ndarray) -> np.ndarray:
 def matvec_ordered(w: np.ndarray, x: np.ndarray, chunk: int) -> np.ndarray:
     """`matvec`, reducing in explicit `chunk`-sized partial sums.
 
-    This is the accumulation tree an array of `chunk` rows produces: each pass
-    over the reduction dimension yields a partial sum, and the partials are
-    added in pass order. Given the same `chunk` as the array's row count, the
-    result is bit-identical to the PE model, which is what makes the PE model
-    checkable against something fast.
+    This is the accumulation tree an array of `chunk` rows would produce: each
+    pass over the reduction dimension gives a partial sum, and the partials are
+    added in pass order. Pass the array's row count as `chunk` and you get the
+    order that hardware would accumulate in.
     """
     w16 = to_fp16(w).astype(ACC)
     x16 = to_fp16(x).astype(ACC)

@@ -2,17 +2,17 @@
 //
 //     s_t = clamp( (sum_ch qtab[ch][kcode[ch]]) * k_norm  >>  SCORE_SHIFT )
 //
-// THE INNER LOOP HAS NO MULTIPLIER IN IT
+// The inner loop has no multiplier in it
 // --------------------------------------
 // The per-channel product `q_rot[ch] * centroid[kcode[ch]]` was already
 // computed by `qtab_build.sv`, once per query vector, because the codebook has
 // only 2**KEY_BITS distinct values.  So a cached token costs D gathers, a
-// six-level adder tree, and ONE multiply by the row's norm -- two DSPs, not
+// six-level adder tree, and one multiply by the row's norm -- two DSPs, not
 // sixty-four.  Four of these lanes cost ~2% of the DSPs a dense attention unit
 // would need for the same work, which is the whole reason this design is
 // bound by DRAM and not by arithmetic.
 //
-// THE LANE SPLITS THE ROW ITSELF
+// The lane splits the row itself
 // ------------------------------
 // `row_data` is the 52 bytes `ops/quantize.py::pack` wrote, not pre-separated
 // fields.  A bench that passes has therefore agreed with `_pack_codes`'s bit
@@ -20,19 +20,19 @@
 // same reason `tb_rot_encode` checks its goldens against `kv_rows.hex`.
 //
 // The value plane rides through untouched.  `accum.sv` needs `v_idx` and
-// `v_norm` for the SAME token whose score is emerging here, and re-reading the
+// `v_norm` for the same token whose score is emerging here, and re-reading the
 // row downstream would mean two readers of one DDR stream.  Carrying them is a
 // shift register; splitting the stream would be a second prefetcher.
 //
-// THE NORM IS SIGNED
+// The norm is signed
 // ------------------
-// `_unpack_word` sign-extends, so the model multiplies by a SIGNED 16-bit
+// `_unpack_word` sign-extends, so the model multiplies by a signed 16-bit
 // norm.  Norms come out of `isqrt` and are non-negative in every reachable
 // case, but "unreachable" is not "impossible" and the arithmetic here has to
 // be the arithmetic the golden performs, not the arithmetic its inputs happen
 // to make equivalent.
 //
-// WHY THE MULTIPLY IS SPLIT IN TWO
+// Why the multiply is split in two
 // --------------------------------
 // A 49x16 product is not one DSP48: the primitive is 27x18.  Splitting the
 // dot product at bit 25 makes it two independent DSP-sized multiplies plus a
@@ -132,7 +132,7 @@ module score_lane #(
 
     // -- P2..P4: 64 -> 1 in six levels, registered every two ---------------
     // Two levels per cycle and not six: six chained adders at 43+ bits is most
-    // of a 4 ns period, and this pipe must retire one row EVERY cycle for the
+    // of a 4 ns period, and this pipe must retire one row every cycle for the
     // whole scan.  The latency is paid once per token; the throughput is paid
     // T times.
     localparam int L2_W = PROD_W + 2;

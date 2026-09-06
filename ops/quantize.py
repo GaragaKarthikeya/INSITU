@@ -1,27 +1,29 @@
-"""Rotate-then-quantize: a dense KV vector in, codes and a norm out.
+"""Rotate, then quantize: a dense KV vector in, codes and a norm out.
 
-THE ARITHMETIC, AND WHY THERE IS NO DIVISION
---------------------------------------------
-The obvious encoder normalises (`x / norm`) and then compares against the
-codebook's decision boundaries. That needs a divide per channel, which is the
-most expensive thing in the datapath and buys nothing: comparing `x / norm`
-against `b` is the same test as comparing `x` against `b * norm`, and the
-second is a multiply. So the boundaries are scaled by the norm once per vector
-and every channel is a plain comparison.
+There is no division in here
+----------------------------
+The obvious way to write the encoder is to normalise (`x / norm`) and then
+compare against the codebook's decision boundaries. That needs a divide per
+channel, which is the most expensive thing in the datapath and buys nothing.
+Comparing `x / norm` against `b` is the same test as comparing `x` against
+`b * norm`, and the second one is a multiply. So we scale the boundaries by the
+norm once per vector, and every channel is then a plain comparison.
 
-THE NORM IS QUANTISED BEFORE IT IS USED, NOT AFTER
+The norm is quantised before it is used, not after
 --------------------------------------------------
-The decoder only ever sees the norm at its wire precision. If the encoder
-thresholded against the full-precision norm, encoder and decoder would be
-working from different numbers and a channel near a boundary would decode into
-the wrong bin. So the norm is rounded to the wire format first, and the
-thresholds are built from the rounded value. This is the kind of mismatch that
-costs a fraction of a percent of accuracy and is invisible in every test that
-does not specifically look for it.
+The decoder only ever sees the norm at wire precision. If the encoder compared
+against the full-precision norm instead, the encoder and the decoder would be
+working from different numbers, and a channel sitting near a boundary would
+decode into the wrong bin.
 
-Rounding of the norm is half-to-even. Norms are always positive, so a floor
-would bias every single one of them downward, and that bias accumulates across
-an entire cache rather than averaging out.
+So the norm gets rounded to the wire format first and the thresholds are built
+from the rounded value. This is the kind of mismatch that costs a fraction of a
+percent of accuracy and does not show up in any test that is not looking for it
+specifically.
+
+The norm is rounded half to even. Norms are always positive, so a floor would
+push every single one of them down, and that bias would build up across a whole
+cache instead of averaging out.
 """
 
 from __future__ import annotations
@@ -40,10 +42,11 @@ from .rotate import Rotation
 def isqrt(x) -> np.ndarray:
     """Exact integer square root, vectorised.
 
-    float64's 53-bit mantissa covers the operand range here, but "covers" is
-    not "is exact", so the float result seeds a correction that is checked
-    rather than trusted. Two candidates either side is always enough: the float
-    seed is never off by more than one.
+    float64's 53-bit mantissa covers the range of operands we get here, but
+    covering the range is not the same as being exact. So the float result is
+    only a seed: we correct it and then check the correction worked. Trying a
+    couple of candidates either side is always enough, because the float seed is
+    never off by more than one.
     """
     a = np.asarray(x, dtype=INT)
     if np.any(a < 0):
@@ -61,10 +64,11 @@ def isqrt(x) -> np.ndarray:
 class Plane:
     """One quantised field of a token: a codebook plus the format it lands in.
 
-    Keys and values are separate planes because they are quantised at different
-    widths and are consumed by different stages -- a key is only ever dotted
-    with the query, a value is only ever scaled by a probability. Nothing is
-    gained by forcing them to share a width, and a lot of accuracy is lost.
+    Keys and values are separate planes because they get quantised at different
+    widths and are consumed by different stages. A key is only ever dotted with
+    the query; a value is only ever scaled by a probability. Forcing them to
+    share a width gains nothing and costs a lot of accuracy -- see the sweep in
+    the README, where keys fall apart below 4 bits and values do not.
     """
 
     name: str
@@ -96,9 +100,9 @@ class Plane:
 class CompressedKV:
     """One token's compressed key and value, for one KV head.
 
-    Arrays are shaped `(..., d)` and `(...,)` so a whole prefill quantises in
-    one call and a decode step is just the batch-of-one case. There is no
-    separate scalar path to keep in agreement.
+    The arrays are shaped `(..., d)` and `(...,)` so that a whole prefill
+    quantises in one call and a decode step is simply the batch-of-one case.
+    There is no separate scalar path that would have to be kept in agreement.
     """
 
     k_idx: np.ndarray     # (..., d) uint8 codes
@@ -115,12 +119,12 @@ class CompressedKV:
 
 
 class KVQuantizer:
-    """Rotation + two codebooks + the wire format, for one head dimension.
+    """A rotation, two codebooks and the wire format, for one head dimension.
 
-    Constructed from a `QuantConfig` and a `FixedFormat` and then immutable, so
-    it can be shared across every layer and every KV head without a copy. The
-    rotation seed is per-instance, which is what lets two layers use different
-    sign diagonals if that is ever wanted, without a global.
+    Built from a `QuantConfig` and a `FixedFormat`, then immutable, so every
+    layer and every KV head can share one without copying it. The rotation seed
+    lives on the instance, so two layers could use different sign diagonals if
+    that were ever wanted, without reaching for a global.
     """
 
     def __init__(self, d: int, quant: QuantConfig, fmt: FixedFormat) -> None:
@@ -160,8 +164,8 @@ class KVQuantizer:
     def _norm_wire(self, x_rot: np.ndarray) -> np.ndarray:
         """RMS of the rotated vector, at wire precision.
 
-        RMS rather than L2 so the scale is independent of `d`: `x / rms` has
-        unit variance per channel, which is exactly the distribution
+        RMS rather than L2 so the scale does not depend on `d`. `x / rms` has
+        unit variance per channel, and that is exactly the distribution
         `Codebook.gaussian` is the optimal quantizer for.
         """
         sq = (x_rot.astype(INT) ** 2).sum(axis=-1)      # Q(2 * qk_frac)
@@ -170,23 +174,24 @@ class KVQuantizer:
         wire = self.key.norm_q.requantize(
             norm, src_frac=self.fmt.qk_frac, rounding="even"
         )
-        # A zero norm makes every threshold zero and every code the same. It
-        # is a real input (a masked or padded position), so it decodes to the
-        # zero vector rather than raising -- but it must not be confused with
-        # a norm that merely underflowed the wire format.
+        # A zero norm makes every threshold zero and every code the same. That
+        # is a real input -- a masked or padded position -- so it decodes to the
+        # zero vector rather than raising. `check_zero_vector_survives` in
+        # tests/test_quantize.py pins that behaviour.
         return wire
 
     def _encode_plane(self, x_rot: np.ndarray, plane: Plane,
                       norm_wire: np.ndarray) -> np.ndarray:
-        # thresholds: (..., 1, 1) * (2**b - 1,) -> (..., 1, 2**b - 1), one extra
-        # axis so it broadcasts against x_scaled's per-channel axis rather than
-        # against the token axis, which has the same length often enough that
-        # the mistake would survive a small test.
+        # thresholds: (..., 1, 1) * (2**b - 1,) -> (..., 1, 2**b - 1). The extra
+        # axis is there so this broadcasts against x_scaled's per-channel axis
+        # and not against the token axis. Those two often have the same length,
+        # so getting it wrong would survive a small test.
         thresholds = norm_wire[..., None, None].astype(INT) * plane.codebook.boundaries
         x_scaled = lshift(x_rot, plane.threshold_frac - plane.qk_frac)
-        # `>` and not `>=`: a value exactly on a boundary falls to the LOWER
-        # bin, matching the midpoint convention `Codebook.gaussian` builds the
-        # boundaries under. The two must agree or every tie shifts by one code.
+        # `>` and not `>=`, so a value sitting exactly on a boundary falls into
+        # the lower bin. That matches the midpoint convention
+        # `Codebook.gaussian` builds the boundaries under. If the two disagree,
+        # every tie shifts by one code.
         idx = (x_scaled[..., None] > thresholds).sum(axis=-1)
         return idx.astype(np.uint8)
 
@@ -216,11 +221,11 @@ class KVQuantizer:
 
     def decode(self, kv: CompressedKV, trace: Trace | None = None
                ) -> tuple[np.ndarray, np.ndarray]:
-        """The full dequantisation. Arm-B's path, and the accuracy reference.
+        """The full dequantisation, used as the accuracy reference.
 
-        The compressed attention path never calls this -- that is the whole
-        point of it -- but a dense baseline does, and so does every test that
-        asks what the compression cost.
+        The compressed attention path never calls this -- not calling it is the
+        entire point. A dense baseline does, and so does every test that asks
+        what the compression cost.
         """
         k = self.decode_plane(kv.k_idx, kv.k_norm, self.key)
         v = self.decode_plane(kv.v_idx, kv.v_norm, self.value)
@@ -230,12 +235,12 @@ class KVQuantizer:
     # -- wire format -------------------------------------------------------
 
     def pack(self, kv: CompressedKV) -> np.ndarray:
-        """One token -> `bytes_per_token` bytes. Shape (..., bytes_per_token) uint8.
+        """One token -> `bytes_per_token` bytes, shaped (..., bytes_per_token).
 
-        Codes little-endian LSB-first within the stream, then the two norms as
-        little-endian words. Written against one layout description that
-        `unpack` also reads, so the two cannot drift: a mismatched bit offset
-        decodes every token as garbage of exactly the right size, which looks
+        Codes go in little-endian, LSB first, then the two norms as
+        little-endian words. `unpack` reads the same layout description, so the
+        two cannot drift apart. That matters because a mismatched bit offset
+        decodes every token into garbage of exactly the right size, which looks
         like a datapath bug and is not one.
         """
         parts = [

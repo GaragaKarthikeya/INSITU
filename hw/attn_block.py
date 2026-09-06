@@ -1,12 +1,12 @@
 """The PL half of the seam, modelled in cycles.
 
-`pe_array.py` models the four systolic arrays, which stay on the HOST. This
+`pe_array.py` models the four systolic arrays, which stay on the host. This
 models what crosses to the FPGA: rotate -> quantize -> cache -> score ->
 online softmax -> accumulate. Same contract as every other model in `kernel.hw`
 -- it is handed `Work` records after the values exist, it holds no state, and
 it cannot reach back into an op.
 
-WHAT THIS FIXES
+What this fixes
 ---------------
 Before this file, `replay` charged `ROTATE`, `QUANTIZE`, `SOFTMAX`,
 `ACCUMULATE` and `RESCALE` **zero cycles** and `SCORE` a flat `sum(w.n)` -- one
@@ -14,7 +14,7 @@ cycle per (query, cached token) pair with no lanes in it. Every one of those is
 a piece of the block this project is actually building, so the report was a
 model of the projections with the contribution missing.
 
-THE BOUND THAT MATTERS IS NOT ARITHMETIC
+The bound that matters is not arithmetic
 ----------------------------------------
 The score loop has three DSPs in it (`plan.MD`, "The result that shapes the
 datapath"): scores are gathers into a precomputed product table and an adder
@@ -23,10 +23,11 @@ cached row per cycle per KV head and no amount of logic moves it -- what moves
 it is how fast 52 B rows arrive from DDR.
 
 That is why `CacheReport` carries a bandwidth bound beside the burst/latency
-model in `memory.py` and takes the MAXIMUM. The two answer different questions:
+model in `memory.py` and takes the maximum of the two. They answer different
+questions:
 `MemoryModel` asks what the bursts cost, this asks whether the DRAM can keep
 up at all. At short context the first binds; at long context -- the case this
-design exists for -- the second does, and it does so from a MEASURED number
+design exists for -- the second does, and it does so from a measured number
 (`CacheConfig.ddr_gbps`), not an assumed one.
 """
 
@@ -91,7 +92,7 @@ class EncoderUnit:
     and the threshold compare.
 
     The two blocks are in series but pipelined against each other, so the cost
-    of a vector is the SLOWER of them, not their sum, and the fixed latency is
+    of a vector is the slower of them, not their sum, and the fixed latency is
     charged once rather than per vector.
     """
 
@@ -117,7 +118,7 @@ class AttentionUnit:
     accumulated in the same cycle it is scored, one stage later. Charging both
     would double the dominant term of a long-context step for the same reason
     `replay` refuses to charge weight bytes twice. So the unit takes the
-    MAXIMUM of the two, not the sum, and SOFTMAX rides along inside it.
+    Maximum of the two rather than the sum, and softmax rides along inside it.
 
     RESCALE is the exception and is charged on top: a running-maximum update
     stalls the pipe, and the whole reason the online form is modelled at all is

@@ -1,9 +1,9 @@
 // Self-checking testbench for exp_lut.sv.
 //
-// EVERY REACHABLE OUTPUT, AND BOTH SIDES OF EVERY TRANSITION
-// -----------------------------------------------------------
+// Every reachable output, and both sides of every transition
+// ----------------------------------------------------------
 // `exp_in.hex` is not random stimulus. For each of the 4,353 flat indices the
-// generator computes the SMALLEST delta that reaches it, and emits that delta
+// generator computes the smallest delta that reaches it, and emits that delta
 // with the one below and the one above. So every entry of the table is read at
 // every shift that can reach it, and every step between two outputs is
 // straddled -- which is where an off-by-one in the fraction/integer split
@@ -47,7 +47,7 @@ module tb_exp_lut;
         $readmemh("tb/vectors/exp_table.hex", table_gold);
 
         // The table is a format artifact of `ExpLut.__init__`, like the sign
-        // diagonal and the codebook. A stale build fails HERE.
+        // diagonal and the codebook. A stale build fails here.
         for (int i = 0; i < 256; i++)
             check(dut.TABLE[i*16 +: 16] === table_gold[i],
                   $sformatf("table entry %0d must match ExpLut.table", i));

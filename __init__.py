@@ -14,7 +14,7 @@ Layering, outermost first:
                    Values only; no op can see a hardware config.
     hw/            cycles and bytes, replayed from a trace. Never a value.
     cache/         KVCache interface; dense fp16 and compressed implementations.
-    numerics/      fp.py (fp16 x fp16 -> fp32) and fixed.py (the ONLY narrowing).
+    numerics/      fp.py (fp16 x fp16 -> fp32) and fixed.py (the only narrowing).
     trace.py       the seam between the two halves.
     config.py      one validated dataclass tree.
 """

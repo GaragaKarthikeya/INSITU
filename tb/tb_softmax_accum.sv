@@ -1,22 +1,22 @@
 // Self-checking testbench for softmax_online.sv + accum.sv + exp_lut.sv.
 //
-// THE GOLDEN IS `attend_online`, NOT `attend_two_pass`
+// The golden IS `attend_online`, not `attend_two_pass`
 // ----------------------------------------------------
-// `forward` runs the two-pass softmax and the two are NOT bit-identical: the
+// `forward` runs the two-pass softmax and the two are not bit-identical: the
 // online form truncates the accumulator once per rescale. Hardware is online,
 // so the goldens here come from an observer attached to `attend_online` itself
 // -- `CompressedAttention.on_step`, the same `is not None` contract the
 // kernel's `on_stage` uses. A bench written against the two-pass result could
 // never pass, and `plan.MD` says so.
 //
-// EVERY TOKEN, NOT THE LAST ONE
+// Every token, not the last one
 // -----------------------------
-// `m`, `l` and all 64 accumulator channels are compared after EVERY token, not
+// `m`, `l` and all 64 accumulator channels are compared after every token, not
 // at the end of the scan. An accumulator that is only right at the last token
 // is one whose rescales happened to cancel, and the rescale is the thing this
 // step exists to build.
 //
-// THE FLUSH PATH IS THE POINT OF THE SHORT CONTEXT
+// The flush path is the point of the short context
 // ------------------------------------------------
 // New maxima are logarithmically rare -- about ln T + 0.577 -- so a long
 // context would exercise the common path almost exclusively. At ctx 64 the
@@ -82,7 +82,7 @@ module tb_softmax_accum;
     // with its add pipe still busy -- the guard that waits for that drain is
     // unreachable through this producer, and a mutation removing it passes.
     // Replaying the same op stream back to back, with no gaps, is what puts a
-    // SCALE directly behind an ADD. The goldens are unchanged: the arithmetic
+    // SCALE directly behind an add. The goldens are unchanged: the arithmetic
     // does not depend on the timing, which is the claim.
     logic r_valid, r_scale;
     logic r_ready;
@@ -117,9 +117,9 @@ module tb_softmax_accum;
     // -- the collectors ----------------------------------------------------
     //
     // Two counters, because `l` and `acc` are produced at different points.
-    // `softmax_online` folds a probability into `l` when it ISSUES the op;
+    // `softmax_online` folds a probability into `l` when it issues the op;
     // `accum` reaches the matching accumulator two stages later. Comparing
-    // both at the retire edge reads an `l` that already contains the NEXT
+    // both at the retire edge reads an `l` that already contains the next
     // token's probability -- which is what the first version of this bench
     // did, and it failed a correct DUT by exactly one unity.
     int lane = 0, tok = 0, itok = 0, scales_seen = 0, adds_seen = 0;
@@ -132,7 +132,7 @@ module tb_softmax_accum;
         tok = tok + 1;
     end
 
-    // `m` and `l` are the state AFTER a token, registered on the issue edge,
+    // `m` and `l` are the state after a token, registered on the issue edge,
     // so they are compared one cycle later. Blocking inside an `always` on a
     // `@(posedge clk)` to wait for them makes the block miss every event that
     // lands while it waits -- which is what the first version of this bench
@@ -208,7 +208,7 @@ module tb_softmax_accum;
         $finish;
     end
     int rtok = 0, back_to_back = 0;
-    // What a new maximum actually costs the SCAN: cycles in which a score is
+    // What a new maximum actually costs the scan: cycles in which a score is
     // waiting in the FIFO and the datapath cannot take it. That is the number
     // `AttentionConfig.rescale_cycles` stands in for, and it carries 1.
     int bubble = 0;

@@ -2,7 +2,7 @@
 
 Runs a TinyLlama-shaped block on synthetic weights and reports where the time
 and the bytes actually go. The weights are random -- this exercises the
-datapath and the memory model, and says NOTHING about model quality.
+datapath and the memory model, and says nothing about model quality.
 """
 
 from __future__ import annotations

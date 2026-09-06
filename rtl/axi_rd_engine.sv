@@ -1,19 +1,19 @@
 // One read-only AXI4 master that streams a contiguous region as fast as the
 // slave will allow, and counts what it got.
 //
-// This exists to answer ONE question: what does PS DDR4 actually sustain
+// This exists to answer one question: what does PS DDR4 actually sustain
 // through an AXI-HP port on this board? The whole attention design is sized
 // from that number (52 B/cycle = 13.0 GB/s at 250 MHz), and it is currently an
 // assumption -- ~70% of DDR4-2400 peak -- not a measurement.
 //
-// WHY IT ONLY READS
+// Why it only reads
 // -----------------
 // The access pattern being modelled is a full KV-cache scan: every layer reads
 // its entire cache every token, perfectly sequentially, with the address known
 // a full scan ahead. Writes are 416 B/token/layer against megabytes of reads.
 // Measuring reads alone measures the thing that binds.
 //
-// TWO KNOBS, SEPARATE ON PURPOSE, mirroring kernel/hw/memory.py:
+// Two knobs, separate ON purpose, mirroring kernel/hw/memory.py:
 //   burst_len     beats per AR. Longer bursts amortise address overhead.
 //   outstanding   how many ARs may be in flight. This is what hides latency.
 // A design with one knob cannot tell you which of the two you are short of.
@@ -28,7 +28,7 @@ module axi_rd_engine #(
 
     // control (held stable while busy)
     //
-    // `start` is the GLOBAL pulse and `enable` selects whether this port takes
+    // `start` is the global pulse and `enable` selects whether this port takes
     // part. They are separate so that a disabled port still clears its beat
     // counter: leaving a stale count in a port that sat out the run makes the
     // software read back the previous measurement's bytes and compute a

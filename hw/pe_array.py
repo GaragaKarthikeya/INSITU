@@ -1,6 +1,6 @@
 """A systolic array, modelled at the PE.
 
-DATAFLOW: OUTPUT-STATIONARY
+Dataflow: output-stationary
 ---------------------------
 Each PE owns one output element's partial sum. Weights stream in one column
 per cycle; activations stream in one row per cycle. This is the choice that
@@ -8,11 +8,11 @@ decides everything below, so it is stated rather than implied.
 
 The alternative -- weight-stationary -- holds a tile of weights in the PEs and
 streams activations past them. It is the right choice when weights are reused,
-which is to say when the batch is large. Decode has a batch of ONE.
+which is to say when the batch is large. Decode has a batch of one.
 
-WHY THAT MATTERS MORE THAN THE PE COUNT
+Why that matters more than the PE count
 ---------------------------------------
-A projection during decode is a matrix-VECTOR product. Every weight is used
+A projection during decode is a matrix-vector product. Every weight is used
 exactly once. So the array's arithmetic intensity is 1 MAC per weight, and the
 machine is bounded by how fast weights arrive, not by how many multipliers it
 has. Doubling the array does nothing; doubling the weight bandwidth doubles

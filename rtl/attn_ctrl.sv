@@ -1,13 +1,13 @@
 // AXI-Lite shim around `attn_top`: one decode step, driven over JTAG.
 //
-// WHY BUFFERS AND NOT A FIFO WINDOW
+// Why buffers and not a FIFO window
 // ---------------------------------
 // The obvious shim is two magic addresses -- write here to push a beat, read
 // there to pop one. It is smaller and it is the wrong choice for a JTAG bring-
 // up. A `create_hw_axi_txn` that is retried, reordered or simply typed twice
 // then silently shifts the whole stream by one word, and the failure looks
 // like a numeric bug in the datapath rather than like a lost transaction. So
-// ingress and egress are ADDRESSED memories: every write lands where its
+// ingress and egress are addressed memories: every write lands where its
 // address says, every read is repeatable, and the host can read back what it
 // wrote before starting anything.
 //
@@ -15,7 +15,7 @@
 // heads x 64 channels x 24 b). `attn_top` reports zero BRAM, so the ~5 block
 // RAMs these cost are free.
 //
-// THE STREAM IS PLAYED, NOT PUSHED
+// The stream is played, not pushed
 // --------------------------------
 // `start` plays the whole input buffer into `attn_top`'s 512-bit stream and
 // collects its egress back into the output buffer, 32 bits per cycle each way.
@@ -37,7 +37,7 @@ module attn_ctrl #(
     parameter int AW        = 49,
     parameter int IDW       = 6,
     parameter int N_PORTS   = 4,
-    // A build stamp the host reads back FIRST.  A bitstream that is not the
+    // A build stamp the host reads back first.  A bitstream that is not the
     // one the host thinks it is looks exactly like a datapath bug.
     parameter logic [31:0] MAGIC = 32'hA77E_0001
 ) (
@@ -50,7 +50,7 @@ module attn_ctrl #(
     // 15 KB through the 32-bit AXI-Lite window one store at a time -- 85% of
     // the step, against 67 us of block. That is what these carry instead.
     //
-    // The buffers are NOT removed. They are how step 12 and step 13 ran, they
+    // The buffers are not removed. They are how step 12 and step 13 ran, they
     // are readable back, and a bring-up that cannot re-read what it loaded
     // cannot interpret what it gets out. `MODE` picks which one feeds the
     // core, so the slow path stays available as the thing a failing fast path
@@ -258,19 +258,19 @@ module attn_ctrl #(
     logic feeding;
     logic [BEAT_BITS-1:0] beat_sh;
 
-    // MODE 0 plays the input buffer into the core, as steps 12 and 13 did.
-    // MODE 1 hands the core straight to the DMA. One mux, and everything below
+    // Mode 0 plays the input buffer into the core, as steps 12 and 13 did.
+    // Mode 1 hands the core straight to the DMA. One mux, and everything below
     // it -- the core, the four read masters, the write master, the register
     // map -- is untouched, which is the same promise the shim made when the
     // JTAG master became the PS.
     assign s_valid = stream_mode ? s_axis_tvalid : feed_valid;
     assign s_data  = stream_mode ? s_axis_tdata  : beat_sh;
-    // GATED ON `busy`, AND THAT IS de-facto A PROTOCOL RULE MADE INTO LOGIC.
+    // Gated ON `busy`, and that IS de-facto A protocol rule made into logic.
     //
     // `attn_ingress` clears its beat counter on `start`. A beat accepted
-    // BEFORE the step begins is therefore swallowed and then thrown away with
+    // Before the step begins is therefore swallowed and then thrown away with
     // that reset, and the stream ends one vector short -- which surfaces as
-    // the LAST group hanging in S_RECV forever, with every beat apparently
+    // the last group hanging in S_RECV forever, with every beat apparently
     // delivered. The buffered path cannot hit it because its feeder is armed
     // by `start` itself.
     //
@@ -345,7 +345,7 @@ module attn_ctrl #(
     // ---------------- run state ----------------
     //
     // `done` is a pulse and JTAG polls at millisecond intervals, so it is
-    // LATCHED. A status bit the host can miss is a status bit that reports a
+    // Latched. A status bit the host can miss is a status bit that reports a
     // hung run.
     logic run, done_l;
     always_ff @(posedge clk) begin
@@ -414,7 +414,7 @@ module attn_ctrl #(
     end
     assign s_axi_bresp = 2'b00;
 
-    // Read channel.  `s_axi_rvalid` MUST be reset: unreset, `arready = !rvalid`
+    // Read channel.  `s_axi_rvalid` must be reset: unreset, `arready = !rvalid`
     // is X and every read wedges, which on hardware looks like "the FPGA
     // returns garbage". (`systolic_zcu104` README, bug 5.)
     wire ar_in  = (s_axi_araddr >= IN_BASE)  && (s_axi_araddr < IN_BASE  + LAW'(IN_W*4));

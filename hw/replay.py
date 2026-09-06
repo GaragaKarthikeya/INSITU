@@ -3,7 +3,7 @@
 This is the only place cycles are produced, and it runs strictly after the
 values are computed. Nothing here can reach back into an op.
 
-THE COMPOSITION MODEL IS STATED, NOT ASSUMED
+The composition model is stated, not assumed
 --------------------------------------------
 The four arrays and the memory are separate units, so the projections can
 overlap each other but not their own weight fetch. The report gives both a
@@ -11,10 +11,10 @@ serial total (everything in sequence -- the pessimistic bound) and a critical
 path (the slowest unit -- the optimistic bound), because a single number would
 be hiding a scheduling assumption that has not been designed yet.
 
-WEIGHT TRAFFIC IS CHARGED ONCE, IN THE ARRAYS
+Weight traffic is charged once, in the arrays
 ---------------------------------------------
 Streaming weights appears in the trace twice by construction: as a MEM_READ
-(the port moved the bytes) and inside each MATVEC (the array waited for them).
+(the port moved the bytes) and inside each matvec (the array waited for them).
 They are the same bytes seen from the two ends, and adding both would
 double-count the dominant term of a decode step.
 
@@ -23,9 +23,9 @@ and where the weight/compute bound is decided -- and the memory model is given
 only the non-weight records. Weight bytes are still reported, under
 `weight_bytes`, so nothing disappears; it is attributed, not dropped.
 
-EVERY UNIT THE TRACE NAMES MUST EXIST IN THE CONFIG
+Every unit the trace names must exist in the config
 ---------------------------------------------------
-`MATVEC` has always been looked up by `getattr(hw, w.unit)`, so a projection
+`MATVEC` has always been looked up with `getattr(hw, w.unit)`, so a projection
 against a hardware config that has no such array is an error. Every other op is
 now resolved the same way, through `HardwareConfig` fields named after the
 `unit` strings the ops record. Before this, `ROTATE`, `QUANTIZE`, `SOFTMAX`,
@@ -37,7 +37,7 @@ Units that genuinely cost the PL nothing are listed in
 `HardwareConfig.HOST_UNITS` with the reason. That is the difference between a
 zero that was decided and a zero that was never noticed.
 
-THE CACHE HAS TWO BOUNDS AND BOTH ARE REPORTED
+The cache has two bounds and both are reported
 ----------------------------------------------
 `MemoryModel` charges bursts and their latencies. `CacheBandwidth` charges the
 measured DDR rate. `memory_cycles` is the max of the two, and
@@ -172,7 +172,7 @@ def replay(trace: Trace, hw: HardwareConfig, n_tokens: int = 1) -> PerformanceRe
         reports = [model.project(w.m, w.k, w.n) for w in works]
         arrays[unit] = _sum_reports(reports)
 
-    # The PL blocks, resolved by unit name exactly as MATVEC is. `Op` decides
+    # The PL blocks, resolved by unit name the same way MATVEC is. `Op` decides
     # which model reads a record; `unit` decides which instance of it.
     by_unit: dict[str, list] = defaultdict(list)
     for w in trace.records:

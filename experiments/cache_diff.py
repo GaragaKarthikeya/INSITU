@@ -2,14 +2,14 @@
 
     ./scripts/attn diff
 
-WHY
+Why
 ---
 Live inference agrees on token 1 and differs on every token after it, and the
 mismatch is identical over JTAG and over Ethernet, with the cache zeroed. So
 the transport is not it and the difference is deterministic.
 
 Token 1 is the clue. At T = 1 the softmax runs over a single element, so
-`p / l = 1` and the output is the decoded VALUE alone -- the stored KEY cannot
+`p / l = 1` and the output is the decoded value alone -- the stored KEY cannot
 affect it. A key row that is wrong is invisible at T = 1 and appears the moment
 a second row exists, which is exactly the observed pattern.
 
@@ -19,9 +19,9 @@ reassembles it with `DdrLayout.row_at` -- the same function that built every
 image this project has ever loaded -- and diffs it against `kernel.cache.buf`.
 
 The answer is one of three, and they point at different code:
-  * the rows MATCH  -> the caches agree and the divergence is in the scan
-  * the KEY bytes differ -> the encoder or the write path, key plane
-  * the VALUE or NORM bytes differ -> same, other planes
+  * the rows match  -> the caches agree and the divergence is in the scan
+  * the key bytes differ -> the encoder or the write path, key plane
+  * the value or norm bytes differ -> the same, but a different plane
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def main(argv=None) -> int:
                     print(f"{h:5d} {t:6d} {'match':>10}")
                 continue
             bad_any = True
-            # Which FIELD? `pack` lays a row out as key codes, then value
+            # Which field? `pack` lays a row out as key codes, then value
             # codes, then the two norms -- so a differing byte range names the
             # plane and therefore the part of the pipeline that wrote it.
             kb = m.head_dim * kern.cfg.quant.key_bits // 8

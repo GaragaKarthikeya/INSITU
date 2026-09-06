@@ -5,21 +5,21 @@
     model = AutoModelForCausalLM.from_pretrained(...)
     graft(model, layers=[10], quant=QuantConfig(key_bits=3, value_bits=2))
 
-WHAT THIS IS AND IS NOT
+What this is and is not
 -----------------------
 It is a torch `nn.Module` that holds a numpy `AttentionKernel`, converts at the
 boundary, and presents the signature a decoder layer already calls. That is the
 whole reason `AttentionKernel.forward` takes `(tokens, hidden)` and returns the
 same: the adapter is thin because the kernel was shaped to be grafted.
 
-It is NOT fast. Every call crosses torch -> numpy -> torch and the attention
+It is not fast. Every call crosses torch -> numpy -> torch and the attention
 loop is Python. It is for measuring what the compression does to a real model's
 outputs, not for serving.
 
 torch is imported lazily and is not a dependency of the package. Everything
 outside this file runs on numpy alone.
 
-THE CONTRACT, AS OBSERVED
+The contract, as observed
 -------------------------
 Probed against transformers 5.16.1 / LlamaAttention
 (`experiments/probe_contract.py`), a decoder layer calls its attention module
@@ -36,14 +36,14 @@ stub test did not catch and running it did:
   * **`past_key_values` must be advanced.** The model asks the cache object how
     long the context is; if the grafted layer never appends, that length stays
     zero and every position after the first is wrong. So the adapter writes its
-    post-RoPE K/V into the passed cache for BOOKKEEPING ONLY -- it never reads
+    post-RoPE K/V into the passed cache for bookkeeping only -- it never reads
     it back, and the compressed cache the memory claims are about is the
     kernel's own. Grafting one layer hides this bug, because the other layers
     keep the count right; grafting all of them exposes it.
 
 `forward` absorbs unknown keyword arguments, because this contract has changed
 across transformers releases. Run `experiments/single_layer.py` after any
-version bump: it checks the kernel in DENSE mode against the real
+version bump: it checks the kernel in dense mode against the real
 `LlamaAttention` on captured hidden states, where any residual is plumbing and
 not compression. Measured at transformers 5.16.1, TinyLlama-1.1B layer 10:
 **4.4e-4 relative, cosine 1.000000**.
@@ -88,14 +88,14 @@ class KernelAttention:
 
         Extra positional and keyword arguments -- `position_embeddings`,
         `attention_mask`, `past_key_value`, `cache_position` -- are accepted and
-        IGNORED, and that is a real limitation, not an oversight:
+        Ignored, and that is a real limitation, not an oversight:
 
           * RoPE is applied inside the kernel from its own table, so an
             externally supplied `position_embeddings` would be applied twice.
           * The KV cache is the kernel's own, so `past_key_value` is unused and
             the model's cache object will not reflect what is stored.
           * `attention_mask` is not honoured. The kernel is causal by
-            construction, which covers decoding, but NOT padded batches or any
+            construction, which covers decoding, but not padded batches or any
             custom mask. Grafting into a padded batch gives wrong answers
             silently, so `batch > 1` is refused below rather than tolerated.
         """
@@ -137,7 +137,7 @@ class KernelAttention:
     __call__ = forward
 
     def _advance_hf_cache(self, cache, x) -> None:
-        """Keep the model's own length bookkeeping correct. Bookkeeping ONLY.
+        """Keep the model's own length bookkeeping correct. Bookkeeping only.
 
         The kernel never reads this back -- it has its own compressed cache, and
         that is the one every byte figure refers to. What is stored here exists
@@ -226,7 +226,7 @@ def ungraft(model, original: dict) -> None:
 def compare_against_original(model, layer_idx: int, hidden_states, **kw):
     """Run one layer both ways on the same input and report the difference.
 
-    The smoke test to run FIRST after any graft. A large residual here means
+    The smoke test to run first after any graft. A large residual here means
     the plumbing is wrong -- a RoPE convention, a head layout, a missing fold
     -- and no accuracy conclusion drawn downstream would mean anything.
     """

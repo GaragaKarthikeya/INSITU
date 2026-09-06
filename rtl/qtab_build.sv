@@ -1,13 +1,13 @@
 // Query vector -> the 64 x 2**BITS table of `q_rot[ch] * centroid[i]`.
 //
-// WHY THIS BLOCK EXISTS AT ALL
+// Why this block exists at all
 // ----------------------------
 // A cached key is `norm * centroid[code]`, so
 //
 //     <q, k>  =  norm * sum_ch  q_rot[ch] * centroid[ code[ch] ]
 //
 // and the only distinct values the inner multiply can ever produce are the
-// 2**BITS entries of the codebook.  Precomputing them ONCE per query vector
+// 2**BITS entries of the codebook.  Precomputing them once per query vector
 // turns every cached token afterwards into D table gathers and an adder tree.
 // That is the whole reason `score_lane.sv` has no multiplier in its inner
 // loop, and it is what makes DRAM -- never arithmetic -- the constraint.
@@ -16,23 +16,23 @@
 // cycles there, and T is the context.  At the shortest context this plan
 // targets that is already 13x.
 //
-// ONE MEMORY PER CHANNEL, NOT ONE MEMORY
+// One memory per channel, not one memory
 // --------------------------------------
-// `score_lane` gathers all D channels in the SAME cycle, each at its own
+// `score_lane` gathers all D channels in the same cycle, each at its own
 // address, so this cannot be one wide memory -- it is D independent
 // 2*2**BITS-deep, PROD_W-wide memories (the extra bit of depth is the
 // ping-pong bank).  At D=64, BITS=4 that is a 32x43 distributed RAM per
 // channel, which is LUTs; a single 44 Kb block would serve one channel per
 // cycle and starve the tree 64:1.
 //
-// THE FOLD IS OVER CODES, NOT CHANNELS
+// The fold is over codes, not channels
 // ------------------------------------
-// Every cycle writes LANES channels at ONE code index, so each channel's RAM
+// Every cycle writes LANES channels at one code index, so each channel's RAM
 // takes one write per cycle and its single write port is enough.  Folding the
 // other way -- all codes of one channel per cycle -- would need 2**BITS write
 // ports on each RAM and 2**BITS times the multipliers to feed them.
 //
-// PING-PONG, AND THE COMMIT IS EXPLICIT
+// PING-PONG, and the commit is explicit
 // -------------------------------------
 // Group h+1's table is built while group h is still being scanned out of the
 // one already committed.  The swap is an input rather than automatic on
@@ -46,7 +46,7 @@ module qtab_build #(
     parameter int CENT_BITS = 20,   // widest gaussian centroid is 89,465
     parameter int LANES     = 16,   // channels multiplied per cycle
     // Ascending centroids in Q(centroid_frac), index 0 in the low bits.  A
-    // FORMAT artifact of `Codebook.build`, exactly as `rot_encode`'s BOUNDS
+    // Format artifact of `Codebook.build`, exactly as `rot_encode`'s bounds
     // and `rot_fwht`'s SIGN_NEG are -- never a second Lloyd-Max solve.
     parameter logic [(2**BITS)*CENT_BITS-1:0] CENTROIDS =
         {20'h15d79, 20'h1087b, 20'h0cebb, 20'h0a06d,
@@ -97,7 +97,7 @@ module qtab_build #(
 
     // A table under construction is being written; accepting a second query
     // would rewrite it half-built.  A table already built and not yet
-    // committed is the SPARE, so it must not be overwritten either.
+    // committed is the spare, so it must not be overwritten either.
     assign in_ready = !busy && !ready_flag;
 
     // stage 1 -- operands registered
@@ -156,8 +156,8 @@ module qtab_build #(
 
     // -- the tables, one independent memory per channel ---------------------
     //
-    // D SEPARATE arrays and not one two-dimensional one.  The first attempt
-    // declared `tab [0:D-1][0:2*NB-1]` and synthesis inferred REGISTERS:
+    // D separate arrays and not one two-dimensional one.  The first attempt
+    // declared `tab [0:D-1][0:2*NB-1]` and synthesis inferred registers:
     // 93,486 FF and zero LUTRAM for a single lane, which is 374k FF across
     // four and does not fit the part.  Vivado infers distributed RAM from a
     // one-dimensional array with a scalar write address and an asynchronous

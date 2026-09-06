@@ -11,7 +11,7 @@
  * built until this prints.
  *
  * The access pattern deliberately mirrors a KV-cache scan: long sequential
- * reads, disjoint per port, no writes. It is NOT a general memcpy benchmark
+ * reads, disjoint per port, no writes. It is not a general memcpy benchmark
  * and its number should not be quoted as one.
  *
  * Build with the Vitis SDT flow (see scripts/build_vitis_probe.py), run with
@@ -56,7 +56,7 @@
 #define REGION_STRIDE 0x04000000u
 #define BEAT_BYTES    16u              /* 128-bit HP port */
 
-/* PL clock. MUST match the "actual" figure create_bd_probe.tcl printed, not
+/* PL clock. Must match the "actual" figure create_bd_probe.tcl printed, not
  * the requested one -- the PS PLL rounds, and reporting GB/s against a clock
  * the design is not running at is how a probe lies. */
 #ifndef PL_CLK_HZ
@@ -136,7 +136,7 @@ int main(void)
     const unsigned outsts[]  = {1, 2, 4, 8, 16, 32};
     const unsigned masks[]   = {0x1, 0x3, 0x7, 0xF};
 
-    /* EVERY CONFIG IS REPEATED AND THE MEDIAN REPORTED.
+    /* Every CONFIG IS REPEATED and the MEDIAN reported.
      *
      * The first pass of this sweep produced one 4-port point at 14678 MB/s
      * whose immediate neighbours (same ports, same burst, deeper queue) all sat

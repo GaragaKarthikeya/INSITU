@@ -1,35 +1,35 @@
 // The block: 512-bit stream in, 32 attention heads out, cache in DDR.
 //
-// WHAT THIS FILE IS
+// What this file is
 // -----------------
 // Every block below it has been checked on its own against a golden the
 // unmodified kernel produced. This one is the control that makes them one
-// datapath, and the only thing it can get wrong is ORDER: which vector is a
+// datapath, and the only thing it can get wrong is order: which vector is a
 // key, when a table may be swapped, and whether the token being scored is
 // already in the cache. So the FSM is written as one sequence per group and
 // the interesting order is a state name, not a counter comparison.
 //
-// THE ORDER INSIDE A GROUP IS CAUSALITY
+// The order inside a group is causality
 // -------------------------------------
-// `[k][v][q0..q3]`, and the k and v are ENCODED AND WRITTEN TO DDR before the
+// `[k][v][q0..q3]`, and the k and v are encoded and written TO DDR before the
 // scan starts, because the current token attends to itself: `cache.append_rotated`
 // runs before attend in `kernel.py:187`, and the scan then covers
 // `slice(0, ctx+1)`. Getting this backwards produces an off-by-one-token
 // attention that still runs and still looks plausible.
 //
-// GROUPS RUN ONE AT A TIME
+// Groups run one at a time
 // ------------------------
 // `PARALLEL_KV = 1`: DDR cannot feed a second KV head, so the eight groups are
 // sequential and only four query heads' softmax state is ever live. Phase A of
 // group h+1 overlapping Phase B of group h is a throughput optimisation on
-// ~150 cycles against a T-cycle scan (0.5% at ctx 32k); it is deliberately NOT
+// ~150 cycles against a T-cycle scan (0.5% at ctx 32k); it is deliberately not
 // done here, because it would put ingress and the scan in the same state and
 // this block's whole job is that the order is readable.
 //
-// THE SCAN IS FED BY `kv_store_ddr`, WHICH IS THE ONLY CACHE
+// The scan IS fed BY `kv_store_ddr`, which IS the only cache
 // ----------------------------------------------------------
 // One row per cycle, four planes, four AXI-HP masters. The four score lanes
-// share the row -- that is the GQA win -- so `row_ready` is the AND of theirs:
+// share the row -- that is the GQA win -- so `row_ready` is the and of theirs:
 // one lane stalling stalls the row, which keeps the four softmaxes on the same
 // token without a skid buffer per lane.
 `timescale 1ns/1ps
@@ -52,7 +52,7 @@ module attn_top #(
     parameter int N_PORTS    = 4,
     parameter int ROW_BYTES  = 52,
     parameter logic [N_PORTS*8-1:0] PLANE_W = {8'd4, 8'd16, 8'd16, 8'd16},
-    // The value plane's boundaries and centroids.  A FORMAT artifact of
+    // The value plane's boundaries and centroids.  A format artifact of
     // `Codebook.build`, exactly as `rot_encode`'s key default is -- never a
     // second Lloyd-Max solve.
     parameter logic [(2**VAL_BITS-1)*20-1:0] VAL_BOUNDS =
@@ -198,7 +198,7 @@ module attn_top #(
            .out_ready(1'b1), .out_codes(encv_codes));
 
     // -------------------------------------------------------- the cache
-    // INCREMENTAL, not a multiply, and registered.
+    // Incremental, not a multiply, and registered.
     //
     // `cache_base + grp*head_stride + p*plane_span` is a 49-bit product and two
     // 49-bit adds. Registering it kept that arithmetic between two flops and it
@@ -252,7 +252,7 @@ module attn_top #(
     logic [GROUPS-1:0] sm_ready, sm_lovf;
     logic [GROUPS-1:0] fin_valid, fin_ready, fin_out_valid, fin_range, fin_got;
     logic [GROUPS-1:0] tok_done;
-    // A REGISTERED write enable per lane, not the FSM state.
+    // A registered write enable per lane, not the FSM state.
     //
     // `q_vec` is 4 x 1,536 flops and decoding `st == S_QLOAD` into their clock
     // enables put the state register on 6,144 CE pins -- the same shape as the
@@ -320,8 +320,8 @@ module attn_top #(
                 .out_overflows(lane_ovf[g]), .out_scale_cycles(out_scale_cycles));
 
             // The denominator is sampled with the accumulator, at the retire
-            // edge of the LAST add -- `out_l` is registered when the op is
-            // ISSUED, so reading it any earlier reads a scan that is still one
+            // edge of the last add -- `out_l` is registered when the op is
+            // Issued, so reading it any earlier reads a scan that is still one
             // probability short.
             logic [L_WIDTH-1:0] held_l;
             logic [D*ACC_WIDTH-1:0] held_acc;
@@ -339,7 +339,7 @@ module attn_top #(
 
             // The divide is data-dependent -- 50 cycles, or 19 when `l` is
             // zero and `reciprocal` answers without dividing -- so the four
-            // lanes do NOT retire together and a bare AND of `out_valid` would
+            // lanes do not retire together and a bare and of `out_valid` would
             // wait for a pulse that has already gone. Each lane holds its own
             // result and raises its own flag.
             logic [D*OUT_BITS-1:0] lane_vec;
@@ -355,7 +355,7 @@ module attn_top #(
             // others; they are only in step again at the end of the scan.
             //
             // Cleared in S_COMMIT and not on `scan_start`: `scan_start` is
-            // registered, so it is high DURING the first cycle of S_SCAN and
+            // registered, so it is high during the first cycle of S_SCAN and
             // the counters would still hold the previous group's 65 when
             // `scan_complete` is first evaluated -- which ends the scan before
             // it begins, for every group after the first.
@@ -370,7 +370,7 @@ module attn_top #(
 
     // -------------------------------------------------------- egress
     //
-    // The four finalized vectors ARE the result; there is no second copy of
+    // The four finalized vectors are the result; there is no second copy of
     // them. An earlier version loaded a 6,144-bit register and shifted it 512
     // bits per beat, which cost 6,144 flops to hold what `fin_vec` already
     // held and -- the reason it is gone -- put the FSM state on the enable of
@@ -395,17 +395,17 @@ module attn_top #(
     assign m_last = (egr_beat == NBEAT_EGR-1) && (grp == KV_HEADS-1);
 
     // Wraps rather than running one past the end: a part-select off the end of
-    // `egr_flat` is X, and that X would be the first beat of the NEXT group
+    // `egr_flat` is X, and that X would be the first beat of the next group
     // until S_FIN overwrote it -- true today and a trap for tomorrow.
     wire [$clog2(NBEAT_EGR+1)-1:0] egr_next =
         (egr_beat == NBEAT_EGR-1) ? '0 : egr_beat + 1'b1;
 
     // -------------------------------------------------------- counters
     //
-    // `scan_cycles` and `busy_cycles` are what a device-side time is MADE of,
+    // `scan_cycles` and `busy_cycles` are what a device-side time is made of,
     // and they are counted here rather than by the host for a reason step 13
     // depends on: the PS reads a millisecond-scale wall clock across a bus it
-    // shares, so it can time a decode step but it cannot time the SCAN inside
+    // shares, so it can time a decode step but it cannot time the scan inside
     // one. The DDR bandwidth claim is `8 x n_tokens x row_bytes` over
     // `scan_cycles`, and every term in it has to come from the same clock the
     // reads were issued on.
@@ -537,7 +537,7 @@ module attn_top #(
                     end
                 end
 
-                // The row goes to DDR BEFORE the scan reads it back: this
+                // The row goes to DDR before the scan reads it back: this
                 // token attends to itself.
                 S_WRITE: begin
                     wr_valid <= 1'b1;

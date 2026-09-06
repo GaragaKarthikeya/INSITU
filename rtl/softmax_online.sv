@@ -4,33 +4,33 @@
 //     if grew:  factor = exp(s_t - m);  l *= factor >> 15;  acc *= factor >> 15;  m = s_t
 //     p = exp(m - s_t);  l += p
 //
-// ONE PASS, BECAUSE THE CACHE IS OFF-DIE
+// One pass, because the cache is OFF-DIE
 // --------------------------------------
 // The two-pass form needs the global maximum before it can accumulate, which
 // means reading the cache twice.  DDR is the wall this whole design is built
 // around, so the second read is not affordable and the running maximum is.
-// `attend_two_pass` and this are NOT bit-identical -- the online form truncates
+// `attend_two_pass` and this are not bit-identical -- the online form truncates
 // the accumulator once per rescale -- and the golden here is `attend_online`.
 //
-// SPECULATE "NO NEW MAX", BECAUSE NEW MAXIMA ARE LOGARITHMICALLY RARE
+// Speculate "no new max", because new maxima get rare logarithmically
 // -------------------------------------------------------------------
 // Between rescales `m` is a constant, so `exp`, `l +=` and `acc +=` are pure
 // feed-forward and pipeline at II=1.  The expected number of new maxima in T
 // samples is the harmonic number, about ln T + 0.577 -- eleven at a context of
 // 32,768 -- so the rare path can afford to stall the pipe entirely rather than
-// carry permanent hardware.  The hazard SHRINKS as context grows, which is the
+// carry permanent hardware.  The hazard shrinks as context grows, which is the
 // regime this design targets.
 //
-// WHAT A RESCALE ACTUALLY COSTS HERE
+// What a rescale actually costs here
 // ----------------------------------
 // The maximum must not move while tokens computed against the old one are
 // still in flight, so a rescale drains the exp pipe, spends three more cycles
-// computing the factor, issues the SCALE, and waits for `accum` to fold 64
+// computing the factor, issues the scale, and waits for `accum` to fold 64
 // channels through 8 multipliers.  `in_ready` drops for all of it; the input
 // FIFO is what keeps `score_lane` retiring one row per cycle through the
 // stall, and `hw_max_fill` reports how deep it actually had to be.
 //
-// THE FIFO CARRIES THE VALUE PLANE TOO
+// The FIFO carries the value plane too
 // ------------------------------------
 // `plan.MD` sized this as 16 x 48 b, counting only the score.  `accum` needs
 // `v_idx` and `v_norm` for the same token whose probability is emerging, and
@@ -58,7 +58,7 @@ module softmax_online #(
     input  logic [D*VAL_BITS-1:0] in_vcodes,
     input  logic signed [NORM_BITS-1:0] in_vnorm,
 
-    // The op stream to `accum.sv`, in order: a SCALE always precedes the ADD
+    // The op stream to `accum.sv`, in order: a scale always precedes the add
     // of the token that caused it, exactly as the model rescales before adding.
     output logic op_valid,
     input  logic op_ready,
@@ -107,7 +107,7 @@ module softmax_online #(
     wire adv = !op_valid || op_ready;
     wire drained = (ivld == '0);
 
-    // A new maximum is detected against the CURRENT m, and m only moves once
+    // A new maximum is detected against the current m, and m only moves once
     // the pipe is drained, so every in-flight token was compared against the
     // same m. That is what makes the speculation safe rather than merely rare.
     wire grew_now = !empty && !growing && (h_score > m);
@@ -136,7 +136,7 @@ module softmax_online #(
     // every running sum.
     wire [L_WIDTH+PROB_BITS-1:0] l_scaled = ({{PROB_BITS{1'b0}}, l} * exp_p);
 
-    // The 48x16 rescale of `l` is TWO cycles: the product is registered, and
+    // The 48x16 rescale of `l` is two cycles: the product is registered, and
     // the shift into `l` happens the cycle after. Multiply, shift and the mux
     // into `l` in one cycle was the block's critical path standalone -- as this
     // file's own header predicted -- and the last one left in `attn_top` at
@@ -144,9 +144,9 @@ module softmax_online #(
     //
     // The factor does not exist any earlier than the cycle it is used: it is
     // the exp pipe's output, and `push_fac` only starts the lookup. So the
-    // extra cycle goes AFTER. It is free: the SCALE op reaches `accum` on the
+    // extra cycle goes after. It is free: the scale op reaches `accum` on the
     // original cycle, `accum` spends nine cycles folding 64 channels, and the
-    // next ADD cannot retire for LAT cycles after pops resume -- so nothing
+    // next add cannot retire for LAT cycles after pops resume -- so nothing
     // reads `l` in between.
     logic l_pend;
     logic [L_WIDTH+PROB_BITS-1:0] l_prod;
@@ -181,10 +181,10 @@ module softmax_online #(
                 if (push_fac) fac_pushed <= 1'b1;
 
                 // The op retiring this cycle updates `l` in the same order it
-                // updates `acc`, so a SCALE lands on the l that all earlier
+                // updates `acc`, so a scale lands on the l that all earlier
                 // ADDs have already reached.
-                // The pending product lands first: an ADD cannot retire in the
-                // cycle after a SCALE (the pipe was drained to issue it), so
+                // The pending product lands first: an add cannot retire in the
+                // cycle after a scale (the pipe was drained to issue it), so
                 // these never both write `l`.
                 l_pend <= 1'b0;
                 if (l_pend) l <= L_WIDTH'(l_prod >> PROB_FRAC);

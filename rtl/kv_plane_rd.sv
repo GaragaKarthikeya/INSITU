@@ -7,7 +7,7 @@
 // ever reading out of order.  See `hw/ddr_layout.py` for why the cache is
 // transposed into planes at all.
 //
-// BURST 64, OUTSTANDING 2, AND NOT DEEPER
+// BURST 64, outstanding 2, and not DEEPER
 // ---------------------------------------
 // Measured on the board in step 1: at four ports and burst 64, two outstanding
 // reads give 14,708 MB/s and four give 11,987 -- a deeper queue costs 19% of
@@ -17,7 +17,7 @@
 // prefetch queue is actively wrong here, so the depth is a parameter with a
 // measured default and the testbench asserts it is what shipped.
 //
-// THE BUFFER IS SIZED BY LATENCY, NOT BY CONTEXT
+// The buffer is sized by latency, not by context
 // ----------------------------------------------
 // This is the whole point of the transpose.  The consumer eats WIDTH bytes per
 // token and this port delivers 16 B per beat, so the FIFO only has to cover the

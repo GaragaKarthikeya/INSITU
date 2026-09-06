@@ -1,7 +1,7 @@
 // Self-checking testbench for the DDR bandwidth probe.
 //
 // The point of the probe is to measure a real memory system, so this bench
-// cannot validate the ANSWER -- only the INSTRUMENT. It checks the three ways
+// cannot validate the answer -- only the INSTRUMENT. It checks the three ways
 // the instrument could lie:
 //
 //   1. dropped or double-counted beats  -> the byte count would be wrong
@@ -46,7 +46,7 @@ module tb_ddr_probe;
     logic [3:0]     wstrb = 4'hF;
 
     // The DUT asserts AWREADY and WREADY together, so one wait covers both.
-    // After READY is observed at a negedge, the handshake fires at the NEXT
+    // After READY is observed at a negedge, the handshake fires at the next
     // posedge -- hence the extra tick before dropping VALID.
     task automatic lite_write(input int addr, input int unsigned data);
         tick;

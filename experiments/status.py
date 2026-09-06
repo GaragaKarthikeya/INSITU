@@ -53,7 +53,7 @@ def main() -> int:
         return 1
     s = json.loads(sp.read_text())
 
-    # LIVENESS FIRST. Everything else is meaningless if it is wedged: the
+    # Liveness first. Everything else is meaningless if it is wedged: the
     # heartbeat fires once per transformer layer, so a stale stamp is a hang,
     # not slowness.
     age = time.time() - s.get("updated_at", 0)

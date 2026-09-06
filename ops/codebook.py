@@ -1,21 +1,23 @@
 """Scalar codebooks, computed rather than tabulated.
 
-WHY THERE IS NO CALIBRATION FILE
+Why there is no calibration file
 --------------------------------
 Rotating a vector by a randomized Walsh-Hadamard transform makes its channels
-close to i.i.d. Gaussian -- that is the entire reason the rotation is there.
-So the optimal scalar codebook after rotation is the Lloyd-Max quantizer for
-N(0,1), which depends on the bit-width and nothing else.
+close to i.i.d. Gaussian, which is the whole reason the rotation is there. So
+the best scalar codebook to use afterwards is the Lloyd-Max quantizer for
+N(0,1), and that depends on the bit-width and nothing else.
 
-That collapses a whole class of infrastructure. No calibration pass over model
-activations, no exported ROM, no JSON that hardware and golden model must be
-kept in sync on, and no possibility of a cache written under one calibration
-being read under another. `Codebook.gaussian(bits)` is a pure function of an
-integer, and it is deterministic to the last bit on any machine.
+That removes a whole class of infrastructure: no calibration pass over model
+activations, no exported ROM, no JSON that the hardware and the golden model
+have to be kept in sync on, and no way to write a cache under one calibration
+and read it under another. `Codebook.gaussian(bits)` is a pure function of an
+integer and gives the same bits on any machine.
 
-The claim that rotated channels are Gaussian is checkable, not assumed:
-`kernel/tests/test_rotation_gaussianity.py` measures the KS distance and the
-distortion penalty against a codebook fitted to the real data.
+The claim that rotated channels end up Gaussian is checked rather than
+assumed. `tests/test_rotation.py` measures it two ways:
+`check_gaussianises_outlier_heavy_activations` on activations with outlier
+channels, and `check_one_round_overshoots_into_platykurtic` on the
+pathological one-hot case.
 """
 
 from __future__ import annotations
@@ -32,11 +34,11 @@ from ..numerics.fixed import INT, Q
 class Codebook:
     """`2**bits` reconstruction levels and the `2**bits - 1` decision boundaries.
 
-    Both are stored as integers in Q(frac). Boundaries are what the encoder
-    compares against; centroids are what the decoder multiplies by. They are
-    kept as separate arrays rather than one derived from the other at use time,
-    because the midpoint rule that relates them holds for Lloyd-Max and not for
-    every codebook someone might later plug in.
+    Both are stored as integers in Q(frac). The encoder compares against the
+    boundaries; the decoder multiplies by the centroids. They are two separate
+    arrays rather than one derived from the other on use, because the midpoint
+    rule relating them holds for Lloyd-Max but would not hold for every
+    codebook someone might plug in later.
     """
 
     centroids: np.ndarray      # (2**bits,) int64, Q(frac), ascending
@@ -68,29 +70,29 @@ class Codebook:
                  grid: int = 1 << 16, iters: int = 200) -> "Codebook":
         """Lloyd-Max quantizer for the standard normal.
 
-        Solved on a fixed grid rather than in closed form: Lloyd's algorithm on
-        a 65536-point discretisation of N(0,1) converges to the continuous
-        optimum far below the Q1.15 quantum the result is stored at, so the
-        discretisation is invisible in the output. Cached, so the cost is paid
-        once per width per process.
+        Solved on a fixed grid rather than in closed form. Lloyd's algorithm on
+        a 65536-point discretisation of N(0,1) lands well within the Q1.15
+        quantum we store the answer at, so the grid is invisible in the output.
+        Cached, so a given width costs this once per process.
 
         `symmetric` forces `c[i] == -c[n-1-i]` exactly. Lloyd's optimum for a
-        symmetric density is symmetric up to solver noise anyway; forcing it
-        makes the property exact, which lets the decoder use a magnitude table
-        and a sign bit instead of a full one. The distortion cost is far below
-        one quantum.
+        symmetric density already comes out symmetric to within solver noise;
+        forcing it makes that exact, which lets the decoder store a magnitude
+        table and a sign bit instead of the full table. It costs far less than
+        one quantum of distortion.
         """
         if bits < 1:
             raise ValueError(f"bits={bits} must be at least 1")
         n = 1 << bits
 
-        # A symmetric grid with N(0,1) mass. +-8 sigma holds all but ~1e-15.
+        # A symmetric grid carrying N(0,1) mass. +-8 sigma covers all but
+        # about 1e-15 of it.
         x = np.linspace(-8.0, 8.0, grid)
         w = np.exp(-0.5 * x * x)
         w /= w.sum()
 
-        # Initialise on equiprobable quantiles: closer to the optimum than a
-        # uniform split, so Lloyd converges without hunting.
+        # Start from equiprobable quantiles. That is closer to the optimum than
+        # a uniform split, so Lloyd converges without hunting around.
         cdf = np.cumsum(w)
         c = np.interp((np.arange(n) + 0.5) / n, cdf, x)
 
@@ -110,9 +112,9 @@ class Codebook:
 
         cq = Q(32, frac).from_float(c)
         cq = _force_strictly_ascending(cq)
-        # Midpoints, rounded down, so a value exactly on a boundary falls to
-        # the lower bin. `searchsorted(..., side="right")` in `quantize` uses
-        # the same convention; the two must agree or a code shifts by one.
+        # Midpoints rounded down, so a value sitting exactly on a boundary
+        # falls into the lower bin. The encoder in `quantize` uses `>` for the
+        # same reason. The two have to agree or every tie shifts by one code.
         bq = (cq[:-1] + cq[1:]) >> INT(1)
         bq = _force_strictly_ascending(bq)
         return Codebook(centroids=cq, boundaries=bq, bits=bits, frac=frac)
@@ -124,14 +126,15 @@ class Codebook:
                 grid: int = 1 << 16) -> "Codebook":
         """MSE-optimal equally-spaced quantizer for the standard normal.
 
-        The control for `gaussian`. Equal spacing is cheaper in hardware -- the
-        decision boundaries are a multiply and a shift rather than a comparator
-        tree -- so if it costs nothing in accuracy, the Lloyd-Max codebook is
-        not earning its place and the "no calibration needed" argument is about
-        the ROTATION alone rather than about the codebook.
+        This is the control for `gaussian`. Equal spacing is cheaper in
+        hardware -- the decision boundaries become a multiply and a shift
+        instead of a comparator tree -- so if it turns out to cost nothing in
+        accuracy, then the Lloyd-Max codebook is not earning its keep and the
+        "no calibration needed" argument is really about the rotation rather
+        than about the codebook.
 
-        Only the clipping range is optimised, by scanning it: everything else
-        about a uniform quantizer is fixed by construction.
+        The only thing optimised here is the clipping range, found by scanning.
+        Everything else about a uniform quantizer is fixed by construction.
         """
         n = 1 << bits
         x = np.linspace(-8.0, 8.0, grid)
@@ -160,13 +163,15 @@ class Codebook:
 
 
 def _force_strictly_ascending(a: np.ndarray) -> np.ndarray:
-    """Break ties introduced by rounding to Q(frac).
+    """Break ties that rounding to Q(frac) introduced.
 
-    At small `bits` and large `frac` this never fires. At `bits` near the
-    format's resolution two adjacent levels can round together, and a
-    non-monotone boundary array silently breaks `searchsorted`. Nudging is
-    correct here because the levels are genuinely distinct before rounding;
-    what is being repaired is the storage format, not the solution.
+    At small `bits` and large `frac` this never fires. Once `bits` gets close to
+    the format's resolution, two adjacent levels can round to the same integer,
+    and a boundary array that is not strictly increasing quietly breaks
+    `searchsorted`.
+
+    Nudging is the right fix here because the levels really are distinct before
+    rounding. What we are repairing is the storage format, not the solution.
     """
     a = a.astype(INT).copy()
     for i in range(1, len(a)):

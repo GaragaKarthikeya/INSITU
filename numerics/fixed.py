@@ -1,28 +1,29 @@
-"""Fixed-point arithmetic: the one module allowed to narrow a value.
+"""Fixed-point arithmetic. This is the only module that narrows a value.
 
-THE DISCIPLINE
---------------
-Intermediate arithmetic is int64 and grows naturally. A value narrows ONLY at a
-named call here -- `Q.rshift`, `Q.clamp`, `Q.from_float`. Nothing elsewhere in
-the package writes a shift or a mask.
+Everywhere else, intermediate results stay in int64 and are allowed to grow. A
+value only gets narrower through one of the named calls here: `Q.rshift`,
+`Q.clamp` or `Q.from_float`. There are no shifts or masks anywhere else in the
+package.
 
-The reason is that a fixed-point design's identity IS its truncation points. An
-ad hoc `>> 3` added somewhere convenient is the most likely way two
-implementations of the same arithmetic diverge on some inputs while still
-agreeing on the ones anyone tested.
+The reason is that where you truncate is what defines a fixed-point design. A
+stray `>> 3` added because it was convenient is the easiest way for the model
+and the hardware to drift apart, and they will still agree on whatever inputs
+you happened to test.
 
-ROUNDING IS A PARAMETER, NOT A DEFAULT
+Rounding is a parameter, not a default
 --------------------------------------
-Three modes, because the difference is real and each has a right place:
+There are three modes, because the difference is real and each has a place:
 
-    "floor"  arithmetic shift right. Cheapest; biased toward -inf.
-    "even"   round half to even. Unbiased. What a norm conversion wants,
-             because norms are always positive and floor's bias accumulates
-             across an entire cache.
+    "floor"  arithmetic shift right. Cheapest, biased towards -inf.
+    "even"   round half to even. Unbiased. This is what a norm conversion
+             wants: norms are always positive, so floor would bias every one
+             of them the same way and the error would build up across a whole
+             cache instead of averaging out.
     "up"     round half away from zero. One adder. Fine on a cold path.
 
-Python's `>>` on a negative int floors, which matches an arithmetic shift
-right, so "floor" is the operator and the other two are built from it.
+Python's `>>` on a negative int floors, which is what an arithmetic shift right
+does, so "floor" is the plain operator and the other two are built on top of
+it.
 """
 
 from __future__ import annotations
@@ -48,11 +49,14 @@ def _as_int(x) -> np.ndarray:
 def rshift(x, n, rounding: Rounding = "floor") -> np.ndarray:
     """`x >> n` under the named rounding rule. `n == 0` is a no-op, not an error.
 
-    `n` may be an ARRAY, broadcast against `x`. That exists for one caller:
-    `_finalize`'s reciprocal is normalised per row, so two query heads with
-    different denominators are shifted by different amounts in the same step.
-    A scalar `n` takes the same path it always did -- the array case is a
-    branch, not a reimplementation, so the scalar behaviour cannot drift.
+    `n` can be an array, broadcast against `x`. There is one caller that needs
+    this: the reciprocal in `_finalize` is normalised per row, so two query
+    heads with different denominators get shifted by different amounts in the
+    same step.
+
+    A scalar `n` still takes the path it always did. The array case is a branch
+    inside the same function rather than a second copy of it, so the scalar
+    behaviour cannot drift away from it.
     """
     a = _as_int(x)
     if np.ndim(n) == 0:
@@ -64,10 +68,11 @@ def rshift(x, n, rounding: Rounding = "floor") -> np.ndarray:
         n = _as_int(n)
         if np.any(n < 0):
             raise ValueError("rshift by a negative amount: use lshift, so direction is explicit")
-        # `1 << (n - 1)` is evaluated for every element including n == 0, where
-        # the shift is -1 and numpy's answer is undefined. The rounding modes
-        # below need the half, so n == 0 is handled by selecting it away rather
-        # than by an early return that an array cannot take.
+        # `1 << (n - 1)` gets evaluated for every element, including n == 0,
+        # where the shift is -1 and numpy's answer is undefined. The rounding
+        # modes below need that half, so we compute it with a floor of 1 and
+        # then select it away afterwards. An early return would be simpler but
+        # an array cannot take one.
         safe = np.maximum(n, INT(1))
     if rounding == "floor":
         return a >> n
@@ -89,13 +94,13 @@ def lshift(x, n: int) -> np.ndarray:
 
 
 def absmax(x) -> int:
-    """`max(|x|)` without allocating `|x|`.
+    """`max(|x|)` without building `|x|` first.
 
-    `np.abs(x).max()` materialises a full temporary the size of `x`. On the
-    arrays this package reduces over -- tens of millions of elements, several
-    times per tile -- that allocation and the extra memory pass cost more than
-    the reduction itself. Two reductions over the original beat one pass plus
-    one reduction over a copy.
+    `np.abs(x).max()` allocates a temporary the size of `x`. The arrays this
+    package reduces over are tens of millions of elements and get reduced
+    several times per tile, and there the allocation plus the extra pass over
+    memory costs more than the reduction does. Two reductions over the original
+    array beat one copy plus one reduction over it.
     """
     a = np.asarray(x)
     if a.size == 0:
@@ -130,11 +135,11 @@ class Q:
         return (1 << (self.width - 1)) - 1
 
     def from_float(self, x, rounding: Rounding = "even") -> np.ndarray:
-        """Float in, integer code out. The ONLY float -> fixed conversion point.
+        """Float in, integer code out. The only float to fixed conversion there is.
 
-        Rounds half to even by default: this runs on every Q/K/V element of
-        every token, so a biased rule would be a systematic offset on the
-        whole cache rather than a rounding error on one value.
+        Rounds half to even by default. This runs on every Q, K and V element
+        of every token, so a biased rule would not be a rounding error on one
+        value -- it would be a systematic offset on the entire cache.
         """
         a = np.asarray(x, dtype=np.float64) * self.scale
         if rounding == "even":
@@ -167,13 +172,13 @@ class Q:
         return int((~self.fits(x)).sum())
 
     def check_and_clamp(self, x) -> tuple[np.ndarray, int, int]:
-        """`(clamped, overflow_count, absmax)` in one reduction on the common path.
+        """`(clamped, overflow_count, absmax)`, in one pass when nothing overflows.
 
-        Counting overflows and clamping separately is four passes over the
-        array; on the hot path nothing overflows, and a single `absmax` proves
-        it. When it does overflow the slow path runs, so nothing is
-        approximated -- the saturation count stays exact, it is just not paid
-        for when there is nothing to count.
+        Counting overflows and clamping separately takes four passes over the
+        array. On the hot path nothing overflows at all, and a single `absmax`
+        is enough to prove that. If something does overflow we fall through to
+        the slow path, so no count is ever approximated -- we just do not pay
+        for counting when there is nothing to count.
         """
         a = _as_int(x)
         peak = absmax(a)
@@ -195,14 +200,15 @@ class Q:
 
 
 def fwht(x) -> np.ndarray:
-    """Unnormalised Walsh-Hadamard transform: adds and subtracts only.
+    """Unnormalised Walsh-Hadamard transform. Adds and subtracts, nothing else.
 
-    Exact on integers, which is the entire reason the rotation is a Hadamard
-    and not an arbitrary orthogonal matrix -- there is no truncation inside it
-    to account for, at any width.
+    Being exact on integers is the whole reason the rotation is a Hadamard and
+    not some arbitrary orthogonal matrix: there is no truncation inside it to
+    account for, at any width.
 
-    Operates on the last axis, in place on a copy, in the butterfly's own
-    stage order so the hardware and this agree on more than the final value.
+    Works on the last axis, in place on a copy, and runs the stages in the same
+    order the butterfly does -- so this and the hardware agree on the
+    intermediates too, not only on the final value.
     """
     a = _as_int(x).copy()
     n = a.shape[-1]
@@ -221,11 +227,12 @@ def fwht(x) -> np.ndarray:
 
 
 def sqrt_shift(n: int) -> int | None:
-    """`log2(sqrt(n))` when it is an integer, else None.
+    """`log2(sqrt(n))` if that is a whole number, otherwise None.
 
-    1/sqrt(n) is an exact right shift for even powers of two, and only then.
-    Callers that get None must use a Q15 reciprocal multiply instead; silently
-    shifting by a rounded exponent is a wrong answer that looks plausible.
+    `1/sqrt(n)` is an exact right shift for even powers of two and for nothing
+    else. A caller that gets None has to use a Q15 reciprocal multiply instead.
+    Shifting by a rounded exponent would give a wrong answer that looks
+    perfectly plausible, which is why this returns None rather than guessing.
     """
     if n & (n - 1) or n < 1:
         return None

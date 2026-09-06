@@ -1,11 +1,11 @@
-// Self-checking testbench for rot_encode.sv, at BOTH wire widths.
+// Self-checking testbench for rot_encode.sv, at both wire widths.
 //
 // The key plane (4 bits, 15 boundaries) and the value plane (2 bits, 3) run on
 // the same stimulus and the same norms, because the interesting bug is a
 // boundary index that is right at one width and off by one at the other.
 //
-// The last 32 vectors sit EXACTLY on a decision boundary.  `_encode_plane`
-// compares with `>`, so those channels belong to the LOWER bin; a `>=` in the
+// The last 32 vectors sit exactly on a decision boundary.  `_encode_plane`
+// compares with `>`, so those channels belong to the lower bin; a `>=` in the
 // RTL passes every other vector in this file and fails those.  They are
 // constructed by `hw/vectors.py` rather than sampled -- an exact tie needs
 // `x << 8 == norm * boundary`, which random stimulus hits about once in 2**32.
@@ -84,7 +84,7 @@ module tb_rot_encode;
 
         // The boundaries are a format artifact, exactly as the sign diagonal
         // is.  Checking the parameter against the emitted codebook makes a
-        // stale build fail HERE and not as a scattering of one-off codes.
+        // stale build fail here and not as a scattering of one-off codes.
         for (int i = 0; i < 15; i++)
             check(dut_k.BOUNDS[i*20 +: 20] === bounds_key[i],
                   $sformatf("key boundary %0d must match the Python codebook", i));

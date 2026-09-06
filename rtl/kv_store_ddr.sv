@@ -4,11 +4,11 @@
 // one 52-byte row per cycle into `score_lane`.  Plus a write path for the eight
 // rows the arriving token adds, which must never stall the read stream.
 //
-// THE CACHE IS TRANSPOSED, AND THAT IS A CORRECTION TO `plan.MD`
+// The cache is transposed, and that is a correction to `plan.MD`
 // --------------------------------------------------------------
 // The plan specified packed 52-byte rows at a flat stride.  That cannot feed
 // four ports.  A row is 52 B and one 128-bit HP port carries 16 B per cycle, so
-// four ports must run at once and each needs its OWN sequential stream -- and a
+// four ports must run at once and each needs its own sequential stream -- and a
 // flat row layout has exactly one stream in it.  Splitting the token range into
 // quarters does not rescue it: the scan is causal, so every token of the first
 // quarter comes from port 0 alone, at 16 B/cycle against the 52 B/cycle the
@@ -21,16 +21,16 @@
 // the four together deliver one row per cycle -- three at a beat per token and
 // the fourth at a beat per four tokens.  `hw/ddr_layout.py` owns the address
 // map and `tests/test_ddr_layout.py` asserts the round trip is byte-exact
-// against `KVQuantizer.pack`.  The row FORMAT is untouched; only its
+// against `KVQuantizer.pack`.  The row format is untouched; only its
 // arrangement in memory changed.
 //
-// BURST 64, OUTSTANDING 2
+// BURST 64, outstanding 2
 // -----------------------
 // Measured, in step 1, on the board.  Deeper is worse: 14,708 MB/s at two
 // outstanding against 11,987 at four, with three times the variance.  See
 // `kv_plane_rd.sv`.
 //
-// THE WRITE PATH IS SEPARATE AND NON-BLOCKING
+// The write path is separate and non-blocking
 // -------------------------------------------
 // 416 B per token per layer against megabytes of reads, so it is negligible
 // traffic -- but it shares the DRAM, and a write that blocked the read stream
@@ -99,7 +99,7 @@ module kv_store_ddr #(
 
     logic [N_PORTS-1:0] p_valid, p_ready, p_busy, p_starved;
 
-    // A row exists only when EVERY plane has its slice: the planes run at
+    // A row exists only when every plane has its slice: the planes run at
     // different rates -- a beat per token for the codes, a beat per four for
     // the norms -- so they are joined here, not assumed to be in step.
     assign row_valid = &p_valid;

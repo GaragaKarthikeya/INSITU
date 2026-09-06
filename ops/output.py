@@ -1,12 +1,12 @@
 """The output projection, and the offline fold that removes the inverse rotation.
 
-WHY THERE IS NO POST-ROTATION STAGE
+Why there is no post-rotation stage
 -----------------------------------
 The value accumulator comes out of attention in the rotated domain. The naive
 fix is to rotate it back per step. The fold does it for free instead, once,
 when the weights are loaded:
 
-`Rotation.apply` acts on a ROW vector as `acc = v @ R.T`, so recovering the
+`Rotation.apply` acts on a row vector as `acc = v @ R.T`, so recovering the
 head-space value is `v = acc @ R` (using `R^-1 == R.T`, twice). Then:
 
     y = v @ W_o.T
@@ -18,18 +18,19 @@ head-space value is `v = acc @ R` (using `R^-1 == R.T`, twice). Then:
 `W_o'` has exactly the shape of `W_o` -- the fold costs no memory and no
 runtime.
 
-The TRANSPOSE on the block is the whole content of this derivation and is easy
+The transpose on the block is the whole content of this derivation, and it is
+easy
 to get wrong: `blockdiag(R)` and `blockdiag(R).T` are both orthonormal, both
 produce output of the right shape, and both give a model that runs. Only one
 gives the right answer. `tests/test_kernel.py` checks the fold against an
 explicit rotate-then-project rather than against itself.
 
-TWO CONSEQUENCES THAT MUST TRAVEL WITH ANY RESULT
+Two consequences that must travel with any result
 -------------------------------------------------
 1. The block's output is meaningless against an unfolded `W_o`. Not slightly
    wrong -- it is in a different basis. `fold_o_proj` is not an optimisation
    that can be skipped.
-2. The concatenation order of the accumulators IS part of the format. The fold
+2. The concatenation order of the accumulators is part of the format. The fold
    builds `blockdiag` head-major, so `merge_heads` must lay the heads out
    head-major too. Getting this wrong produces fluent nonsense rather than an
    error.

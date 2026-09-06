@@ -1,7 +1,7 @@
 /*
  * Step 13: the attention block driven by the A53, with no JTAG in the loop.
  *
- * WHAT CHANGED FROM STEP 12, AND WHAT DELIBERATELY DID NOT
+ * What changed from step 12, and what deliberately did not
  * --------------------------------------------------------
  * Step 12 ran one decode step from `xsdb` over the JTAG cable, ~1 ms per
  * transaction, and made no claim about time. Everything below the shim is
@@ -10,25 +10,25 @@
  * it: `jtag_axi` becomes the PS through M_AXI_HPM0_FPD. That is the whole
  * reason the shim was built as addressed memory rather than a FIFO window.
  *
- * WHAT THIS RUN IS FOR
+ * What this run is for
  * --------------------
  * Three things step 12 could not answer:
  *
- *  1. MULTI-TOKEN. Each case loads a cache image holding tokens 0..ctx0-1 and
- *     NOTHING ELSE, then runs four decode steps on it. Token ctx0+n scores
+ *  1. Multi-token. Each case loads a cache image holding tokens 0..ctx0-1 and
+ *     nothing else, then runs four decode steps on it. Token ctx0+n scores
  *     against n rows that exist only because the block's own AXI write master
  *     put them in DDR and the next scan's address generator found them again.
  *     A write path off by one plane or one token answers step 0 correctly and
  *     every step after it wrongly. Step 12, which ran one step, could not see
  *     that; `tb_attn`, which blanks one token, could not either.
  *
- *  2. MULTI-CONTEXT. 64, 256 and 1,024 cached tokens, so the plane spans and
+ *  2. Multi-CONTEXT. 64, 256 and 1,024 cached tokens, so the plane spans and
  *     head strides the host programs are three different sets of numbers
  *     rather than the one set that happens to be all-4096 at ctx 64.
  *
- *  3. A DEVICE-SIDE TIME THAT MEANS SOMETHING. See below.
+ *  3. A DEVICE-side TIME that means something. See below.
  *
- * TIME IS REPORTED IN THREE PARTS, AND ONLY ONE OF THEM IS THE BLOCK
+ * TIME IS reported IN three PARTS, and ONLY one OF THEM IS the block
  * ------------------------------------------------------------------
  * The A53 writes 2,304 words into the shim one store at a time over a 32-bit
  * AXI-Lite path, starts the block, then reads 1,536 words back the same way.
@@ -36,7 +36,7 @@
  * "microseconds per token" here would be reporting the shim's ingress, not
  * attention, so the three are printed separately: load, run, read.
  *
- * And the run is timed TWICE, by two clocks that share nothing. `XTime` is the
+ * And the run is timed twice, by two clocks that share nothing. `XTime` is the
  * A53's counter, read across a bus the block is using; `busy_cycles` and
  * `scan_cycles` are counted in the PL at the clock the DDR reads were issued
  * on. The bandwidth number may only be divided by the second -- the first
@@ -44,9 +44,9 @@
  * clock back, which is how a bitstream built at the wrong frequency announces
  * itself instead of quietly making every GB/s figure 40% too high.
  *
- * CACHE DISCIPLINE
+ * Cache discipline
  * ----------------
- * The block reaches DDR through S_AXI_HP, which is NOT coherent with the A53
+ * The block reaches DDR through S_AXI_HP, which is not coherent with the A53
  * caches. The image is memcpy'd with the D-cache on and then flushed, or the
  * block reads whatever DDR held before and every score is garbage from
  * perfectly correct hardware. Flush, not just clean-on-eviction: a dirty line
@@ -133,7 +133,7 @@ static int dma_ok;
 
 /* One decode step through the DMA. Returns wrong words, or a negative code.
  *
- * THE RECEIVE SIDE IS ARMED FIRST, AND THE BLOCK IS STARTED LAST.
+ * The receive side IS ARMED first, and the block IS STARTED last.
  * The core emits its first egress beat as soon as group 0 has drained, so an
  * unarmed S2MM would stall the stream mid-step. Arming MM2S before the block
  * is started is safe on purpose: `attn_ctrl` holds `s_axis_tready` low until
@@ -302,7 +302,7 @@ static int run_case(const attn_case_t *c, int use_dma)
         return 1;
     }
 
-    /* ZEROED FIRST. The long-context probe leaves 16.9 MB of pseudo-random
+    /* ZEROED first. The long-context probe leaves 16.9 MB of pseudo-random
      * bytes at this address, and a case whose image is shorter than that -- or
      * a live run, whose image is nothing at all -- would otherwise scan rows
      * that were never written by anybody. "Nothing reads a row that was not
@@ -396,9 +396,9 @@ static int run_case(const attn_case_t *c, int use_dma)
         xil_printf("  %s TIME:  load %u us, run %u us, read %u us "
                    "over %u steps\r\n", c->name, (unsigned)tot_us_load,
                    (unsigned)tot_us_run, (unsigned)tot_us_read, c->steps);
-        /* THE NUMBER THAT ACTUALLY TESTS DDR.
+        /* The number that ACTUALLY TESTS DDR.
          *
-         * The MB/s above is what the ENGINE ASKED FOR, and it is capped at
+         * The MB/s above is what the ENGINE asked for, and it is capped at
          * 13.0 GB/s by the datapath: `PARALLEL_KV = 1` retires one row per
          * cycle and cannot consume more. It can never read back the 14.7 GB/s
          * step 1 measured with four synthetic read engines, and a run that
@@ -422,9 +422,9 @@ static int run_case(const attn_case_t *c, int use_dma)
 }
 
 /* --------------------------------------------------------------------------
- * The long-context probe: address pattern only, NOT a correctness result.
+ * The long-context probe: address pattern only, not a correctness result.
  *
- * WHY THIS EXISTS
+ * Why this exists
  * ---------------
  * Step 14 found that per-group starve goes 8.0, 8.8, 9.6 and then 154.5 cycles
  * at ctx 8,192 -- 16x for an 8x context. Two components, not one: a fixed round
@@ -433,13 +433,13 @@ static int run_case(const attn_case_t *c, int use_dma)
  * keeps climbing.
  *
  * Answering it bit-exactly needs a 16.9 MB cache image in the ELF and an
- * O(T^2) numpy prefill. Neither is needed to measure an ADDRESS PATTERN. So
- * the A53 fills DDR itself and the block scans it, and NOTHING here is
+ * O(T^2) numpy prefill. Neither is needed to measure an ADDRESS pattern. So
+ * the A53 fills DDR itself and the block scans it, and nothing here is
  * compared against a golden -- the answers are wrong by construction and are
  * never looked at.
  *
- * WHAT THE SYNTHETIC IMAGE BIASES, AND IN WHICH DIRECTION
- * ------------------------------------------------------
+ * What the synthetic image biases, and in which direction
+ * -------------------------------------------------------
  * The scan is not quite data-independent: a new running maximum costs the
  * online softmax a rescale, and a rescale is 15 cycles of bubble. Those bubbles
  * hand DDR extra slack. A pseudo-random image produces a different number of
@@ -463,7 +463,7 @@ static unsigned round_up(unsigned x, unsigned a) { return (x + a - 1) / a * a; }
 static int run_probe(const probe_t *pr, const attn_case_t *token_src)
 {
     /* The layout, as `hw/ddr_layout.py` computes it: every plane takes the
-     * WIDEST plane's span, because `attn_top` walks them as
+     * Widest plane's span, because `attn_top` walks them as
      * `cache_base + p*plane_span` with one register. */
     unsigned cap    = pr->ctx + pr->steps;
     unsigned span   = round_up(cap * 16u, 4096u);
@@ -604,7 +604,7 @@ static void serve_one_mailbox(void)
     m[MBX_NSTEPS]   = ++served_mbx;
     m[MBX_STATUS]   = ok ? MBX_ACK : MBX_ERR;
 
-    /* The result FIRST, then the doorbell: a doorbell visible before the data
+    /* The result first, then the doorbell: a doorbell visible before the data
      * it announces hands back the previous token's answer. */
     Xil_DCacheFlushRange((UINTPTR)res, RESULT_BYTES);
     Xil_DCacheFlushRange((UINTPTR)m, MBX_CTRL_BYTES);
@@ -643,9 +643,9 @@ static void serve(void)
 }
 
 /* --------------------------------------------------------------------------
- * The Ethernet server. Step 14's transport, and the one the design is FOR.
+ * The Ethernet server. Step 14's transport, and the one the design is for.
  *
- * Reassembly is BY OFFSET, not by arrival order: each frame carries its
+ * Reassembly is BY offset, not by arrival order: each frame carries its
  * fragment index and the total, so a reordered or duplicated frame lands where
  * it belongs instead of where it arrived. `seq` travels in every fragment so a
  * straggler from an abandoned message is dropped rather than spliced into the
@@ -653,7 +653,7 @@ static void serve(void)
  * happen" is exactly the class of thing that produces a wrong answer instead
  * of an error when it does.
  *
- * The payload is reassembled STRAIGHT INTO the DMA's transmit buffer, so the
+ * The payload is reassembled STRAIGHT into the DMA's transmit buffer, so the
  * bytes off the wire are the bytes the core consumes. That is what
  * `attn_proto.h` is built around.
  * -------------------------------------------------------------------------- */
@@ -662,7 +662,7 @@ static void serve(void)
 static u32 rx_any_count(void) { u32 a = 0; attn_eth_stats(&a, 0, 0); return a; }
 static u32 tx_count(void)     { u32 t = 0; attn_eth_stats(0, 0, &t); return t; }
 
-/* A FRAGMENT IS NOW UP TO ATTN_MTU_PAYLOAD, NOT 1,492.
+/* A FRAGMENT IS now UP TO ATTN_MTU_PAYLOAD, not 1,492.
  * This was 1,600 bytes, sized for a 1,500-byte MTU, and jumbo made every
  * fragment overrun it in both directions -- reassembling a request into it and
  * building a reply out of it. The symptom was a request arriving with 36 of
@@ -687,7 +687,7 @@ static void serve_eth(void)
 
     u32 spin = 0;
     for (;;) {
-        /* THE MAILBOX IS STILL SERVED WHILE ETHERNET IS UP.
+        /* The MAILBOX IS still SERVED WHILE ETHERNET IS UP.
          * Entering serve_eth() used to mean the JTAG doorbell was never polled
          * again, so `--jtag` could not be used as a control against `--eth` --
          * the comparison that would have told us in one run whether a wrong
@@ -728,7 +728,7 @@ static void serve_eth(void)
         if (fh.seq != cur_seq) {          /* a new message begins */
             /* A host that died mid-request leaves fragments behind. Starting
              * fresh on any new sequence number is what stops that partial
-             * message from being completed by the NEXT run's fragments. */
+             * message from being completed by the next run's fragments. */
             cur_seq = fh.seq;
             have = 0;
             want = fh.nfrag;
@@ -841,7 +841,7 @@ static void serve_eth(void)
                 xil_printf("ETH: send failed on fragment %u\r\n", (unsigned)f);
         }
         cur_seq = 0xFFFFFFFFu;            /* done; the next seq starts fresh */
-        /* EVERY step, not every sixty-fourth. When this stops replying the log
+        /* Every step, not every sixty-fourth. When this stops replying the log
          * has to show the last one it completed and how many frames the reply
          * took; a counter printed once per 64 hides exactly that. */
         xil_printf("ETH: served seq %u status %u ntok %u -> %u frags, %u us "

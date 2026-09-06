@@ -1,11 +1,11 @@
-"""Step 1: does the kernel reproduce ONE real attention layer?
+"""Step 1: does the kernel reproduce one real attention layer?
 
 The smoke test that must pass before any accuracy number means anything. It
-runs the real `LlamaAttention` and the kernel on the SAME captured hidden
+runs the real `LlamaAttention` and the kernel on the same captured hidden
 states, with the kernel in dense mode (no quantisation) so that any residual is
 plumbing -- RoPE convention, head layout, the W_o fold -- and not compression.
 
-Then it repeats in compressed mode, where the residual IS the compression.
+Then it repeats in compressed mode, where the residual is the compression.
 """
 import sys
 import numpy as np

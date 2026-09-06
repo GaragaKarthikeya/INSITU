@@ -1,6 +1,6 @@
 """The host's side: send a decode step, get 2,048 channels back.
 
-TWO TRANSPORTS, ONE CALLER
+Two transports, one caller
 --------------------------
 `TcpClient` talks to `attn_mock` on this machine. `RawEthClient` talks to the
 board over a raw Ethernet frame, which is what `plan.MD` sizes the system
@@ -9,7 +9,7 @@ ctx 32k. They present the same `step()` so the thing above them cannot tell
 which it is holding, and the mock is therefore a real rehearsal rather than a
 different code path that happens to look similar.
 
-WHAT THE HOST SENDS IS WHAT THE CORE EATS
+What the host sends is what the core eats
 -----------------------------------------
 `step()` takes `VectorSet.ingress_bytes()` and puts it on the wire unchanged.
 There is no encoding step here and there must not be one: the A53 hands the
@@ -38,7 +38,7 @@ class _Base:
             raise RuntimeError(
                 f"device returned {h['status']} "
                 f"({P.STATUS_NAME.get(h['status'], 'unknown')})")
-        # The sequence number is checked, not assumed. A reply to the PREVIOUS
+        # The sequence number is checked, not assumed. A reply to the previous
         # request is otherwise indistinguishable from a wrong answer to this
         # one -- and on a lossy link that is the failure that actually happens.
         if h["seq"] != self._seq:
@@ -47,7 +47,7 @@ class _Base:
             raise RuntimeError(f"result is {len(body)} B, expected {P.RESULT_BYTES}")
         return body, h
 
-    # The board reassembles into a buffer sized for a TOKEN -- 64 +
+    # The board reassembles into a buffer sized for a token -- 64 +
     # ATTN_TOKEN_BYTES = 9,280 bytes -- and silently drops any fragment that
     # would run past it. A load bigger than that never completes, never
     # replies, and times out with "0 of ? fragments", which says nothing about
@@ -112,7 +112,7 @@ class TcpClient(_Base):
 class UdpClient(_Base):
     """The board over UDP, with lwIP on the far end.
 
-    THE SIMPLEST OF THE THREE, AND THAT IS THE POINT.
+    The simplest of the three, and that is the point.
     `RawEthClient` fragments by hand because a 9 KB message does not fit an
     Ethernet frame; `JtagClient` drives xsdb over pipes. Here the stack does
     the fragmenting and reassembly, so this is a `sendto` and a `recvfrom`.
@@ -165,7 +165,7 @@ class RawEthClient(_Base):
     """Raw Ethernet frames, no IP, no OS on the far end.
 
     A 9,216-byte token does not fit a 1,500-byte frame, so a request is
-    FRAGMENTED: the header travels in the first frame and the payload follows
+    Fragmented: the header travels in the first frame and the payload follows
     in as many as it takes, each carrying its offset. There is no retransmit --
     the link is a metre of cable between two devices with nothing else on it,
     and a checksum failure is a bug to find rather than a condition to recover
@@ -208,9 +208,9 @@ class RawEthClient(_Base):
                     f"{self.ETH_MTU}")
         except FileNotFoundError:
             pass
-        # AN AF_PACKET SOCKET SEES ITS OWN TRANSMISSIONS.
+        # An AF_PACKET socket sees its own transmissions.
         # `eth_probe` proved it: five pings sent, ten frames of our ethertype
-        # observed. Without this the receive loop reassembles the REQUEST it
+        # observed. Without this the receive loop reassembles the request it
         # just sent as if it were the reply -- and a request parsed as a
         # response is not obviously wrong, because the magic matches and the
         # `version` field lands where `status` is read.
@@ -263,7 +263,7 @@ class RawEthClient(_Base):
             if len(body) < self.FRAG_HDR.size:
                 continue
             self.rx_frames += 1
-            # BY SOURCE MAC, always -- PACKET_IGNORE_OUTGOING is a recent
+            # By source MAC, always. PACKET_IGNORE_OUTGOING is a recent
             # kernel's convenience and this is the property that must hold.
             if frame[6:12] != self.peer:
                 self.rx_dropped_self += 1

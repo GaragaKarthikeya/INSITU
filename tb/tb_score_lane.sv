@@ -1,6 +1,6 @@
 // Self-checking testbench for score_lane.sv + qtab_build.sv.
 //
-// THE GOLDEN IS `CompressedAttention.scores`, NOT A REIMPLEMENTATION
+// The golden IS `CompressedAttention.scores`, not A REIMPLEMENTATION
 // ------------------------------------------------------------------
 // `scores.hex` is what the kernel's own attention object returned for the
 // step in `hw/vectors.py::collect` -- the same call `forward` makes, on the
@@ -14,14 +14,14 @@
 // too -- a `_pack_codes` disagreement shows up here rather than as an accuracy
 // loss nobody can localise.
 //
-// ALL 32 QUERY HEADS, WHICH IS THE POINT OF THE PING-PONG
+// ALL 32 QUERY HEADS, which IS the point OF the PING-PONG
 // -------------------------------------------------------
 // Query heads 4h..4h+3 share KV head h's rows.  The bench runs every head
 // through one lane, building each head's table while the previous head's scan
 // is still draining -- the steady state `attn_top` runs in, and the only way
 // the table swap gets exercised against live rows.
 //
-// BACK-PRESSURE IS PART OF THE CONTRACT
+// Back-pressure is part of the contract
 // -------------------------------------
 // The last four heads are scanned with `out_ready` pulsed low at random,
 // because a
@@ -95,7 +95,7 @@ module tb_score_lane;
         check(out_score === $signed(gold[head_out][tok_out*SW +: SW]),
               $sformatf("head %0d token %0d: %0d != %0d", head_out, tok_out,
                         out_score, $signed(gold[head_out][tok_out*SW +: SW])));
-        // The value plane must arrive with the score of the SAME token; a
+        // The value plane must arrive with the score of the same token; a
         // shift register off by one here is invisible until `accum.sv` exists.
         check(out_vcodes === rows[head_out/GROUPS][tok_out][D*KB +: D*VB],
               $sformatf("head %0d token %0d: v codes not aligned with the score",

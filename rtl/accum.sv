@@ -2,7 +2,7 @@
 //     acc[ch] += (v_norm * p * centroid_v[v_code[ch]]) >> ACC_SHIFT
 //     acc[ch]  = (acc[ch] * factor) >> PROB_FRAC        on a rescale
 //
-// FOUR MULTIPLIERS FOR SIXTY-FOUR CHANNELS
+// Four multipliers for sixty-four channels
 // ----------------------------------------
 // `centroid_v` has only 2**VAL_BITS = 4 possible values, so the per-channel
 // product has only four possible values too.  Compute `w = v_norm * p` once,
@@ -11,14 +11,14 @@
 // falls out of attending on codes rather than on reconstructed vectors -- the
 // same property that empties `score_lane`'s inner loop.
 //
-// EACH TERM IS TRUNCATED BEFORE IT JOINS THE SUM
+// Each term is truncated before it joins the sum
 // ----------------------------------------------
 // `_accumulate_terms` shifts every term individually and says why: truncating
 // the sum instead would depend on the order the terms arrived in, and a
 // vectorised sum would stop equalling a sequential one.  So the >> is on the
 // muxed product, ahead of the adder, not after it.
 //
-// THE RESCALE IS FOLDED 8 CHANNELS WIDE
+// The rescale is folded 8 channels wide
 // -------------------------------------
 // 64 permanent 32x16 multipliers to serve an event that happens about ln T
 // times per scan -- eleven times in 32,768 tokens -- would be most of the DSPs
@@ -26,10 +26,10 @@
 // multipliers and 8 cycles, and the scan stalls for those cycles.  The stall
 // is the design, not a limitation of it.
 //
-// A SCALE WAITS FOR THE ADD PIPE TO DRAIN
+// A scale waits for the add pipe to drain
 // ---------------------------------------
 // The model rescales an accumulator that every earlier token has already
-// reached.  Terms are three stages deep here, so accepting a SCALE while any
+// reached.  Terms are three stages deep here, so accepting a scale while any
 // are in flight would scale a partial accumulator and then add un-scaled terms
 // on top of it -- an error proportional to how full the pipe happened to be,
 // which is the kind that shows up as a small accuracy loss and nothing else.
@@ -73,11 +73,11 @@ module accum #(
     localparam int T_W    = W_W + CENT_BITS;                  // ... * centroid
     localparam int TERM_W = T_W - ACC_SHIFT;
     localparam int GROUPS = D / LANES;
-    // accept -> w, w -> the PRODUCTS, products -> the four terms, terms -> the
-    // SELECTED term, that -> acc.
+    // accept -> w, w -> the products, products -> the four terms, terms -> the
+    // Selected term, that -> acc.
     //
     // `a_w * centroid` is 32x20 and `acc * factor` is 48x16: both are wider
-    // than one DSP48 and map to a cascaded PAIR, which does not reach 250 MHz
+    // than one DSP48 and map to a cascaded pair, which does not reach 250 MHz
     // without a register between the multiply and the cascade adder. That
     // register is the DSP's own MREG and Vivado infers it only if the RTL has
     // one there -- so the product is registered separately from the shift.
@@ -86,11 +86,11 @@ module accum #(
     // not around it.
     // The valid that gates a stage is `avld[stage-1]`: `a_w` and `a_term` are
     // single registers overwritten every cycle, and gating one stage too late
-    // reads a LATER token's term.
+    // reads a later token's term.
     //
     // The select is its own stage.  Folding the 64 4:1 muxes into the same
     // cycle as the 33-bit saturating add put 13 endpoints at -0.2 ns once four
-    // lanes were placed, and the mux is NOT part of the loop -- only the add
+    // lanes were placed, and the mux is not part of the loop -- only the add
     // is -- so splitting it costs a cycle of latency and keeps II=1.
     localparam int ADD_LAT = 5;
 
@@ -111,13 +111,13 @@ module accum #(
     logic signed [ACC_WIDTH:0] sum;
     integer ch;
 
-    // -- the ADD pipe -------------------------------------------------------
+    // -- the add pipe -------------------------------------------------------
     logic [ADD_LAT-1:0] avld;
     // Same argument: one code word selects all 64 muxes.
     (* max_fanout = 8 *)
     logic [D*VAL_BITS-1:0] a_codes [0:ADD_LAT-1];
     logic signed [W_W-1:0] a_w, a_w_q;
-    // Overflow is COUNTED a cycle later, as a popcount.
+    // Overflow is counted a cycle later, as a popcount.
     //
     // Each of the 64 channels incrementing one counter directly makes 64
     // conditions fan into that counter's clock enable, and it showed up on the
@@ -135,11 +135,11 @@ module accum #(
     logic signed [T_W-1:0]    a_prod [0:NC-1];      // the raw product, MREG
     logic signed [TERM_W-1:0] a_mterm [0:D-1];
 
-    // -- the SCALE sequencer, in TWO stages ---------------------------------
+    // -- the scale sequencer, in two stages ---------------------------------
     //
     // Stage A selects a group of `LANES` accumulator words; stage B multiplies
     // them by the factor and writes them back. One cycle where there was one
-    // multiply, and the reason is PLACED timing, not arithmetic: `sgrp` fans
+    // multiply, and the reason is placed timing, not arithmetic: `sgrp` fans
     // out across all 64 accumulators, and reading through that mux and then
     // through a 48x16 product -- two cascaded DSPs -- in a single cycle routed
     // to -0.550 ns inside `attn_top`, against +0.675 ns for this block alone.
@@ -148,7 +148,7 @@ module accum #(
     //
     // The arithmetic is untouched: the same operand, the same factor, the same
     // truncating shift, so every golden in `tb_softmax_accum` holds. What
-    // changes is the COST -- 9 cycles per event where it was 8 -- and that is
+    // changes is the cost -- 9 cycles per event where it was 8 -- and that is
     // a measured number, reported by `out_scale_cycles` and carried in
     // `AttentionConfig.rescale_cycles`, never one this file asserts.
     logic scaling, s_wb, s_wb2;
@@ -158,9 +158,9 @@ module accum #(
     logic signed [ACC_WIDTH+PROB_BITS-1:0] s_prod [0:LANES-1];
 
     wire pipe_busy = (avld != '0);
-    // A SCALE is accepted only into an empty pipe; an ADD is accepted whenever
+    // A scale is accepted only into an empty pipe; an add is accepted whenever
     // no rescale is running -- and the writeback stage counts as running, or
-    // an ADD would reach `acc` in the same cycle the fold writes it back.
+    // an add would reach `acc` in the same cycle the fold writes it back.
     assign op_ready = !scaling && !s_wb && !s_wb2 && (!op_scale || !pipe_busy);
 
     wire take = op_valid && op_ready;

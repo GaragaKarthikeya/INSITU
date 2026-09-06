@@ -1,6 +1,6 @@
 """Progress and health for a multi-day run.
 
-WHAT THIS IS FOR
+What this is for
 ----------------
 The sweep is roughly 57 hours. Nobody watches that, so the question is not
 "how do I display progress" but "what would make me stop the run early" --
@@ -9,7 +9,7 @@ shell, without attaching to the process.
 
 Three outputs, deliberately separate:
 
-  status.json   a small snapshot, overwritten. What is happening RIGHT NOW.
+  status.json   a small snapshot, overwritten. What is happening right now.
                 Its `updated_at` is the liveness signal: a heartbeat fires once
                 per transformer layer, so a stamp older than about a minute
                 means the run is wedged, not slow.
@@ -17,7 +17,7 @@ Three outputs, deliberately separate:
                 change, in order. This is the audit trail.
   results.json  the checkpointed measurement itself, written by the caller.
 
-ALARMS ABORT, THEY DO NOT WARN
+Alarms abort, they do not warn
 ------------------------------
 An alarm that only prints is an alarm nobody sees at hour 30. The ones that
 mean the results are worthless (the dense control disagreeing with the
@@ -59,13 +59,13 @@ ALARM_EXIT = 3      # "stop, this is broken" -- do not retry
 STOPPED_EXIT = 4    # "you asked me to stop" -- do not retry, but nothing is wrong
                     # Both distinct from 0 (finished) and 1 (crashed), so a
                     # supervisor can tell the four apart -- and so a log at hour
-                    # 30 does not say COMPLETED when someone pressed Ctrl-C.
+                    # 30 does not say completed when someone pressed Ctrl-C.
 
 
 class Alarm(SystemExit):
     """Raised to stop the run deliberately. The checkpoint on disk stays valid.
 
-    Exits with ALARM_EXIT rather than 1 so a restart wrapper does NOT relaunch:
+    Exits with ALARM_EXIT rather than 1 so a restart wrapper does not relaunch:
     an alarm means the results are wrong or the machine is out of room, and
     retrying either just burns hours reproducing the same failure.
     """
@@ -84,7 +84,7 @@ def write_json_atomic(path: Path, obj, keep_backup: bool = True) -> None:
     days, a checkpoint corrupted by a kill at the wrong microsecond is the
     difference between losing one window and losing everything.
 
-    The previous good copy is COPIED alongside as `.bak`, not moved. Moving it
+    The previous good copy is copied alongside as `.bak`, not moved. Moving it
     would leave an instant with no file at `path` at all -- harmless for the
     resilient reader below, but every other reader (the status viewer, a shell,
     a person) sees the checkpoint briefly vanish. A copy costs a few kilobytes
@@ -234,10 +234,10 @@ class RunLog:
 
     def check_dense_control(self, baseline_per_window, dense_per_window,
                             tol: float) -> None:
-        """The dense control must reproduce the baseline, ON THE SAME WINDOWS.
+        """The dense control has to reproduce the baseline, on the same windows.
 
         Takes per-window values and compares only the prefix both have covered.
-        Comparing two CUMULATIVE perplexities over different window counts is
+        Comparing two cumulative perplexities over different window counts is
         meaningless and this check used to do exactly that: window-to-window
         perplexity on real text swings by 50% or more, so a baseline two windows
         ahead of the control can differ by several percent with nothing wrong at

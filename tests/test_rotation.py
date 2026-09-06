@@ -16,7 +16,7 @@ def check_orthonormal():
 def check_preserves_inner_products():
     """The property the whole architecture rests on: <Rq, Rk> == <q, k>.
 
-    Checked in FIXED point, not just in real arithmetic, because that is where
+    Checked in fixed point, not just in real arithmetic, because that is where
     it could fail: the 1/sqrt(d) scale is the one truncation in the rotation.
     """
     d, q = 64, Q(32, 16)
@@ -91,7 +91,7 @@ def check_gaussianises_outlier_heavy_activations():
 
 
 def check_one_round_overshoots_into_platykurtic():
-    """One round is measurably less Gaussian -- and is STILL the better default.
+    """One round is measurably less Gaussian, and still the better default.
 
     Kept because the kurtosis fact is real and worth knowing; the point is that
     it does not predict quality. Measured end to end, one round beats two by

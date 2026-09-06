@@ -1,7 +1,7 @@
 /*
  * The attention server on lwIP, over UDP. Step 14's transport, second attempt.
  *
- * WHY THIS REPLACES `attn_eth.c`
+ * Why this REPLACES `attn_eth.c`
  * ------------------------------
  * The hand-rolled polled GEM driver produced five real bugs -- descriptor cache
  * maintenance the driver does none of, `RXBUF_NEW` never cleared on re-arm,
@@ -17,7 +17,7 @@
  * cache maintenance, the status acknowledgement and the PHY. This file owns a
  * UDP callback.
  *
- * AND IT DELETES THE FRAGMENTATION LAYER
+ * And it deletes the fragmentation layer
  * --------------------------------------
  * A request is 9,252 bytes and a reply 6,188, neither of which fits an
  * Ethernet frame -- so the raw version carried a `{seq, frag, nfrag}` header

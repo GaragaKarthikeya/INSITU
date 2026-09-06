@@ -1,20 +1,20 @@
 // Self-checking testbench for finalize.sv.
 //
-// THE GOLDENS ARE `reciprocal` AND `_finalize`
+// The goldens are `reciprocal` and `_finalize`
 // --------------------------------------------
 // `fin_acc.hex` and `fin_l.hex` are the accumulator and denominator each of
 // the 32 query heads actually ended its scan on, tapped from `attend_online`
 // by an observer. `fin_recip.hex` and `fin_out.hex` are what the kernel's own
 // two lines produced from them. Nothing here recomputes a division.
 //
-// THE REAL DENOMINATORS DO NOT EXERCISE THE DIVIDER
+// The real denominators do not exercise the divider
 // -------------------------------------------------
 // All 32 heads end a 65-token scan with `l` near 65 * 32768, so all 32 land on
-// the same normalised quotient to within 0.25% and on the SAME shift. A
+// the same normalised quotient to within 0.25% and on the same shift. A
 // divider wrong at any other magnitude would agree with every real head. So
 // the last 17 rows are constructed.
 //
-// WHAT THEY STRESS IS THE SHIFT, NOT THE QUOTIENT'S WIDTH
+// What they stress is the shift, not the QUOTIENT'S width
 // -------------------------------------------------------
 // They used to span "the reciprocal's whole range from 2**31 down to zero",
 // which was the old fixed-Q16 divide: there the quotient's WIDTH tracked the
@@ -31,7 +31,7 @@
 // Channel 0 of each is a saturated accumulator and channel 1 its negative, so
 // the widest product this block can form is formed on every one.
 //
-// l = 0 IS NOT AN ERROR CASE
+// l = 0 IS not AN error CASE
 // --------------------------
 // A masked or padded position scores nothing and its denominator is zero.
 // `reciprocal` answers zero rather than dividing; so must this.
@@ -148,8 +148,8 @@ module tb_finalize;
               $sformatf("shifts only spanned %0d..%0d", sh_min, sh_max));
         $display("  %0d rows (%0d real, %0d constructed), %0d..%0d cycles",
                  N, REAL, N-REAL, cyc_min, cyc_max);
-        // NOT a range: the normalised divide makes every quotient 31 bits, so
-        // what varies row to row is the SHIFT, not the reciprocal. Printing two
+        // Not a range: the normalised divide makes every quotient 31 bits, so
+        // what varies row to row is the shift, not the reciprocal. Printing two
         // reciprocals as "from X to Y" was true of the old fixed-Q16 divide and
         // would now print the same number twice.
         $display("  shifts %0d..%0d, reciprocals all %0d b; %0d rows exceeded the 24-bit seam",

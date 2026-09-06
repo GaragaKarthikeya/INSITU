@@ -126,7 +126,7 @@ def check_replay_produces_both_bounds():
     assert r.ns_per_token(4, overlapped=True) <= r.ns_per_token(4)
     assert set(r.arrays) == {"q_array", "k_array", "v_array", "o_array"}
     # Every PL block the trace names is charged. Before the cost model, all of
-    # these except SCORE cost zero cycles -- the block being built was the one
+    # these except the score cost zero cycles -- the block being built was the one
     # part of the design the report left out.
     assert set(r.units) == {"rotate", "encoder", "attention"}
     assert all(u.cycles > 0 for u in r.units.values())
@@ -162,7 +162,7 @@ def check_ddr_bandwidth_is_the_reported_bound_at_long_context():
     """The exit criterion of step 2, and the claim the whole split rests on.
 
     At a long context the cache scan is not burst-limited or latency-limited --
-    it is limited by how fast DDR4 delivers bytes, at the rate MEASURED in step
+    it is limited by how fast DDR4 delivers bytes, at the rate measured in step
     1. If this ever comes back "bursts", the model has stopped describing the
     machine the plan sizes: the burst model would be charging for a narrower
     port than the four AXI-HP masters the 14.7 GB/s was measured on.
@@ -339,7 +339,7 @@ def check_the_scan_model_reproduces_the_board():
         assert errs[tokens] < 0.06, (tokens, got, cycles, errs[tokens])
     # Four of the six land inside 0.5%. ctx 1,025 is the worst at 5.1%, and it
     # is worst for a reason worth keeping rather than fitting away: `starve_per_
-    # row` is one constant set to the SATURATED rate, 0.0183, which is right
+    # row` is one constant set to the saturated rate, 0.0183, which is right
     # from ctx 8k out and overstates ctx 1,025's measured 0.0094. A second
     # parameter would close it and would be four numbers fitted to six points.
     # The long contexts are the ones the design is judged at, so the constant is

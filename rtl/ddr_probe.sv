@@ -1,4 +1,4 @@
-// DDR bandwidth probe -- STEP 1 of the implementation plan, and the gate on
+// DDR bandwidth probe -- Step 1 of the implementation plan, and the gate on
 // everything after it.
 //
 // Four AXI-HP read masters, an AXI-Lite control block, and a cycle counter.
@@ -12,10 +12,10 @@
 // figure in the plan is optimistic -- which is exactly why this is measured
 // before any attention RTL exists.
 //
-// WHY FOUR PORTS AND NOT THREE
+// Why four ports and not three
 // ----------------------------
 // A 128-bit HP port moves 16 B per PL clock. At one clock domain of 250 MHz
-// that is 4.0 GB/s, so three ports reach only 12.0 GB/s -- SHORT of the 13.0
+// that is 4.0 GB/s, so three ports reach only 12.0 GB/s -- Short of the 13.0
 // the engine needs. Three ports would suffice at 333 MHz, but only by running
 // the HP interfaces in a second clock domain and paying for the CDC.
 //
@@ -25,14 +25,14 @@
 // appetite leaves room for the DRAM controller to fall short of its own peak,
 // which it certainly will.
 //
-// ONE BITSTREAM, SWEPT AT RUNTIME
+// One bitstream, swept at runtime
 // -------------------------------
 // Port count, burst length and outstanding depth are registers, not
 // parameters, so the whole sweep runs from software without rebuilding. A
 // Vivado implementation run is ~20 minutes and the interesting space is
 // 4 x 4 x 5 points.
 //
-// The ports read DISJOINT regions (base + port*stride). Pointing them at the
+// The ports read disjoint regions (base + port*stride). Pointing them at the
 // same region would let the DRAM controller's row buffer serve two of them
 // from one activate and report a bandwidth the real design cannot reproduce --
 // the KV cache scan is one sequential stream per active head, not four aliased
@@ -261,7 +261,7 @@ module ddr_probe #(
     end
     assign s_axi_bresp = 2'b00;
 
-    // Read channel. s_axi_rvalid MUST be reset -- unreset, `arready = !rvalid`
+    // Read channel. s_axi_rvalid must be reset -- unreset, `arready = !rvalid`
     // is X and every read wedges, which on hardware looks like "the FPGA
     // returns garbage". (systolic_zcu104 README, bug 5.)
     always_ff @(posedge clk) begin

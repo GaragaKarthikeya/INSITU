@@ -1,15 +1,15 @@
 """An x86 stand-in for the board, so the wire format can be wrong on a laptop.
 
-WHAT THIS PROVES, AND WHAT IT DELIBERATELY DOES NOT
+What this proves, and what it deliberately does not
 ---------------------------------------------------
-It proves the FORMAT and the CLIENT: that a request the host builds parses at
+It proves the format and the client: that a request the host builds parses at
 the other end, that the payload survives as the byte stream the core consumes,
 that the sequence number comes back, that a short or malformed frame is
 refused rather than half-read, and that the client reassembles a reply
 correctly. `plan.MD` asks for exactly that -- "validate the wire format and the
 host client before board-side software exists".
 
-It does NOT recompute attention. It answers from the (ingress, golden) pairs
+It does not recompute attention. It answers from the (ingress, golden) pairs
 `hw/board_vectors.py` already produces, looked up by the token it was sent.
 
 That is a deliberate refusal. Answering properly would mean unpacking the wire

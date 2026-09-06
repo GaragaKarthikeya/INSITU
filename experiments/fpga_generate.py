@@ -1,14 +1,14 @@
 """Generate text with one layer's attention running on the ZCU104. Live.
 
-WHAT IS ACTUALLY ON THE FPGA
----------------------------
+What is actually on the FPGA
+----------------------------
 One decoder layer's attention: rotate, quantise, cache write, score, online
 softmax, accumulate, and the final divide. The board holds that layer's KV
 cache in its own DDR and scans it for every token. The host runs everything
 else -- the other fifteen layers, all four projections, RoPE, the MLPs -- which
 is the split `plan.MD` specifies.
 
-The FPGA's numbers are USED, not checked against. `kernel.py`'s seam is:
+The FPGA's numbers are used, not checked against. `kernel.py`'s seam is:
 
     merged = merge_heads(out)          <- this is what the FPGA returns
     acc    = qk_q.to_float(merged)
@@ -22,9 +22,9 @@ The numpy kernel runs alongside anyway, because `collect` is what produces the
 ingress the board is sent, and its answer is therefore free. It is reported as
 a per-token agreement check -- but it is not what the model consumes.
 
-PREFILL IS ON THE HOST, AND THAT IS NOT A CHEAT
+Prefill is on the host, and that is not a cheat
 -----------------------------------------------
-`attn_top` is a DECODE block: one token against a cache, by construction. So
+`attn_top` is a decode block: one token against a cache, by construction. So
 the prompt is prefilled by the numpy kernel, the resulting cache image is
 pushed to the board's DDR once, and every generated token from then on is the
 board's. That is the same division of labour the design was built for -- decode
@@ -82,7 +82,7 @@ def main(argv=None) -> int:
 
     ids = tok(a.prompt, return_tensors="pt")["input_ids"]
     n_prompt = ids.shape[1]
-    # The cache must hold the prompt AND everything generated. `capacity` is a
+    # The cache must hold the prompt and everything generated. `capacity` is a
     # graft argument, so it is set here rather than by rebuilding the cache
     # afterwards -- which is what the DDR image's plane spans are computed from
     # and therefore has to be right before the first token, not after.
@@ -140,7 +140,7 @@ def main(argv=None) -> int:
         row = x[0].detach().cpu().float().numpy()
         n_tokens = k.cache.length + 1
 
-        # `collect` runs the numpy step AND taps the wire vectors, so it both
+        # `collect` runs the numpy step and taps the wire vectors, so it both
         # advances this side's cache and produces exactly the bytes the board
         # consumes. The board advances its own cache the same way, by writing
         # its row to DDR before it scans.
@@ -162,7 +162,7 @@ def main(argv=None) -> int:
         if counters["clips"] or counters["overflows"]:
             print(f"    !! clips {counters['clips']} overflows {counters['overflows']}")
 
-        # THE BOARD'S NUMBERS, through the rest of the seam.
+        # the board'S numbers, through the rest of the seam.
         acc = k.qk_q.to_float(board[None])
         y = project(k.weights.o, acc, unit="o_array", bias=k.weights.o_bias)
         import torch as _t
@@ -171,10 +171,10 @@ def main(argv=None) -> int:
         attn._advance_hf_cache(kwargs.get("past_key_values"), x)
         return (o if squeeze else o.unsqueeze(0)), None
 
-    # PATCH THE TYPE, NOT THE INSTANCE.
+    # patch the type, not the instance.
     #
     # `KernelAttention` sets `__call__ = forward` at class scope, and Python
-    # resolves dunder methods on the TYPE -- so `attn(...)` ignores an instance
+    # resolves dunder methods on the type -- so `attn(...)` ignores an instance
     # attribute called `__call__` entirely and keeps calling the original. The
     # first run of this script produced perfectly good text with the board
     # untouched, and the only thing that said so was the agreement counter
@@ -205,7 +205,7 @@ def main(argv=None) -> int:
     print(tok.decode(text_ids, skip_special_tokens=True))
     print("=" * 70)
     if client:
-        # A SILENT FALLBACK IS THE WORST OUTCOME HERE. The numpy kernel produces
+        # A silent fallback is the worst thing that can happen here. The numpy kernel produces
         # the same text, so a run where the board was never asked looks exactly
         # like a run where it worked -- that is what happened the first time.
         if agree + disagree == 0:

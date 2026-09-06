@@ -1,6 +1,6 @@
 """The off-die port: weights and the KV cache behind one interface.
 
-TWO KNOBS, SEPARATE ON PURPOSE
+Two knobs, separate on purpose
 ------------------------------
     latency   cycles from a burst being accepted to its first beat.
     beat_gap  idle cycles between beats once streaming has started.
@@ -10,11 +10,11 @@ number. Latency is hidden by prefetching deeper; a beat gap is not hidden by
 anything -- it is simply less bandwidth. A model with one knob cannot tell you
 which of those two you need.
 
-THE PADDING IS REAL AND IS COUNTED
+The padding is real and is counted
 ----------------------------------
 A compressed token is 44 B on the wire but occupies a whole number of beats, so
 at a 256-bit port it costs 64 B. Reporting the nominal 44 would understate DRAM
-traffic by 45%. The counter-intuitive consequence -- a NARROWER port is more
+traffic by 45%. The counter-intuitive consequence -- a narrower port is more
 byte-efficient here -- only shows up because the padding is charged rather than
 assumed away.
 """

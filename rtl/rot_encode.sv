@@ -1,14 +1,14 @@
 // Rotated vector + wire norm -> codes.  `ops/quantize.py::_encode_plane`.
 //
-// WHY THERE IS NO DIVIDER HERE
+// Why there is no divider here
 // ----------------------------
 // The obvious encoder normalizes (`x / norm`) and then compares against the
 // codebook boundaries, which costs a divide per channel.  Comparing `x / norm`
 // against `b` is the same test as comparing `x` against `b * norm`, so the
-// boundaries are scaled by the norm ONCE per vector -- 2**BITS - 1 multiplies
+// boundaries are scaled by the norm once per vector -- 2**BITS - 1 multiplies
 // -- and every one of the D channels is then a plain comparison.
 //
-// TIES FALL TO THE LOWER BIN
+// Ties fall to the lower bin
 // --------------------------
 // The comparison is `>`, never `>=`.  A channel sitting exactly on a boundary
 // belongs to the bin below it, which is the convention `Codebook.gaussian`
@@ -16,7 +16,7 @@
 // code; `tb_rot_encode` is fed constructed on-boundary vectors because random
 // stimulus hits an exact tie with probability about 2**-32.
 //
-// BINARY SEARCH, NOT A COMPARATOR ARRAY
+// Binary search, not a comparator array
 // -------------------------------------
 // BITS stages of one comparison each, rather than 2**BITS - 1 comparisons and
 // a popcount.  At BITS=4 the two are close; the sweep in step 15 raises
@@ -35,7 +35,7 @@ module rot_encode #(
     parameter int LANES        = 8,  // channels compared per cycle
     // Ascending decision boundaries in Q(centroid_frac), index 0 in the low
     // bits.  The default is QuantConfig(key_bits=4)'s gaussian codebook; a
-    // build at another width supplies the generated word.  This is a FORMAT
+    // build at another width supplies the generated word.  This is a format
     // artifact, like the sign diagonal -- never a second Lloyd-Max solve.
     parameter logic [(2**BITS-1)*BOUND_BITS-1:0] BOUNDS =
         {20'h132fa, 20'h0eb9b, 20'h0b794, 20'h08c5b, 20'h0660a,
@@ -55,7 +55,7 @@ module rot_encode #(
     output logic [D*BITS-1:0] out_codes
 );
     localparam int NB      = 2**BITS - 1;
-    // Wide enough for BOTH operands: norm*boundary needs
+    // Wide enough for both operands: norm*boundary needs
     // (NORM_BITS-1) + BOUND_BITS bits, x<<THRESH_SHIFT needs
     // IN_BITS + THRESH_SHIFT + 1.  Sized to the larger, not to x.
     localparam int THR_W   = (NORM_BITS + BOUND_BITS > IN_BITS + THRESH_SHIFT + 1)
@@ -99,7 +99,7 @@ module rot_encode #(
     // r = #{i : x > B[i]}.  r >= t exactly when x > B[t-1], so a candidate is
     // formed one bit at a time from the top and kept when the comparison holds.
     //
-    // One REGISTERED level per bit, not four chained comparisons in a cycle:
+    // One registered level per bit, not four chained comparisons in a cycle:
     // the combinational form measured -0.641 ns at 250 MHz, because a 36-bit
     // compare against a mux-selected threshold is not cheap and four of them
     // in series is most of a clock period.  The pipeline costs BITS cycles of
@@ -123,7 +123,7 @@ module rot_encode #(
                 wire [BITS-1:0] r_in  = (j == 0) ? {BITS{1'b0}} : rr[PREV][l];
                 wire [BITS-1:0] cand  = r_in | (BITS'(1) << (BITS-1-j));
                 // `>` and never `>=`: a channel exactly on a boundary belongs
-                // to the bin BELOW it.
+                // to the bin below it.
                 wire take = x_in > thr[cand - 1];
                 always_ff @(posedge clk) if (advance) begin
                     xs[j+1][l] <= x_in;

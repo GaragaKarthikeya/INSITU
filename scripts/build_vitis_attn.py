@@ -4,7 +4,7 @@
 2026.1 removed xsct, so this uses the Vitis Python API:
     vitis -s scripts/build_vitis_attn.py
 
-`sw/attn_vectors.c` is GENERATED and is not in the repository -- it is 6 MB of
+`sw/attn_vectors.c` is generated and is not in the repository -- it is 6 MB of
 numbers and it is reproducible from a seed in seven seconds. This script
 regenerates it if it is missing, so a fresh checkout cannot build an ELF whose
 goldens are older than the kernel that is supposed to produce them.

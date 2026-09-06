@@ -1,24 +1,24 @@
 """Drive the board over JTAG, one decode step at a time. Real inference.
 
-WHY THIS IS FAST ENOUGH AND THE OBVIOUS THING IS NOT
+Why this is fast enough and the obvious thing is not
 ----------------------------------------------------
 The host could poke `attn_ctrl`'s registers over JTAG directly -- step 12 did
 -- and it costs one JTAG transaction per 32-bit word. A decode step is 2,304
 words in and 1,536 out, and at roughly a millisecond apiece that is four
 seconds a token.
 
-So the slow link carries BULK transfers only. `xsdb` writes DDR with
+So the slow link carries bulk transfers only. `xsdb` writes DDR with
 `mwr -bin -file`, which moves a whole buffer through the DAP in one operation,
 and the A53 -- already on the right side of the bus -- does the 15 KB of AXI
 traffic through the DMA in about 5 us. The host writes a token, rings a
 doorbell, and reads 6,144 bytes back.
 
-This is not the transport the design is FOR: `plan.MD` sizes the system against
+This is not the transport the design is for: `plan.MD` sizes the system against
 raw Ethernet at ~35 us of round trip. It is the transport that exists today,
 and it is enough to put the silicon in the loop of a real model rather than
 replaying a recording at it.
 
-HOW IT TALKS TO xsdb
+How it talks to xsdb
 --------------------
 `xsdb` is a TCL REPL, so it is driven as a subprocess over pipes with a
 sentinel printed after every command -- reading until a prompt is guesswork,
@@ -139,7 +139,7 @@ class JtagClient:
         self.x.cmd(f"mwr -force {addr:#x} {{{' '.join(str(w) for w in words)}}}")
 
     def _rd_words(self, addr: int, n: int) -> list[int]:
-        # `puts [mrd ...]`, NOT bare `mrd`. A TCL REPL echoes each command's
+        # `puts [mrd ...]`, not bare `mrd`. A TCL REPL echoes each command's
         # result only when its input is a terminal; driven from a pipe it
         # prints nothing at all, so a bare `mrd` returns an empty string and
         # every read looks like a board that answered with silence.
@@ -171,7 +171,7 @@ class JtagClient:
     def load_cache(self, image: bytes, cache_base: int) -> None:
         """The image, once, before decoding. Megabytes, so this is the slow part."""
         self._wr_bin(cache_base, image)
-        # Verified, because `mwr -bin -file` reports nothing. The LAST words
+        # Verified, because `mwr -bin -file` reports nothing. The last words
         # are checked rather than the first: a transfer that starts and dies
         # part way is the failure a head-of-buffer check cannot see.
         tail = len(image) - 16

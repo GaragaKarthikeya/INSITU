@@ -1,8 +1,8 @@
 """Fast ablations on TinyLlama: check the design decisions before spending days.
 
-WHY PAIRED, AND WHY SO FEW WINDOWS
+Why paired, and why so few windows
 ----------------------------------
-Every variant sees the SAME windows of the SAME text. The interesting quantity
+Every variant sees the same windows of the same text. The interesting quantity
 is then the per-window difference in log-perplexity between two variants, and
 window-to-window variance -- which is large, and which dominates an unpaired
 comparison -- cancels exactly. That is what makes a 12-window run able to
@@ -13,16 +13,16 @@ log-perplexity, its standard error over windows, and the perplexity ratio that
 implies. A difference smaller than about twice its standard error is not
 evidence of anything.
 
-WHAT IS BEING CHECKED
+What is being checked
 ---------------------
-Things that were DESIGNED but never validated end to end:
+Things that were designed but never validated end to end:
 
   rounds     the rotation was changed from one round to two on a kurtosis
              measurement alone. Does it help the model?
   codebook   the Lloyd-Max Gaussian table is why no calibration file is needed.
              Does an equally-spaced table do just as well?
   seed       every number so far comes from one sign diagonal. Do others agree?
-  softmax    the HARDWARE runs the online form; every number so far is the
+  softmax    the hardware runs the online form; every number so far is the
              two-pass form. What does that cost?
   grid       the key/value asymmetry, on more than 400 words of text.
 """

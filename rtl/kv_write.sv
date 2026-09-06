@@ -1,6 +1,6 @@
 // The write path: one arriving token's row, scattered into its planes.
 //
-// SEPARATE MASTER, ON PURPOSE
+// Separate master, on purpose
 // ---------------------------
 // 416 B per token per layer against megabytes of reads -- 0.02% of the traffic.
 // It is still on its own AXI master with its own address generator, because
@@ -8,7 +8,7 @@
 // the sake of a rounding error's worth of bytes.  `plan.MD` requires it and the
 // bandwidth is not the reason.
 //
-// ONE ROW IS N_PORTS WRITES
+// One row IS N_PORTS writes
 // -------------------------
 // The cache is transposed, so a 52-byte row does not live anywhere contiguous:
 // it is 16 B in plane 0 at `token*16`, 16 B in plane 1, 16 B in plane 2 and 4 B
@@ -16,7 +16,7 @@
 // plane, each naturally aligned to its own width -- a narrow AXI transfer for
 // the norms, at AWSIZE=2, rather than a read-modify-write of a 16-byte beat.
 //
-// WSTRB AND THE BYTE LANE
+// Wstrb and the byte lane
 // -----------------------
 // A narrow write still drives the full data bus, and the bytes must sit in the
 // lanes the address selects: byte `addr % 16` upward.  Getting that wrong puts
@@ -65,11 +65,11 @@ module kv_write #(
         for (int i = 0; i < upto; i++) plane_off += PLANE_W[i*8 +: 8];
     endfunction
 
-        // SETUP exists only so the registered lane/offset/width above are sampled
-    // from an address that already reflects THIS plane: `pl`, `bases` and
+        // SETUP exists only so the registered lane, offset and width above are sampled
+    // from an address that already reflects this plane: `pl`, `bases` and
     // `tok` all settle at the end of IDLE or RESP, so a cycle later the
     // combinational address is right and the registers hold it for ADDR.
-    // Without it the first plane of every row decoded the PREVIOUS row's
+    // Without it the first plane of every row decoded the previous row's
     // address, which is a whole cache row written to the wrong place.
 typedef enum logic [2:0] {IDLE, SETUP, ADDR, DATA, RESP} state_t;
     state_t st;
@@ -80,7 +80,7 @@ typedef enum logic [2:0] {IDLE, SETUP, ADDR, DATA, RESP} state_t;
 
     assign in_ready = (st == IDLE);
     // Driven combinationally from `pl`, which is registered. Registering it
-    // inside ADDR would present the FIRST plane's AW with the previous
+    // inside ADDR would present the first plane's AW with the previous
     // row's address, since `awvalid` is raised on the way in.
     assign awaddr   = w_addr;
     assign awid     = '0;
@@ -120,7 +120,7 @@ typedef enum logic [2:0] {IDLE, SETUP, ADDR, DATA, RESP} state_t;
         endcase
     end
 
-    // The lane, the row offset and the width are REGISTERED, not read straight
+    // The lane, the row offset and the width are registered, not read straight
     // out of the combinational address.  `pl` advances in RESP, a whole cycle
     // before the ADDR that uses them, so this costs nothing -- and leaving the
     // multiply, the byte-lane decode and the 16-way byte placement in one

@@ -1,7 +1,7 @@
 /*
  * Raw Ethernet server on the A53. No IP, no lwIP, no OS. Step 14's transport.
  *
- * WHY RAW FRAMES AND NOT A SOCKET STACK
+ * Why raw frames and not a socket stack
  * -------------------------------------
  * `plan.MD` budgets 35 us of round trip and 123 us of wire time for a 15 KB
  * token at ctx 32k, against 927 us of DDR -- so the network is a minor term
@@ -14,15 +14,15 @@
  * to find, not a condition to recover from -- and the host's sequence number
  * is what turns "we lost one" into an error rather than into a wrong answer.
  *
- * FRAGMENTATION, BECAUSE 9,216 BYTES DOES NOT FIT IN A FRAME
+ * Fragmentation, because 9,216 bytes does not fit in a frame
  * ----------------------------------------------------------
  * A request is the header plus up to 9,216 bytes of token, and an untagged
  * frame carries 1,500. So a request arrives as a run of frames each carrying
  * `{seq, frag, nfrag}` and its slice of the byte stream, and the server
- * reassembles by OFFSET rather than by arrival order. `host/attn_client.py`'s
+ * reassembles by offset rather than by arrival order. `host/attn_client.py`'s
  * `RawEthClient` is the other half and the two share `attn_proto.h`.
  *
- * THE PAYLOAD IS NEVER TOUCHED
+ * The payload is never touched
  * ----------------------------
  * Fragments are reassembled straight into the DMA's transmit buffer, so the
  * bytes that came off the wire are the bytes the core consumes. That is the
@@ -56,18 +56,18 @@
 /* JUMBO. A reply is 6,188 bytes and a request 9,252; at a 1,500-byte MTU those
  * are five and seven frames. Five-frame replies are what kills this receiver --
  * 256 consecutive single-frame replies never did -- so the cheapest cure is to
- * stop sending five. At an MTU of 9,000 a reply is ONE frame and a request is
+ * stop sending five. At an MTU of 9,000 a reply is one frame and a request is
  * two. The GEM supports 10,240 (XEMACPS_RX_BUF_SIZE_JUMBO); the host side sets
  * its interface to match. */
 #define FRAME_MAX       9728
 #define BD_ALIGN        64
 
-/* ONE DESCRIPTOR PER CACHE LINE, AND THAT IS THE WHOLE POINT.
+/* One DESCRIPTOR per cache LINE, and that IS the whole point.
  *
  * A descriptor is 16 bytes and a cache line is 64, so at the driver's natural
- * packing FOUR descriptors share a line. Cache maintenance has no finer
+ * packing four descriptors share a line. Cache maintenance has no finer
  * granularity than a line, so flushing the one descriptor this side just
- * modified also writes back STALE copies of its three neighbours -- erasing
+ * modified also writes back stale copies of its three neighbours -- erasing
  * whatever the GEM had written into them in the meantime.
  *
  * That is the bug behind every receive failure in this file. The whole-ring
@@ -88,7 +88,7 @@ static const u8 BOARD_MAC[6] = {0x02, 0x00, 0x5A, 0x77, 0xE0, 0x01};
 static XEmacPs emac;
 
 /* BD rings and buffers, uncached-by-flushing. The GEM masters DDR directly and
- * is NOT coherent with these caches, so every descriptor and buffer is flushed
+ * is not coherent with these caches, so every descriptor and buffer is flushed
  * before the hardware reads it and invalidated after the hardware writes it.
  * This is the same discipline the KV image needs, and the same bug if missed:
  * correct hardware, stale memory.
@@ -100,7 +100,7 @@ static XEmacPs emac;
  * 2,048 bytes -- larger than needed. The real fault was cache, below. The
  * driver's own macro is kept because it cannot be wrong, not because the old
  * one was.) */
-/* `XEmacPs_BdRingMemCalc` sizes for the descriptors alone and NOT for the
+/* `XEmacPs_BdRingMemCalc` sizes for the descriptors alone and not for the
  * separation the alignment forces: at BD_SEP = 64 it answered 1,024 bytes for
  * 64 descriptors that occupy 4,096. The ring then runs off the end of the
  * array. The bring-up line printing "1024 B for 64 descriptors at 64 B each"
@@ -120,7 +120,7 @@ static u8 tx_buf[FRAME_MAX] __attribute__((aligned(BD_ALIGN)));
 static u8 host_mac[6];
 static int host_known;
 
-/* THE DRIVER DOES NO CACHE MAINTENANCE ON DESCRIPTORS. `xemacps_bdring.c`
+/* The DRIVER does NO cache MAINTENANCE ON DESCRIPTORS. `xemacps_bdring.c`
  * contains no `Xil_DCache*` call of any kind -- every flush and invalidate is
  * the caller's job. The A53 writes descriptors into cached DDR, the GEM reads
  * DDR without coherency, and so it sees whatever was in memory before the
@@ -128,9 +128,9 @@ static int host_known;
  * accepts no frames, which is precisely the `rx 0 (0 ours)` this reported with
  * the PHY up and the link negotiated at 1 Gb/s.
  *
- * FLUSHING THE WHOLE RING IS WRONG ONCE THE GEM IS RUNNING, AND IT COST A
- * WHOLE DEBUG CYCLE. The GEM writes status bits into descriptors as frames
- * land. A flush of the entire ring writes THIS side's stale cached copies back
+ * FLUSHING the whole RING IS wrong once the GEM IS RUNNING, and IT cost A
+ * Whole DEBUG cycle. The GEM writes status bits into descriptors as frames
+ * land. A flush of the entire ring writes this side's stale cached copies back
  * over those updates, erasing them -- the frames are received and then
  * un-received. The symptom was precise and misleading: the first request
  * assembled perfectly (7/7 fragments, every header field correct, the step ran
@@ -182,7 +182,7 @@ static int phy_find(XEmacPs *e)
 
 static int phy_wait_link(XEmacPs *e, u32 phy, u32 timeout_ms)
 {
-    /* Status register bit 2 is link, and it is LATCHING LOW: it must be read
+    /* Status register bit 2 is link, and it is LATCHING low: it must be read
      * twice to clear a stale down-event, or a link that came up before this
      * ran reports itself as down forever. */
     for (u32 i = 0; i < timeout_ms; i++) {
@@ -248,7 +248,7 @@ int attn_eth_init(void)
     if (mbps == 0)
         return -1;
     XEmacPs_SetOperatingSpeed(&emac, (u16)mbps);
-    /* `XEmacPs_SetOperatingSpeed` writes the MAC's NWCFG register ONLY -- it
+    /* `XEmacPs_SetOperatingSpeed` writes the MAC's NWCFG register only -- it
      * does not touch the CRL_APB TX clock divisor. That is `psu_init`'s job,
      * which does it now that ENET3 is enabled in the block design. */
     XEmacPs_SetMdioDivisor(&emac, MDC_DIV_224);
@@ -290,7 +290,7 @@ int attn_eth_init(void)
      * the GEM has not been started yet and owns none of them. */
     bd_flush_all();
 
-    /* TIE OFF THE QUEUES THIS DESIGN DOES NOT USE.
+    /* TIE OFF the QUEUES this DESIGN does not USE.
      *
      * The ZynqMP GEM supports priority queuing, and the driver's own examples
      * park every queue but the one in use -- "for avoiding the controller to
@@ -349,12 +349,12 @@ int attn_eth_recv(u8 *dst, int max)
     XEmacPs_BdRing *rxr = &XEmacPs_GetRxRing(&emac);
     XEmacPs_Bd *bd;
 
-    /* CLEAR THE RECEIVE STATUS, OR THE GEM STOPS FOR GOOD.
+    /* CLEAR the receive STATUS, OR the GEM STOPS for good.
      *
      * `XEMACPS_RXSR_BUFFNA_MASK` latches the instant the controller finds no
      * free descriptor -- even for one frame, even momentarily -- and while it
      * is set the receiver stays off no matter how many descriptors are handed
-     * back afterwards. It is write-one-to-clear, and the ONLY code in the
+     * back afterwards. It is write-one-to-clear, and the only code in the
      * driver that clears it lives in `xemacps_intr.c`. This server is polled
      * and installs no handler, so nothing cleared it.
      *
@@ -412,7 +412,7 @@ int attn_eth_recv(u8 *dst, int max)
     XEmacPs_BdRingFree(rxr, 1, bd);
     if (XEmacPs_BdRingAlloc(rxr, 1, &bd) == XST_SUCCESS) {
         XEmacPs_BdSetAddressRx(bd, addr);
-        /* CLEARING "NEW" IS THE CALLER'S JOB, AND FORGETTING IT IS AN INFINITE
+        /* CLEARING "new" IS the CALLER'S JOB, and FORGETTING IT IS AN INFINITE
          * LOOP RATHER THAN A DROPPED FRAME.
          *
          * Bit 0 of an RX descriptor's address word means "the GEM has filled

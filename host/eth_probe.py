@@ -2,7 +2,7 @@
 
     sudo <venv>/bin/python -m kernel.host.eth_probe --eth enp4s0
 
-WHY THIS EXISTS
+Why this exists
 ---------------
 `RawEthClient.ping()` either works or raises `TimeoutError`, and a timeout is
 consistent with at least six different faults: the board is running an older
@@ -10,11 +10,11 @@ ELF, its PHY never came up, the MAC filter rejects our frames, our ethertype is
 wrong, the interface is down on this side, or the reply is being sent and
 dropped. Reading a Python traceback distinguishes none of them.
 
-So this listens PROMISCUOUSLY, on every ethertype, and reports what it saw
+So this listens promiscuously, on every ethertype, and reports what it saw
 rather than what it expected. The three questions it answers, in order:
 
   1. Is this side able to transmit at all?
-  2. Does ANYTHING arrive from the board's MAC -- on any ethertype?
+  2. Does anything arrive from the board's MAC -- on any ethertype?
   3. Does a reply arrive with our ethertype, and does it parse?
 
 A "no" at each step has a different next action, and the verdict says which.
@@ -66,7 +66,7 @@ def probe(iface: str, peer: bytes, seconds: float = 3.0, tries: int = 5) -> int:
               "driving the link. Nothing software-side can fix this.")
         return 2
 
-    # Promiscuous, every ethertype -- so a reply with the WRONG ethertype is
+    # Promiscuous, every ethertype -- so a reply with the wrong ethertype is
     # visible as a reply rather than as silence.
     rx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(ETH_P_ALL))
     rx.bind((iface, 0))

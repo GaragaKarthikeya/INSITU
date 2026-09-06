@@ -5,9 +5,10 @@ One interface, two implementations, chosen at construction:
     DenseCache       fp16 K and V. The baseline everything is measured against.
     CompressedCache  codes and norms in the rotated domain. This project.
 
-They are interchangeable inside `AttentionKernel`, which is the point: an A/B
-of "what does compression cost" is a constructor argument, not a second copy of
-the kernel with the storage swapped out and the rest hoped to be identical.
+They are interchangeable inside `AttentionKernel`, which is the point. Asking
+"what does compression cost" is then a constructor argument rather than a
+second copy of the kernel with the storage swapped out and everything else
+hoped to be identical.
 
 The interface is written for the two things a real serving loop does and the
 old harness could not express:
@@ -28,9 +29,10 @@ from ..trace import Trace
 class KVCache(abc.ABC):
     """Per-layer, per-KV-head storage for one sequence.
 
-    Capacity is fixed at construction and never grown implicitly: a reallocation
-    in the middle of a decode loop is a latency spike that no model of the
-    memory would predict, so exceeding capacity is an error the caller handles.
+    Capacity is fixed at construction and never grows on its own. A
+    reallocation in the middle of a decode loop is a latency spike no memory
+    model would predict, so running out of capacity is an error the caller has
+    to handle.
     """
 
     def __init__(self, n_kv_heads: int, head_dim: int, capacity: int) -> None:
@@ -53,10 +55,10 @@ class KVCache(abc.ABC):
     def view(self, kv_head: int, trace: Trace | None = None):
         """Everything stored for one KV head, in causal order.
 
-        Causal order is not a convenience: it decides which tokens trigger a
-        rescale in the online softmax, and therefore the exact truncation
-        pattern. A cache that returned tokens in any other order would produce
-        a different answer and still look correct.
+        Causal order is not a convenience. It decides which tokens trigger a
+        rescale in the online softmax, and so it decides the exact truncation
+        pattern. A cache that returned tokens in any other order would give a
+        different answer and still look perfectly correct.
         """
 
     def reset(self) -> None:

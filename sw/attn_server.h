@@ -1,7 +1,7 @@
 /*
  * The mailbox the host and the A53 share, in DDR.
  *
- * WHY A MAILBOX AND NOT THE SHIM'S OWN REGISTERS
+ * Why a mailbox and not the shim'S own registers
  * ----------------------------------------------
  * The host could drive `attn_ctrl` directly over JTAG -- step 12 did exactly
  * that -- and it costs one JTAG transaction per 32-bit word. A decode step is
@@ -15,7 +15,7 @@
  * the right side of the bus -- does the 15 KB of AXI traffic through the DMA at
  * 5 us. The slow link carries bulk transfers only.
  *
- * COHERENCY, WHICH IS THE WHOLE TRAP HERE
+ * Coherency, which is the whole trap here
  * ---------------------------------------
  * JTAG writes DDR directly and knows nothing about the A53's caches. The A53
  * must therefore INVALIDATE before every read of anything the host wrote --

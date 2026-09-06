@@ -3,7 +3,7 @@
 `sw/attn_vectors.c` is what the A53 compares against, and it reaches the board
 through a path -- numpy to C array to a 32-bit AXI write -- that the twelve
 testbenches never exercise. The one thing that path can silently get wrong is
-the WORD ORDER: `hw/vectors.py` emits MSB-first hex beats for `$readmemh` and
+the word order: `hw/vectors.py` emits MSB-first hex beats for `$readmemh` and
 `board_vectors` emits little-endian 32-bit words for a memcpy, and a mistake
 between the two scrambles the sixteen words of every beat into something that
 looks exactly like a datapath that permutes channels.
@@ -22,7 +22,7 @@ from kernel.tests.harness import exact
 def _words_from_beats(lines, per_beat=16):
     """MSB-first hex beats -> the 32-bit words at ascending addresses.
 
-    The low word of a beat is the LAST eight hex digits of the line, and it
+    The low word of a beat is the last eight hex digits of the line, and it
     sits at the lowest address. This is `scripts/jtag_attn.tcl`'s reader,
     rewritten in Python -- deliberately, because agreeing with the generator is
     not evidence and agreeing with the thing that already ran on hardware is.
@@ -55,7 +55,7 @@ def check_the_board_golden_is_the_benchs_golden():
 
 
 def check_the_image_holds_the_old_tokens_and_none_of_the_new_ones():
-    """The property the multi-step run is FOR.
+    """The property the multi-step run is for.
 
     Every token from `ctx0` on must be zero in the loaded image, or a block
     whose write master did nothing would still answer correctly and the run
