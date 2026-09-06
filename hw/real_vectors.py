@@ -1,6 +1,6 @@
-"""Board vectors from a REAL Llama 3.2 1B, on real text.
+"""Board vectors from a real Llama 3.2 1B, on real text.
 
-WHY THIS IS NOT `board_vectors.py --seed 1`
+Why this is not `board_vectors.py --seed 1`
 -------------------------------------------
 Every number the silicon has been fed so far came from
 `rng.standard_normal(...) * 0.02`. That was the right stimulus for proving the
@@ -19,9 +19,9 @@ steps of stimulus chosen to be well-behaved. This is what makes them mean
 something: the same counters, on the activations the model actually produces,
 at a layer of a real checkpoint.
 
-HOW THE HIDDEN STATES ARE CAPTURED
+How the hidden states are captured
 ----------------------------------
-The model runs UNGRAFTED and a spy records what arrives at one layer's
+The model runs ungrafted and a spy records what arrives at one layer's
 attention. Those are the true hidden states -- the ones the other fifteen
 layers produced -- and they are then replayed through `AttentionKernel` by the
 same `collect()` the testbenches use. Nothing here re-implements attention;
@@ -37,7 +37,7 @@ import pathlib
 
 import numpy as np
 
-from .board_vectors import IN_WORDS, OUT_WORDS, _u32, emit
+from .board_vectors import _u32, emit
 from .ddr_layout import DdrLayout
 from .vectors import collect, pack_lanes
 

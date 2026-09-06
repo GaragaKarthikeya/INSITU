@@ -2,8 +2,8 @@
 
 import numpy as np
 
-from kernel import (AttentionKernel, ArrayConfig, HardwareConfig, KernelConfig,
-                    ModelConfig, Op, QuantConfig, Trace, Weights)
+from kernel import (AttentionKernel, HardwareConfig, KernelConfig, ModelConfig,
+                    Op, QuantConfig, Trace, Weights)
 from kernel.ops.output import fold_o_proj
 from kernel.ops.rotate import Rotation
 from .harness import approx, exact, raises
@@ -40,10 +40,10 @@ def check_prefill_then_decode_equals_one_prefill():
 
     b = _kernel()
     parts = [b.forward(x[:4])[0], b.forward(x[4:7])[0], b.forward(x[7:])[0]]
-    # NOT bit-identical, and it cannot be: the fp32 GEMM in the projection
+    # not bit-identical, and it cannot be: the fp32 GEMM in the projection
     # blocks differently for a batch of 9 than for batches of 4, 3 and 2, so
     # its accumulation order changes. Everything downstream of the fixed-point
-    # boundary IS exact -- the residual here is fp32 reassociation and nothing
+    # boundary is exact -- the residual here is fp32 reassociation and nothing
     # else, which is why the bound is at the fp32 epsilon and not merely small.
     approx(np.concatenate(parts), whole, tol=1e-5, what="split vs whole")
 
@@ -220,7 +220,7 @@ def check_dense_batching_preserves_the_trace():
 
     Values are checked to a tolerance rather than exactly: BLAS blocks a
     batched GEMM differently from a sequence of GEMVs, so the float64 scores
-    differ in their last bits. The TRACE must still be identical -- that is the
+    differ in their last bits. The trace must still be identical -- that is the
     part that describes hardware.
     """
     from collections import Counter
@@ -266,7 +266,7 @@ def check_rms_norm_matches_the_reference():
 
 
 def check_rms_norm_is_scale_invariant():
-    """Which is why the attention scale must be applied AFTER it, not before."""
+    """Which is why the attention scale must be applied after it, not before."""
     from kernel.ops.norm import rms_norm
     rng = np.random.default_rng(1)
     x = rng.standard_normal((3, 4, 32)).astype(np.float32)

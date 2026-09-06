@@ -11,11 +11,9 @@ and sizes, rather than reading them off the source. If `cc` is not available the
 checks that need it skip -- loudly -- rather than passing vacuously.
 """
 
-import ctypes
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 
 from kernel.host import attn_proto as P
@@ -150,7 +148,7 @@ def check_a_step_request_round_trips():
 
 
 def check_the_payload_is_the_beat_stream_and_not_a_re_encoding():
-    """The bytes on the wire ARE `ingress_bytes()`, at the header's own offset.
+    """The bytes on the wire are `ingress_bytes()`, at the header's own offset.
 
     The whole point of the format: the A53 hands the received bytes to the DMA
     without touching them. If this ever needs a transform, the transform is on

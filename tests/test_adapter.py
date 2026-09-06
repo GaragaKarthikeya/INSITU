@@ -3,16 +3,14 @@
 These run against a stub, so they stay fast and stay green without a 2 GB
 download. They prove shapes, dtypes, devices and the batch guard.
 
-They do NOT prove the signature matches an installed transformers -- the stub
+They do not prove the signature matches an installed transformers -- the stub
 cannot, by construction. That is `experiments/single_layer.py`'s job, and it
 found two things this file did not: the real layer passes `position_ids` rather
 than `cache_position`, and a grafted layer must advance `past_key_values` or
 the model's own length bookkeeping goes wrong once every layer is replaced.
 """
 
-import numpy as np
-
-from kernel.config import ModelConfig, QuantConfig
+from kernel.config import ModelConfig
 from .harness import raises
 
 try:

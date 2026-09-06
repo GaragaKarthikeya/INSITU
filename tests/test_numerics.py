@@ -3,7 +3,7 @@
 import numpy as np
 
 from kernel.numerics import fp
-from kernel.numerics.fixed import Q, fwht, inv_sqrt_q15, lshift, rshift, sqrt_shift
+from kernel.numerics.fixed import Q, fwht, inv_sqrt_q15, rshift, sqrt_shift
 from .harness import approx, exact, raises
 
 

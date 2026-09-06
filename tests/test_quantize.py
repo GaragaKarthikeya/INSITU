@@ -5,7 +5,7 @@ import numpy as np
 from kernel.config import FixedFormat, QuantConfig
 from kernel.numerics.fixed import Q
 from kernel.ops.quantize import KVQuantizer, isqrt
-from .harness import approx, exact, raises
+from .harness import exact, raises
 
 FMT = FixedFormat()
 QQ = Q(FMT.qk_width, FMT.qk_frac)
@@ -46,7 +46,7 @@ def check_bytes_per_token_matches_the_buffer():
 
 
 def check_encoder_and_decoder_agree_on_the_norm():
-    """The encoder must threshold against the WIRE norm, not the full one.
+    """The encoder must threshold against the wire norm, not the full one.
 
     If it did not, a channel just inside a decision boundary would encode into
     one bin and decode as if it were in another. Detected by re-encoding the

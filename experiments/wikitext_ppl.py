@@ -1,21 +1,21 @@
 """WikiText-2 perplexity for the compressed-KV kernel, at a publishable protocol.
 
-PROTOCOL
+Protocol
 --------
 Stated here so a number from this can be compared to a published table without
 guessing:
 
-  * `wikitext-2-raw-v1`, TEST split, joined with blank lines as it ships.
-  * Tokenised once as a single stream, then cut into NON-OVERLAPPING windows of
+  * `wikitext-2-raw-v1`, test split, joined with blank lines as it ships.
+  * Tokenised once as a single stream, then cut into non-overlapping windows of
     `--context` tokens. A trailing partial window is dropped, not padded.
   * Each window is an independent sequence: the KV cache is reset between them.
   * Perplexity is `exp(sum NLL / sum scored tokens)` over all windows.
 
-INTERLEAVED, NOT ONE CONFIG AT A TIME
+Interleaved, not one config at a time
 -------------------------------------
 Configurations take turns in chunks rather than running end to end. Running
 them sequentially means that at hour 30 you have two finished columns and three
-empty ones; interleaving means that at ANY moment you have a complete but
+empty ones; interleaving means that at any moment you have a complete but
 shallow table -- every configuration at the same window count. That is both
 more informative while it runs and directly reportable if you stop early.
 
@@ -23,17 +23,17 @@ The cost is re-grafting once per chunk (the `W_o` fold is a 4096-cube float64
 matmul per layer, about 20 s for a 36-layer model), which at a chunk of 4 is
 under 1% of the run.
 
-THE FIRST ROUND IS A PILOT
+The first round is a pilot
 --------------------------
 The first chunk is deliberately small, so every configuration is exercised
 within the first couple of hours. A configuration that crashes, or a graft that
 does not reproduce the baseline, then surfaces at hour 2 instead of hour 40.
 
-THE SATURATION GATE RIDES ALONG
+The saturation gate rides along
 -------------------------------
 The 24-bit wire lane between the host and the PL is Q8.16, and the evidence for
-it is a dynamic-range peak of 21.06 over 400 tokens of ONE passage. That is not
-enough text to lock a wire format on, and `FixedFormat.saturate=True` CLAMPS
+it is a dynamic-range peak of 21.06 over 400 tokens of one passage. That is not
+enough text to lock a wire format on, and `FixedFormat.saturate=True` clamps
 rather than wraps -- so a saturating element is silent quality loss, not a
 crash. Nothing would fail; the numbers would just quietly get worse.
 
@@ -44,7 +44,7 @@ rail) and `max|x|` (the largest float that reached the cast). `sat` must be 0.
 This costs nothing: `ConversionStats` is already computed inside every
 `forward`, and was simply being discarded at the adapter boundary.
 
-WHAT THIS DOES NOT CHANGE
+What this does not change
 -------------------------
 Nothing here touches the hardware model. Byte counts, cycle accounting and the
 trace are exactly what a single-token run produces; this file only decides what
@@ -55,7 +55,6 @@ kernel already produced -- an observation, not a code path.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
@@ -71,7 +70,7 @@ from kernel.adapters.torch_llama import graft, ungraft
 from kernel.experiments.runlog import (Alarm, RunLog, STOPPED_EXIT,
                                        read_json_resilient, write_json_atomic)
 
-# Set by a SIGTERM/SIGINT handler. Checked at every window boundary, so a
+# Set by a SIGTERM or SIGINT handler. Checked at every window boundary, so a
 # shutdown or a Ctrl-C stops between windows with a valid checkpoint rather
 # than in the middle of one. Because the checkpoint is written atomically, even
 # a kill -9 costs at most the window in flight.

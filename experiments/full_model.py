@@ -1,4 +1,4 @@
-"""Step 2: graft EVERY layer of a real TinyLlama and measure what it costs.
+"""Step 2: graft every layer of a real TinyLlama and measure what it costs.
 
 Perplexity on real text, baseline against the kernel at several code widths.
 The dense-mode row is the control: it exercises the whole kernel -- projection,
@@ -7,13 +7,12 @@ any gap in that row is the kernel's own fixed-point error and everything below
 it is attributable to the compression.
 """
 import sys, time
-import numpy as np
 import torch
 
 sys.path.insert(0, ".")
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from kernel import KernelConfig, ModelConfig, QuantConfig
+from kernel import ModelConfig, QuantConfig
 from kernel.adapters.torch_llama import graft, ungraft
 
 M = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"

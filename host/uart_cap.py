@@ -3,7 +3,7 @@
 
   ./host/uart_cap.py <logfile> [seconds] [device] [baud]
 """
-import os, sys, time, termios, tty
+import os, sys, time, termios
 
 log  = sys.argv[1]
 secs = float(sys.argv[2]) if len(sys.argv) > 2 else 180.0

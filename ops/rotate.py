@@ -2,26 +2,27 @@
 
     R = (1/sqrt(d)) . H_d . D     with D = diag(+-1) drawn from `seed`
 
-Three properties, each of which the rest of the design leans on:
+The rest of the design leans on three properties of it.
 
-1. **Orthonormal.** So `<R q, R k> == <q, k>`: a query rotated once at the top
-   of a decode step scores correctly against keys that were rotated when they
-   were written, and no key ever has to be rotated back. That is what makes an
-   O(context) inverse rotation collapse to a single O(1) one.
+1. It is orthonormal, so `<R q, R k> == <q, k>`. A query rotated once at the
+   top of a decode step scores correctly against keys that were rotated when
+   they were written, and no key ever has to be rotated back. That is what
+   turns an O(context) inverse rotation into a single O(1) one.
 
-2. **Exact on integers.** `H` is adds and subtracts only, and `D` is a sign
-   flip. The only truncation in the whole rotation is the final `1/sqrt(d)`
-   scale, and for even powers of two that is an exact right shift. Nothing
-   here is a source of divergence between two implementations.
+2. It is exact on integers. `H` is adds and subtracts, `D` is a sign flip. The
+   only truncation in the whole rotation is the final `1/sqrt(d)` scale, and
+   for even powers of two even that is an exact right shift. So there is
+   nothing in here for two implementations to disagree about.
 
-3. **Gaussianising.** A rotation by a dense random orthogonal matrix makes each
-   output channel a weighted sum of all `d` inputs, so it tends to Gaussian.
-   `H D` is the cheap structured stand-in -- O(d log d) adds instead of O(d^2)
-   multiplies -- and it is why `Codebook.gaussian` needs no calibration.
+3. It makes the channels look Gaussian. Rotating by a dense random orthogonal
+   matrix makes every output channel a weighted sum of all `d` inputs, which
+   pushes it towards a normal distribution. `H D` is the cheap structured
+   stand-in for that -- O(d log d) adds instead of O(d^2) multiplies -- and it
+   is the reason `Codebook.gaussian` needs no calibration data.
 
-HOW MANY ROUNDS, AND A CORRECTION
----------------------------------
-One round of `H D` does not land on a Gaussian; it OVERSHOOTS. Measured excess
+How many rounds
+---------------
+One round of `H D` does not land on a Gaussian, it overshoots. Measured excess
 kurtosis (`tests/test_rotation.py`):
 
     input                       1 round    2 rounds
@@ -29,25 +30,26 @@ kurtosis (`tests/test_rotation.py`):
     4 outlier channels x30        -0.87       -0.14
     student-t, df=2.5             -0.26       -0.08
 
-`H D` on a one-hot vector gives `+-1/sqrt(d)` in every channel -- a two-point
-distribution, excess kurtosis exactly -2. A second round with an independent
-sign diagonal fixes that, for one more `d log d` pass of adds.
+`H D` on a one-hot vector gives `+-1/sqrt(d)` in every channel, which is a
+two-point distribution with excess kurtosis of exactly -2. A second round with
+an independent sign diagonal fixes that, for one more `d log d` pass of adds.
 
-**And it makes the model worse.** Measured end to end on WikiText-2 (12
-windows, paired, TinyLlama at 1024 context, 4-bit keys / 2-bit values), one
-round beats two by 1.3% perplexity, significant at 2.8 standard errors. Three
-rounds is indistinguishable from two.
+It also makes the model worse. Measured end to end on WikiText-2 (12 windows,
+paired, TinyLlama at 1024 context, 4-bit keys and 2-bit values), one round
+beats two by 1.3% perplexity at 2.8 standard errors. Three rounds is
+indistinguishable from two.
 
-The lesson is about the proxy, not the transform. Kurtosis says how Gaussian
-the channels look; it says nothing about the truncation each round costs. The
-scale is applied INSIDE every round (see `apply`), so a second round floors the
-value a second time -- and that appears to cost more than the distributional
-gain returns. A statistic that looks like the objective is not the objective,
-and the only way to find that out was to measure the thing being optimised.
+The lesson is about the proxy rather than the transform. Kurtosis tells you how
+Gaussian the channels look. It tells you nothing about what each round costs in
+truncation, and the scale is applied inside every round (see `apply`), so a
+second round rounds the value off a second time. That appears to cost more than
+the better distribution gives back. A statistic that resembles the objective is
+not the objective, and the only way to find that out was to measure the thing
+we actually cared about.
 
-So the default is ONE round. It is also half the butterfly.
+So the default is one round, which is also half the butterfly.
 
-The inverse is the transpose, and the design never computes it: `R^-1` is
+The inverse is just the transpose, and the design never computes it: `R^-1` is
 folded into the output projection once, offline (`ops.output.fold_o_proj`).
 """
 
@@ -57,17 +59,17 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..numerics.fixed import INT, Q, fwht, inv_sqrt_q15, lshift, rshift, sqrt_shift
+from ..numerics.fixed import INT, fwht, inv_sqrt_q15, rshift, sqrt_shift
 from ..trace import Op, Trace, record
 
 
 @dataclass(frozen=True)
 class Rotation:
-    """`d`-dimensional randomized Hadamard rotation, fixed at construction.
+    """A `d`-dimensional randomized Hadamard rotation, fixed at construction.
 
-    The sign diagonal is part of the *format*, not of a run: a cache written
-    under one seed is unreadable under another. It therefore travels with the
-    weights.
+    The sign diagonal is part of the format, not of a particular run. A cache
+    written under one seed cannot be read under another, so the seed travels
+    with the weights.
     """
 
     d: int
@@ -80,21 +82,21 @@ class Rotation:
 
     @staticmethod
     def for_quant(quant, d: int) -> "Rotation":
-        """THE constructor. Every call site must use this one.
+        """The constructor. Every call site has to use this one.
 
-        The rotation is decided by more than one field of `QuantConfig`, and it
-        must be IDENTICAL everywhere it is built -- the quantizer that writes
-        the cache, the kernel that rotates the query, and the offline fold that
-        folds its inverse into `W_o`. Building it from a subset of the fields in
-        one of those places puts the block's output in a different basis from
+        More than one field of `QuantConfig` decides the rotation, and it has to
+        come out identical in all three places that build it: the quantizer that
+        writes the cache, the kernel that rotates the query, and the offline fold
+        that puts its inverse into `W_o`. Build it from a subset of the fields in
+        any one of those and the block's output ends up in a different basis from
         the one `W_o'` was folded for.
 
-        That is not hypothetical: `rot_rounds` was threaded into the quantizer
-        and the kernel but not into the adapter's fold, and the result was a
-        perplexity of 3532 against a baseline of 9.42 -- catastrophic, but only
-        for the two configurations that did not happen to match the default. A
-        single constructor makes forgetting a field impossible rather than
-        merely unlikely.
+        This has actually happened. `rot_rounds` was threaded into the quantizer
+        and the kernel but not into the adapter's fold, and perplexity came out
+        at 3532 against a baseline of 9.42 -- but only for the two configurations
+        that did not happen to match the default, so it looked fine most of the
+        time. Having one constructor makes forgetting a field impossible instead
+        of merely unlikely.
         """
         return Rotation.from_seed(d, quant.seed, quant.rot_rounds)
 
@@ -127,10 +129,10 @@ class Rotation:
     def apply(self, x, trace: Trace | None = None, unit: str = "") -> np.ndarray:
         """Rotate along the last axis. Fixed-point in, fixed-point out, same Q.
 
-        The scale is the only truncation. When `d` is an odd power of two it is
-        a Q15 reciprocal multiply instead of a shift, which costs one multiply
-        and one extra truncation -- stated here rather than hidden, because it
-        means d=32 and d=64 are not equally exact.
+        The scale is the only truncation in here. When `d` is an odd power of
+        two the scale becomes a Q15 reciprocal multiply rather than a shift,
+        which costs one multiply and one more truncation. Worth saying out loud:
+        it means d=32 and d=64 are not equally exact.
         """
         a = np.asarray(x)
         if a.shape[-1] != self.d:
@@ -139,10 +141,10 @@ class Rotation:
         s = self.shift
         out = np.asarray(a, dtype=INT)
         for r in range(self.rounds):
-            # The scale is applied INSIDE each round rather than once at the
-            # end. Deferring it would let the intermediate grow by sqrt(d) per
-            # round, which at two rounds and d=128 is 7 extra bits of headroom
-            # the accumulator would have to carry for no benefit.
+            # The scale goes inside each round rather than once at the end.
+            # Leaving it to the end would let the intermediate grow by sqrt(d)
+            # per round, and at two rounds with d=128 that is 7 more bits of
+            # headroom the accumulator would have to carry for nothing.
             out = fwht(out * self.signs[r])
             out = rshift(out, s) if s is not None else \
                   rshift(out * INT(self.inv_sqrt_q15), 15)
@@ -152,16 +154,16 @@ class Rotation:
         return out
 
     def matrix(self) -> np.ndarray:
-        """The dense `d x d` form. For folding into `W_o` and for tests only.
+        """The dense `d x d` form, for folding into `W_o` and for tests.
 
-        Never used on a hot path -- materialising it defeats the point of a
-        butterfly -- but the fold is an offline weight transform, where an
-        O(d^2) matrix is the clearest way to say what is happening.
+        Never used on a hot path -- building it defeats the point of having a
+        butterfly. But the fold is an offline weight transform, and there an
+        O(d^2) matrix is the clearest way to write what is happening.
 
-        Round `r` is applied first, so the composite is `R_last ... R_0` --
-        the same order `apply` runs them in. Getting this backwards produces a
-        matrix that is still orthonormal, which is exactly why it would not be
-        caught by an orthonormality check.
+        Round `r` is applied first, so the composite is `R_last ... R_0`, which
+        is the order `apply` runs them in. Get this backwards and you still get
+        an orthonormal matrix, which is exactly why an orthonormality check
+        would not catch it.
         """
         h = np.array([[1.0]])
         while h.shape[0] < self.d:
