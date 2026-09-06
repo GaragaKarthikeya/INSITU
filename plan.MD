@@ -1836,6 +1836,39 @@ executed on the FPGA, then sweep `KEY_BITS`/`VAL_BITS`.
 *Exit:* measured bytes, cycles and throughput move as `config.py` predicts, and
 throughput is a linear function of the compression ratio.
 
+**Status: THE PERPLEXITY HALF IS MEASURED.** `results/step15_perplexity.log`.
+
+| | perplexity |
+|---|---|
+| baseline, fp32 attention, host | **11.279** |
+| compressed 4b/2b, **every layer on the FPGA** | **14.102** |
+| ratio | **1.250** |
+
+256 tokens of WikiText-2, no prefill, every cache row written by the block's
+own write master, and **4,096 of 4,096 decode steps bit-exact against the
+numpy kernel**. Zero clips, zero accumulator overflows, no channel outside the
+24-bit seam.
+
+**So 4b/2b costs 25% of perplexity for 4.92x of cache.** That is the trade this
+whole design exists to make, measured end to end with the hardware in the loop
+rather than modelled. It inherits limit 8: 256 tokens of one passage separates
+a 25% effect from a 2% one and nothing finer, and a longer corpus is the
+obvious next measurement.
+
+**The host is now the bottleneck, by a long way.** 336 s of wall clock against
+6.7 s of wire and 108 ms of device: **98% of the run is numpy**. `collect()`
+has to run to produce the ingress -- the projections, RoPE and the rotation
+taps -- but it also runs the full numpy attention, scores, softmax and
+accumulate, which is needed only for the per-step exactness check. Splitting
+those two would cut a perplexity run by an order of magnitude and is the
+cheapest remaining speedup anywhere in this project.
+
+**Still to do for step 15:** the `KEY_BITS`/`VAL_BITS` sweep, which needs a
+synthesis run per format because the widths are RTL parameters. `config.py`
+now predicts the board to within 1%, so the sweep's results are interpretable
+when they arrive; 4b/4b is a 68-byte row needing five ports the PS does not
+have, which this plan already predicts and a build would confirm by failing.
+
 ### What can be done in parallel
 
 Steps 2–4 (Python) are independent of step 1 and can run alongside it. Steps 5–9
