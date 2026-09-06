@@ -53,6 +53,13 @@ if [ "$board" = 0 ]; then exec "$VENV" -m "$mod" "$@"; fi
 if [ "$(id -u)" != 0 ]; then exec sudo -E "$SELF" "$cmd" "$@"; fi
 
 # Jumbo on this side too, or the kernel silently drops every frame we build.
+# BACK TO 1500. The jumbo experiment left this at 9000, and lwIP's netif is a
+# standard 1500-byte MTU -- so the host was emitting single 8 KB frames the
+# board could not accept. Small datagrams (the ping) worked and large ones
+# vanished, which is the signature. At 1500 the host's IP stack fragments and
+# lwIP reassembles, which is the entire reason for moving to UDP.
+ip link set "$IFACE" mtu 1500 2>/dev/null || true
+
 # -- the UART, always ---------------------------------------------------------
 : > "$LOG"
 "$ROOT/host/uart_cap.py" "$LOG" 3600 "$UART" >/dev/null 2>&1 &
