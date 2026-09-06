@@ -1598,11 +1598,55 @@ board's cache rows over JTAG and diffing them against `kernel.cache.buf`:
 44 bytes against 52, on the first line. `FpgaLayers` now asserts the row width
 against the bitstream, so the mismatch is a named error before the first token.
 
-**Still open: the Ethernet server is unreliable.** It brings the link up,
-negotiates 1 Gb/s, serves the ping, sixteen `CMD_LOAD`s and about four steps at
-1.3 ms each -- and then stops replying. The JTAG mailbox is 750x slower and
-completely dependable, which is why the run above used it. That is step 14's
-remaining work and it is a transport problem, not a datapath one.
+### Still open: the Ethernet server dies after a few steps
+
+It brings the link up at 1 Gb/s, finds the PHY, serves the ping, serves **256
+cache-zeroing `CMD_LOAD`s** flawlessly -- 1,540 frames, counters advancing
+exactly +6 per load -- and then dies after **1, 4 or 9 decode steps depending
+on the run**. After it dies the board answers nothing at all: a bare ping gets
+no reply.
+
+What is known, from the board's own counters rather than inference:
+
+- the step it dies *after* completed correctly: `served seq 258 status 0 ntok 1
+  -> 5 frags, 22 us (rx 1547 tx 262)`. All five reply fragments were sent and
+  the host received them;
+- the next request is never logged, and the logging threshold would have
+  printed it, so it was never reassembled;
+- `RXSR` error bits are **never set** -- BUFFNA, overrun and HRESPNOK were the
+  obvious suspects and the hardware says no;
+- single-frame replies (the 256 loads) never trigger it; five-frame replies do;
+- **the step count before death varies between runs**, which rules out a
+  deterministic logic error and points at a race or at contention between the
+  GEM and the AXI DMA, both of which master DDR.
+
+Five bugs were found and fixed in this file on the way here, all real and none
+of them this one: descriptor cache maintenance (the driver does none),
+`RXBUF_NEW` never cleared on re-arm (the same frame delivered 948,353 times),
+four descriptors sharing a cache line so a flush erased its neighbours, a ring
+array a quarter of the size the alignment demanded, and a `CMD_LOAD` larger
+than the reassembly buffer. Four of the five were found by reading the driver
+or the hardware definition; every attempt to reason about what the GEM *ought*
+to do was wrong.
+
+**The recommendation is to stop hand-rolling this.** The datapath is proven
+without it -- 208/208 exact over JTAG, all sixteen layers, real generated text
+-- and Ethernet buys throughput, not capability. Two options, in order of
+preference:
+
+1. **Adopt Xilinx's interrupt-driven example structure wholesale** rather than
+   a polled loop. The status bits this design has to acknowledge by hand are
+   exactly the ones the handler exists to service, and a bug list five long is
+   evidence that the polled shape is fighting the hardware.
+2. **Eliminate multi-frame replies with jumbo frames.** The GEM supports
+   `XEMACPS_JUMBO_ENABLE_OPTION` up to 10,240 bytes; at an MTU of 9,000 a
+   6,188-byte reply is ONE frame and a 9,252-byte request is two. Since
+   single-frame replies have never triggered the fault in 256 consecutive
+   attempts, this may sidestep it entirely -- and it is a smaller change than
+   rewriting the driver.
+
+Until then `--jtag` is the transport that works: 750x slower, entirely
+dependable, and the one every correctness result above was taken through.
 
 ### On the board: 32 steps, four contexts, both paths, all bit-exact
 
