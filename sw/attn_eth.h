@@ -21,4 +21,9 @@ void attn_eth_forget_host(void);
  * receiver that drops everything and one that receives nothing look the same
  * from the far end; these tell them apart. */
 void attn_eth_stats(u32 *any, u32 *ours, u32 *tx);
+
+/* How many times the receive status had to be cleared. Non-zero means the ring
+ * ran dry at least once; a receiver that never recovers is one that was never
+ * acknowledged. */
+u32 attn_eth_stalls(void);
 #endif

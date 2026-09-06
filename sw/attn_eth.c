@@ -150,7 +150,7 @@ static void bd_flush_all(void) {
  * accepted; `rx_ours` is those with our ethertype. If the first is climbing
  * and the second is not, the filter or the ethertype is wrong -- which is a
  * different bug from a dead link, and the UART should say which. */
-static u32 rx_any, rx_ours, tx_frames;
+static u32 rx_any, rx_ours, tx_frames, rx_stalls, tx_errs;
 
 /* --------------------------------------------------------------------------
  * PHY
@@ -335,6 +335,29 @@ int attn_eth_recv(u8 *dst, int max)
     XEmacPs_BdRing *rxr = &XEmacPs_GetRxRing(&emac);
     XEmacPs_Bd *bd;
 
+    /* CLEAR THE RECEIVE STATUS, OR THE GEM STOPS FOR GOOD.
+     *
+     * `XEMACPS_RXSR_BUFFNA_MASK` latches the instant the controller finds no
+     * free descriptor -- even for one frame, even momentarily -- and while it
+     * is set the receiver stays off no matter how many descriptors are handed
+     * back afterwards. It is write-one-to-clear, and the ONLY code in the
+     * driver that clears it lives in `xemacps_intr.c`. This server is polled
+     * and installs no handler, so nothing cleared it.
+     *
+     * That is why reception ran perfectly for 1,600 frames -- 256 cache-zeroing
+     * loads and nine decode steps, counters advancing +7 and +5 exactly on
+     * schedule -- and then stopped dead. Overrun and a bad AHB response latch
+     * the same way and are cleared here too. */
+    {
+        u32 sr = XEmacPs_ReadReg(emac.Config.BaseAddress, XEMACPS_RXSR_OFFSET);
+        if ((sr & XEMACPS_RXSR_ERROR_MASK) != 0U) {
+            XEmacPs_WriteReg(emac.Config.BaseAddress, XEMACPS_RXSR_OFFSET, sr);
+            if (++rx_stalls <= 4U)
+                xil_printf("ETH: rx status %08x cleared (#%u) after %u frames\r\n",
+                           (unsigned)sr, (unsigned)rx_stalls, (unsigned)rx_any);
+        }
+    }
+
     /* The GEM marks a descriptor used by writing DDR; this side must not read
      * that through a stale cache line. */
     bd_inval_rx();
@@ -458,6 +481,17 @@ int attn_eth_send(const u8 *payload, int len)
     }
     XEmacPs_BdRingFree(txr, 1, bd);
     tx_frames++;
+    /* The transmit side latches the same way: a used-bit-read or an underrun
+     * stops it until acknowledged. */
+    {
+        u32 sr = XEmacPs_ReadReg(emac.Config.BaseAddress, XEMACPS_TXSR_OFFSET);
+        if ((sr & XEMACPS_TXSR_ERROR_MASK) != 0U) {
+            XEmacPs_WriteReg(emac.Config.BaseAddress, XEMACPS_TXSR_OFFSET, sr);
+            if (++tx_errs <= 4U)
+                xil_printf("ETH: tx status %08x cleared (#%u)\r\n",
+                           (unsigned)sr, (unsigned)tx_errs);
+        }
+    }
     return len;
 }
 
@@ -472,3 +506,5 @@ void attn_eth_stats(u32 *any, u32 *ours, u32 *tx)
     if (ours) *ours = rx_ours;
     if (tx)   *tx   = tx_frames;
 }
+
+u32 attn_eth_stalls(void) { return rx_stalls; }

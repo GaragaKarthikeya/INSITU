@@ -842,6 +842,9 @@ static void serve_eth(void)
                    (unsigned)rq.seq, (unsigned)rs.status, (unsigned)rq.n_tokens,
                    (unsigned)nf, (unsigned)rs.dev_us,
                    (unsigned)rx_any_count(), (unsigned)tx_count());
+        if (attn_eth_stalls())
+            xil_printf("ETH: (%u receive stalls cleared so far)\r\n",
+                       (unsigned)attn_eth_stalls());
     }
 }
 
