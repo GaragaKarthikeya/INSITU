@@ -17,3 +17,8 @@ iter_*_CongestedCLBsAndNets.txt
 # regenerates it if it is missing.
 sw/attn_vectors.c
 sw/attn_vectors.h
+
+# A separate repository (github.com/GaragaKarthikeya/ISFPGA_Submission),
+# synced to Overleaf. Ignored here so `git add .` cannot record it as a
+# stray gitlink. Note that `git clean -fdx` in this directory WILL delete it.
+ISFPGA_Submission/
