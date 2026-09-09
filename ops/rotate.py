@@ -49,6 +49,24 @@ we actually cared about.
 
 So the default is one round, which is also half the butterfly.
 
+Zero rounds
+-----------
+`rounds = 0` is the identity, and exists only as an experimental control.
+Every measurement above compares one rotation against another; none of them
+asks whether rotating at all beats not rotating, which is the claim the scalar
+codebook actually rests on. `experiments/ablate.py`, group "rotation", asks it.
+
+It is deliberately not a special case anywhere. `signs` is `(0, d)`, so the
+loops in `apply` and `inverse_apply` run zero times and return their input
+unchanged, and `matrix()` returns the `np.eye(d)` it starts from -- which means
+`ops.output.fold_o_proj` folds an identity and leaves `W_o` alone. All three
+call sites named in `for_quant` degrade together, which is the only way this
+could be measured without reproducing the basis-mismatch bug described there.
+
+The one thing that is a special case is the trace: no rotation records no
+`ROTATE` work, because `hw.attn_block.RotateUnit` charges `max(n, 1)` rounds
+per vector and would otherwise bill a round that never ran.
+
 The inverse is just the transpose, and the design never computes it: `R^-1` is
 folded into the output projection once, offline (`ops.output.fold_o_proj`).
 """
@@ -61,6 +79,29 @@ import numpy as np
 
 from ..numerics.fixed import INT, fwht, inv_sqrt_q15, rshift, sqrt_shift
 from ..trace import Op, Trace, record
+
+# The 1/sqrt(d) scale floors. Rounding to nearest was tried and dropped.
+#
+# Flooring is wrong in the same direction every time, so the d channel errors
+# do not cancel the way rounding-to-nearest errors would. That is a real defect
+# and it is visible at score level: holding the codes fixed and computing the
+# reference in float64, rounding the query rotation to nearest cuts the part of
+# the error that survives the softmax from 2.09 to 1.21 LSB of Q16.
+#
+# It does not reach perplexity. Measured on Llama 3.2 1B, WikiText-2, 2,048
+# tokens, architecture B, floor -> nearest:
+#
+#     4b/2b   8.7209 -> 8.5495   -1.97%
+#     4b/4b   7.5510 -> 7.5716   +0.27%
+#     6b/2b   7.9541 -> 7.9595   +0.07%
+#
+# One gain and two results inside the ~1.4% this corpus resolves. So the
+# adder buys nothing reliable, and it is not worth desyncing this from
+# `rtl/rot_fwht.sv:62`, which is `>>> SHIFT` and must keep agreeing.
+#
+# The lesson is the same one the "how many rounds" note above records: a
+# statistic that resembles the objective is not the objective. Score-level
+# error behaved exactly as predicted and perplexity did not follow.
 
 
 @dataclass(frozen=True)
@@ -104,8 +145,8 @@ class Rotation:
     def from_seed(d: int, seed: int, rounds: int = 1) -> "Rotation":
         if d & (d - 1):
             raise ValueError(f"d={d} must be a power of two for a Hadamard butterfly")
-        if rounds < 1:
-            raise ValueError(f"rounds={rounds} must be at least 1")
+        if rounds < 0:
+            raise ValueError(f"rounds={rounds} must not be negative")
         # PCG64 with an explicit seed: reproducible across numpy versions and
         # platforms. All diagonals come from one stream, so `seed` alone names
         # the whole transform and a cache carries one number, not `rounds`.
@@ -149,8 +190,44 @@ class Rotation:
             out = rshift(out, s) if s is not None else \
                   rshift(out * INT(self.inv_sqrt_q15), 15)
 
-        record(trace, Op.ROTATE, unit, m=self.d, k=int(np.prod(a.shape[:-1])) or 1,
-               n=self.rounds, log2d=self.d.bit_length() - 1, exact_scale=s is not None)
+        if self.rounds:
+            record(trace, Op.ROTATE, unit, m=self.d,
+                   k=int(np.prod(a.shape[:-1])) or 1, n=self.rounds,
+                   log2d=self.d.bit_length() - 1, exact_scale=s is not None)
+        return out
+
+    def inverse_apply(self, y, trace: Trace | None = None, unit: str = "") -> np.ndarray:
+        """Undo `apply`. Fixed-point in, fixed-point out, same Q.
+
+        `apply` computes `x @ R.T`, so this computes `y @ R`. The two are
+        mirror images: `apply` flips signs, transforms, then scales; this
+        transforms, flips signs, then scales, and runs the rounds in reverse.
+
+        The design never calls this. `R^-1` is folded into `W_o` offline
+        (`ops.output.fold_o_proj`), so nothing on the hot path rotates back.
+        It exists for architecture A, which reconstructs into the original
+        basis the way a compressed format's decode rule specifies, and so has
+        to undo the rotation once per cached token.
+
+        It is not an exact inverse in fixed point, and that is the cost being
+        measured: each round ends in a truncation, so a round trip loses bits
+        that staying in the rotated domain never touches.
+        """
+        a = np.asarray(y)
+        if a.shape[-1] != self.d:
+            raise ValueError(f"inverse expects last axis {self.d}, got {a.shape[-1]}")
+
+        s = self.shift
+        out = np.asarray(a, dtype=INT)
+        for r in reversed(range(self.rounds)):
+            out = fwht(out) * self.signs[r]
+            out = rshift(out, s) if s is not None else \
+                  rshift(out * INT(self.inv_sqrt_q15), 15)
+
+        if self.rounds:
+            record(trace, Op.ROTATE, unit, m=self.d,
+                   k=int(np.prod(a.shape[:-1])) or 1, n=self.rounds,
+                   log2d=self.d.bit_length() - 1, exact_scale=s is not None)
         return out
 
     def matrix(self) -> np.ndarray:

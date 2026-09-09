@@ -173,12 +173,26 @@ class RoPE:
         record(trace, Op.ROPE, unit, m=d, k=1, n=int(np.prod(a.shape[:-1])) or 1)
         return out
 
-    def apply_float(self, x, positions) -> np.ndarray:
-        """float64 reference, same pairing."""
+    def apply_float(self, x, positions, trace: Trace | None = None,
+                    unit: str = "") -> np.ndarray:
+        """float64, same channel pairing as `apply`.
+
+        This is what runs when the cast sits at the seam rather than ahead of
+        RoPE -- the host has the model in float already, so RoPE costs it
+        nothing extra and the fixed-point world begins at the wire.
+
+        It records the same trace entry `apply` does. It has to: the work
+        happens either way, and a cost model that charged for RoPE under one
+        ordering and not the other would make the two look different in cycles
+        when they differ only in precision.
+        """
         a = np.asarray(x, dtype=np.float64)
         half = a.shape[-1] // 2
         scale = float(1 << self.frac)
         c = self.cos[np.asarray(positions)] / scale
         s = self.sin[np.asarray(positions)] / scale
         lo, hi = a[..., :half], a[..., half:]
-        return np.concatenate([lo * c - hi * s, lo * s + hi * c], axis=-1)
+        out = np.concatenate([lo * c - hi * s, lo * s + hi * c], axis=-1)
+        record(trace, Op.ROPE, unit, m=a.shape[-1], k=1,
+               n=int(np.prod(a.shape[:-1])) or 1)
+        return out

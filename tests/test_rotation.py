@@ -119,8 +119,49 @@ def check_extra_rounds_stay_orthonormal():
         approx(m @ m.T, np.eye(64), tol=1e-12, what=f"rounds={rounds}")
 
 
-def check_rejects_zero_rounds():
-    raises(ValueError, lambda: Rotation.from_seed(64, 0, 0), "rounds=0")
+def check_rejects_negative_rounds():
+    raises(ValueError, lambda: Rotation.from_seed(64, 0, -1), "rounds=-1")
+
+
+def check_zero_rounds_is_exactly_the_identity():
+    """The ablation control. `rounds=0` must be the identity, not "nearly".
+
+    Every other setting in `QuantConfig` is compared against a rotation of some
+    kind; this is the only one that removes it, and it is only a valid control
+    if it removes it cleanly. Bit-identical rather than approximate because
+    there is nothing here to round: zero rounds means zero applications of the
+    one truncation the rotation contains.
+    """
+    for d in (8, 32, 64, 128):
+        r = Rotation.from_seed(d, 3, rounds=0)
+        assert r.rounds == 0
+        assert r.signs.shape == (0, d), f"signs {r.signs.shape} for d={d}"
+        exact(r.matrix(), np.eye(d), f"matrix is I, d={d}")
+
+        x = (np.random.default_rng(d).standard_normal((5, d)) * 1000).astype(np.int64)
+        exact(r.apply(x), x, f"apply is a no-op, d={d}")
+        exact(r.inverse_apply(x), x, f"inverse is a no-op, d={d}")
+
+
+def check_zero_rounds_charges_no_rotate_hardware():
+    """No rotation must cost no rotate cycles.
+
+    `hw.attn_block.RotateUnit` bills `max(n, 1)` rounds per vector, so a
+    `ROTATE` record with `n=0` would charge a round that never ran and quietly
+    hand the ablation a hardware cost it does not have. `apply` drops the
+    record instead.
+    """
+    from kernel.trace import Op, Trace
+    d = 64
+    x = np.zeros((4, d), dtype=np.int64)
+
+    t = Trace()
+    Rotation.from_seed(d, 0, rounds=0).apply(x, t, "rotate")
+    assert t.of(Op.ROTATE) == [], f"zero rounds recorded {t.of(Op.ROTATE)}"
+
+    t = Trace()
+    Rotation.from_seed(d, 0, rounds=1).apply(x, t, "rotate")
+    assert len(t.of(Op.ROTATE)) == 1, "one round must still record its work"
 
 
 def _kurtosis(x):

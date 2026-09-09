@@ -38,6 +38,15 @@ class Weights:
     o: np.ndarray      # (hidden, num_heads * head_dim), folded
     folded: bool = True
 
+    # The same projection WITHOUT `R^-1` folded in.
+    #
+    # Architecture B returns its accumulator in the rotated basis and relies on
+    # `o` having been rewritten to accept it. Architecture A reconstructs into
+    # the original basis, so the attention output needs no correction and this
+    # is the matrix it must use. Handing A the folded `o` -- or B the unfolded
+    # one -- does not fail; it produces fluent nonsense.
+    o_unrotated: np.ndarray | None = None
+
     # Per-head RMSNorm gains over head_dim, applied to q and k before RoPE.
     # Present in Qwen3, OLMo-2 and Gemma-3; absent in Llama and Mistral. None
     # means the architecture does not use QK-norm -- it is not a default that
@@ -90,6 +99,7 @@ class Weights:
         f32 = lambda a: None if a is None else np.asarray(a, dtype=np.float32)
         out = Weights(
             q=fp.to_fp16(q), k=fp.to_fp16(k), v=fp.to_fp16(v), o=fp.to_fp16(o_folded),
+            o_unrotated=fp.to_fp16(np.asarray(o, dtype=np.float64)),
             q_norm=f32(q_norm), k_norm=f32(k_norm), norm_eps=norm_eps,
             q_bias=f32(q_bias), k_bias=f32(k_bias),
             v_bias=f32(v_bias), o_bias=f32(o_bias),

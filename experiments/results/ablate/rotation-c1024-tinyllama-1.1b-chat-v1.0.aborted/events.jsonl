@@ -1,0 +1,2 @@
+{"t": 1788937586.1404035, "elapsed_h": 0.0020914626121520995, "kind": "start", "group": "rotation", "context": 1024, "windows": 12, "variants": ["baseline", "4b2b-rot1-gauss", "4b2b-rot0-gauss", "4b2b-rot0-unif", "4b2b-rot1-unif", "4b4b-rot1-gauss", "4b4b-rot0-gauss", "4b4b-rot0-unif", "4b4b-rot1-unif", "8b8b-rot1-gauss", "8b8b-rot0-gauss", "8b8b-rot0-unif", "8b8b-rot1-unif"]}
+{"t": 1788937625.637485, "elapsed_h": 0.01306287407875061, "kind": "variant", "name": "baseline", "ppl": 9.42324369827994, "seconds": 39.5}

@@ -493,13 +493,18 @@ def check_the_real_scores_do_not_exercise_the_rescale():
     grew = vs.softmax["grew"].astype(bool)
     factors = vs.softmax["factor"][grew]
     unity = 1 << vs.fmt.prob_frac
-    assert grew.sum() == 19
+    # These counts are a property of this stimulus, not of the design, so they
+    # move whenever the goldens do. They last moved when the float -> fixed
+    # cast went from ahead of RoPE to the seam, which shifted a handful of
+    # scores by an LSB and turned 19 new maxima into 20.
+    assert grew.sum() == 20
     # Four are the zero of each lane's first token, where `m` starts at the
-    # format's floor and annihilates an empty accumulator. Thirteen are exactly
-    # unity, so the multiply runs and changes nothing. Two of nineteen events
-    # do arithmetic a mutation could get wrong.
+    # format's floor and annihilates an empty accumulator. Fourteen are exactly
+    # unity, so the multiply runs and changes nothing. Two of twenty events do
+    # arithmetic a mutation could get wrong -- which is the point: this
+    # stimulus alone cannot tell a correct rescale from a rounded one.
     assert (factors == 0).sum() == vs.model.kv_groups
-    assert (factors == unity).sum() == 13
+    assert (factors == unity).sum() == 14
     assert len(set(int(x) for x in factors)) == 3
 
 

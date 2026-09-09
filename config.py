@@ -157,6 +157,15 @@ class QuantConfig:
     # distributional gain the quantizer does not cash in.
     #
     # It is also half the hardware. See kernel/README.md, "Rounds".
+    #
+    # `rot_rounds = 0` is the identity: no rotation at all. It is not a
+    # shippable format -- a scalar codebook against unrotated, outlier-heavy
+    # activations is exactly what the rotation exists to avoid -- but it is the
+    # only honest control for "does the rotation do anything", which every
+    # other setting here takes for granted. See experiments/ablate.py, group
+    # "rotation". At zero rounds `Rotation.matrix()` is `I`, so the offline
+    # `W_o` fold becomes a no-op and the whole system degrades consistently
+    # instead of landing in a mismatched basis.
     rot_rounds: int = 1
 
     # "gaussian" is the Lloyd-Max optimum for the unit normal, which is what
@@ -170,8 +179,8 @@ class QuantConfig:
         for name, b in (("key_bits", self.key_bits), ("value_bits", self.value_bits)):
             if not 1 <= b <= 8:
                 raise ValueError(f"{name}={b} outside the supported range 1..8")
-        if self.rot_rounds < 1:
-            raise ValueError(f"rot_rounds={self.rot_rounds} must be at least 1")
+        if self.rot_rounds < 0:
+            raise ValueError(f"rot_rounds={self.rot_rounds} must not be negative")
         if self.codebook not in ("gaussian", "uniform"):
             raise ValueError(f"codebook={self.codebook!r}; expected gaussian or uniform")
         if self.norm_frac >= self.norm_bits:

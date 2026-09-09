@@ -2194,7 +2194,8 @@ board.*
 
 `1 → 3 → 11 → 12 → 13 → 14 → 15`. Steps 1–14 are done and measured on the
 board. Step 15's perplexity half is measured at 4,096 tokens; its
-`KEY_BITS`/`VAL_BITS` sweep is not started.
+`KEY_BITS`/`VAL_BITS` sweep is not started *on the board* — the six-config
+sweep below is the host model only.
 
 The headline results, all with the hardware in the loop:
 
@@ -2207,6 +2208,159 @@ The headline results, all with the hardware in the loop:
 | scan at ctx 32,768 | 1.14 cyc/row, 11.3 GB/s, 1.5% starving |
 | full system at 250 MHz | WNS **+0.161 ns**, 143,181 FF |
 | self-checking suites | **170 host checks, 12 RTL benches, all green** |
+
+### Architecture A against architecture B
+
+Two ways to build an accelerator for this cache format, both bit-exact models
+in `kernel/experiments/ppl_paths.py`:
+
+**A**, the naive one. Read the format as a specification: rebuild the dense
+key from its codes and norm, rotate it back to the original basis, then dot it
+with an unrotated query. Decompression and attention stay two blocks with a
+clean boundary between them. Costs, per cached token: `d` multiplies and a
+truncation to rebuild, `d log d` add/sub and another truncation to un-rotate,
+`d` multiplies to score. It also has to use the unfolded `W_o`
+(`Weights.o_unrotated`), because it lands in the original basis.
+
+**B**, what this design does. Never leave the rotated basis. Build a table of
+`q_rot x centroid` once per query and the score is one multiply per cached
+token. `R^-1` is folded into `W_o` offline instead of being applied to every
+token. The boundary between the two blocks is gone.
+
+WikiText-2, 2,048 tokens, Llama 3.2 1B, all 16 layers, paired over the same
+2,047 positions. Both paths read the *same* codes and the same quantised norm,
+so every difference below is arithmetic, not compression.
+
+| config | row | planes | A | B | A vs fp16 | B vs fp16 | paired result |
+|---|---|---|---|---|---|---|---|
+| 2b/2b | 36 B | **3** | 87.9170 | 94.5112 | 12.3065× | 13.2296× | A ahead, CI [1.0151, 1.1384] |
+| 3b/2b | 44 B | **4** | 11.5994 | 11.3830 | 1.6237× | 1.5934× | tie, CI [0.9549, 1.0086] |
+| 4b/2b | 52 B | **4** | 8.5463 | 8.7209 | 1.1963× | 1.2207× | A ahead, CI [1.0042, 1.0369] |
+| 4b/3b | 60 B | 5 | 7.6965 | 7.7710 | 1.0773× | 1.0878× | tie, CI [0.9946, 1.0250] |
+| 5b/2b | 60 B | 5 | 7.9426 | 8.0035 | 1.1118× | 1.1203× | tie, CI [0.9954, 1.0201] |
+| 4b/4b | 68 B | 5 | 7.6146 | 7.5510 | 1.0659× | 1.0570× | tie, CI [0.9787, 1.0048] |
+| 5b/3b | 68 B | 6 | 7.3741 | 7.3614 | 1.0322× | 1.0304× | tie, CI [0.9888, 1.0079] |
+| 6b/2b | 68 B | 5 | 7.9608 | 7.9541 | 1.1143× | 1.1134× | tie, CI [0.9896, 1.0089] |
+| 5b/4b | 76 B | 6 | 7.2678 | 7.2794 | 1.0173× | 1.0190× | tie, CI [0.9935, 1.0097] |
+| 6b/3b | 76 B | 6 | 7.2963 | 7.3116 | 1.0213× | 1.0235× | tie, CI [0.9953, 1.0090] |
+| 5b/5b | 84 B | 7 | 7.2637 | 7.2069 | 1.0168× | 1.0088× | B ahead, CI [0.9848, 0.9996] |
+| 6b/4b | 84 B | 6 | 7.2257 | 7.2192 | 1.0114× | 1.0105× | tie, CI [0.9939, 1.0043] |
+| 6b/5b | 92 B | 7 | 7.1531 | 7.1840 | 1.0013× | 1.0056× | tie, CI [0.9992, 1.0095] |
+| 6b/6b | 100 B | 7 | 7.1506 | 7.1668 | 1.0009× | 1.0032× | tie, CI [0.9980, 1.0065] |
+
+fp16 baseline is 7.1439. The CI is a 95% bound on the perplexity ratio B/A;
+"tie" means it straddles 1. `planes` is `DdrLayout.for_quant`'s own count, in
+bold where it fits the four AXI-HP ports the board has.
+
+**The two architectures are indistinguishable.** Eleven of fourteen are ties. A
+is ahead at 2b/2b and 4b/2b, B at 5b/5b, and 5b/5b only barely (upper bound
+0.9996). Three hits in fourteen at the 5% level is more than the 0.7 chance
+would give, but both A wins are the lowest-precision configs and nothing above
+4b keys separates them — which reads as a small real effect where the codes
+are coarsest and nothing at all elsewhere.
+
+**A's lead is bias cancellation, not a better reconstruction.** Holding the
+codes fixed and computing the reference in float64, so only rounding is left
+(64 heads × 512 tokens, 4b keys):
+
+| path | bias | rms | rms after removing the row constant |
+|---|---|---|---|
+| A, rebuild and un-rotate | −0.508 | 3.224 | **1.652** |
+| B, table | −0.488 | 2.149 | **2.092** |
+| B, query rotation rounded to nearest | −0.501 | 1.308 | **1.207** |
+
+in LSB of the Q16 score. On raw error B is 33% better, which is what the shift
+count predicts: B truncates once per cached token, A truncates 129 times. But
+softmax ignores a constant added to a whole score row, and A's truncations are
+all floors against a fixed query, so most of A's error lands exactly there and
+is never seen. B's dominant error is the *query* rotation's floor — one δ that
+then meets a different key on every token, so it does not cancel.
+
+**Rounding the scale to nearest was tried, and dropped.** `rot_fwht` runs once
+per token written and once per query per step, never once per cached token, so
+rounding its `>>3` costs one adder row and no throughput — cheap enough to be
+worth testing. Floor against nearest, everywhere, on three configurations:
+
+| config | A floor → nearest | B floor → nearest |
+|---|---|---|
+| 4b/2b | 8.5463 → 8.5408 (−0.06%) | 8.7209 → **8.5495 (−1.97%)** |
+| 4b/4b | 7.6146 → 7.6025 (−0.16%) | 7.5510 → 7.5716 (+0.27%) |
+| 6b/2b | 7.9608 → 7.9025 (−0.73%) | 7.9541 → 7.9595 (+0.07%) |
+
+The 4b/2b result looked decisive — it closed the A-vs-B gap outright, taking
+the paired test to t = −0.12, CI [0.9845, 1.0178]. It did not replicate. B
+gains at one configuration of three; the other two sit inside the ~1.4% this
+2,048-token corpus resolves. 6b/2b in particular kills the obvious
+explanation, since it is also a 2-bit-value config and B did not move.
+
+So the change is reverted. `Rotation.apply` floors, as it always did, and
+still agrees with `rtl/rot_fwht.sv:62`. Do not re-take it on the strength of
+the 4b/2b number alone.
+
+**The lesson is the one the "how many rounds" note in `ops/rotate.py` already
+records.** The score-level probe was not wrong — rounding really does cut the
+error that survives the softmax, from 2.09 to 1.21 LSB, exactly as predicted.
+Perplexity simply did not follow. A statistic that resembles the objective is
+not the objective, and that has now cost two separate investigations in this
+file.
+
+What survives from the probe is the *explanation*, which is still the best
+account of why A led at 4b/2b in the first place: A's error is a per-row
+constant that softmax discards, B's is a query-side error that does not
+cancel. That explains the direction. It did not predict the magnitude.
+
+**These numbers supersede every earlier perplexity figure in this document and
+in the README.** Two changes landed before this sweep: A was rebuilt to
+un-rotate, and the fp→fixed cast moved to *after* RoPE (`kernel.py`,
+`cast_after_rope`, now the default). The second one moved B by +0.6% to +0.9%
+across all three configs that had a pre-cast number, so it is not noise. It is
+also correct: there is no RoPE anywhere in the RTL — `attn_ingress` receives
+`d` lanes of Q8.16 in 24 bits, already rotated — so RoPE runs on the host in
+float and the cast happens at the stream boundary. The older numbers modelled
+a fixed-point RoPE the hardware does not have.
+
+The 4,096-token board figure above (9.074 → 10.640) predates the cast move and
+has not been re-measured.
+
+### What the bit widths buy, and what the ports cost
+
+A plane is a port, so the plane column is the price. Only three configurations
+fit the four ports: 2b/2b, 3b/2b and 4b/2b. **4b/2b at 1.2207× is the best
+config that runs on the board as built** — the denser grid found nothing better
+under four planes, so this is a ceiling rather than the best of a coarse sample.
+
+The Pareto front, by the thing that actually costs:
+
+| planes | best config | row | B vs fp16 |
+|---|---|---|---|
+| 4 | 4b/2b | 52 B | 1.2207× |
+| 5 | 4b/4b | 68 B | **1.0570×** |
+| 6 | 6b/4b | 84 B | 1.0105× |
+| 7 | 6b/6b | 100 B | 1.0032× |
+
+**One more plane takes the penalty from 22% to 5.7%.** That is a much stronger
+argument for the row-straddle rework in `kv_plane_rd` than the throughput
+estimate was — that one only said 4b/4b would run at 88% of 4b/2b. Twelve
+percent of throughput for three quarters of the remaining accuracy gap.
+
+Two more things the grid says:
+
+**Splitting bits between key and value beats spending them on keys.** At the
+same 68 B row: 5b/3b is 1.0304×, 4b/4b is 1.0570×, 6b/2b is 1.1134×. The
+key-heavy config is worst by eight points. Same story at 60 B, where 4b/3b
+(1.0878×) beats 5b/2b (1.1203×). Values are starved at 2 bits and every bit
+moved to them pays. This is worth saying because 4b/2b, the configuration this
+whole design is built and measured around, sits at the starved end of that
+curve — it is where the port budget put us, not where the accuracy wanted us.
+
+**Odd widths are punished by the layout, not by the model.** 5b/3b beats 4b/4b
+at an identical 68 B row, but needs six planes to 4b/4b's five, because 40 B
+and 24 B code planes do not divide the 16 B beat and have to be split. That is
+a layout artifact costing a real accuracy point, and it would go away with the
+same straddle rework.
+
+**Returns die after about 76 B.** 5b/4b (1.0190×) to 6b/6b (1.0032×) is 24 more
+bytes and one more plane for 1.6%.
 
 ### How to run it
 

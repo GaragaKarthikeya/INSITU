@@ -332,6 +332,11 @@ def check_rotation_rounds_do_not_change_the_dense_output():
     different basis from the one `W_o'` was built for -- perplexity 3532
     against a baseline of 9.42, and only for the settings that did not match
     the default, which is why nothing else caught it.
+
+    `rounds=0` is in the loop for the same reason. It is the ablation control,
+    and a control that silently left the output in a different basis from the
+    rotated arms would not be measuring the rotation -- it would be measuring
+    that bug again, and it would look like an enormous win for rotating.
     """
     rng = np.random.default_rng(0)
     x = rng.standard_normal((6, 128)).astype(np.float32)
@@ -340,7 +345,7 @@ def check_rotation_rounds_do_not_change_the_dense_output():
         (SMALL.kv_out_features, 128), (128, SMALL.q_out_features))]
 
     ref = None
-    for rounds in (1, 2, 3):
+    for rounds in (1, 2, 3, 0):        # 0 = the ablation control, same rule
         quant = QuantConfig(rot_rounds=rounds)
         rot = Rotation.for_quant(quant, SMALL.head_dim)
         w = Weights.prepare(*base, SMALL, rot)
@@ -354,6 +359,45 @@ def check_rotation_rounds_do_not_change_the_dense_output():
             assert rel < 1e-3, (
                 f"rot_rounds={rounds} moved the dense output by {rel:.2e}; the "
                 f"fold and the kernel are using different rotations")
+
+
+def check_zero_rounds_survives_the_compressed_path():
+    """The ablation control must run the real path, not just the dense one.
+
+    `check_rotation_rounds_do_not_change_the_dense_output` turns quantisation
+    off, so it proves the fold agrees with the kernel and nothing else. The
+    arm the study actually runs is compressed, and the way `rounds=0` could
+    still be broken there is a basis mismatch between the codes and `W_o'`,
+    which does not raise -- it returns fluent nonsense.
+
+    Eight bits is the tell. At that width quantisation error is small, so a
+    correctly plumbed identity rotation must track the dense output closely;
+    a wrong basis would put the cosine near zero rather than merely lower it.
+    Deliberately not asserting that rotating beats not rotating -- these are
+    Gaussian random weights, which is the one case the rotation is not needed
+    for. That question is what the perplexity study is for.
+    """
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((16, 128)).astype(np.float32)
+    base = [rng.standard_normal(s).astype(np.float32) * 0.05 for s in (
+        (SMALL.q_out_features, 128), (SMALL.kv_out_features, 128),
+        (SMALL.kv_out_features, 128), (128, SMALL.q_out_features))]
+
+    def run(rounds, bits, compressed):
+        quant = QuantConfig(key_bits=bits, value_bits=bits, rot_rounds=rounds)
+        rot = Rotation.for_quant(quant, SMALL.head_dim)
+        return AttentionKernel(KernelConfig(model=SMALL, quant=quant),
+                               Weights.prepare(*base, SMALL, rot),
+                               capacity=32, compressed=compressed).forward(x)[0]
+
+    dense = run(1, 8, False)
+    for rounds in (0, 1):
+        y = run(rounds, 8, True)
+        cos = float(y.ravel() @ dense.ravel()
+                    / (np.linalg.norm(y) * np.linalg.norm(dense)))
+        assert cos > 0.999, (
+            f"rot_rounds={rounds} at 8 bits gives cosine {cos:.4f} against the "
+            f"dense output; the compressed path is in the wrong basis")
 
 
 def check_every_rotation_is_built_the_same_way():

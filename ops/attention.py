@@ -308,6 +308,26 @@ class CompressedAttention:
         # vector generator -- which is the thing these files exist to avoid.
         self.on_step = None
 
+        # Which of the two architectures to run.
+        #
+        #   "fused"  (B) sum q.centroid across the row, one multiply by the
+        #               norm, one shift. No dense key is ever built. This is
+        #               the design, and the only mode with hardware behind it.
+        #   "dense"  (A) rebuild the dense key in Q(qk_frac), then dot it. The
+        #               modular design a compressed format implies when you
+        #               read it as a specification: a decompressor feeding a
+        #               conventional attention unit.
+        #
+        # The two compute the same inner product and differ only in where the
+        # arithmetic happens, which is the comparison the paper is about.
+        self.score_mode = "fused"
+        self._q_unrot = None
+        # Counts calls into A. `attend_causal_batch` inlines its own scoring
+        # and never reaches `scores()`, so a harness that selects A and then
+        # takes the batched path would silently measure B and report two
+        # identical numbers. The harness asserts on this.
+        self.baseline_calls = 0
+
     # -- scoring -----------------------------------------------------------
 
     def scores(self, q_rot: np.ndarray, kv: CompressedKV,
@@ -322,17 +342,63 @@ class CompressedAttention:
         does.
         """
         centroids = self.z.key.codebook.centroids
-        k_hat = centroids[kv.k_idx.astype(INT)]                 # (T, d) Q(centroid_frac)
-        dot = np.einsum("...j,tj->...t", np.asarray(q_rot, dtype=INT), k_hat)
-        raw = dot * kv.k_norm.astype(INT)                        # Q(qk+centroid+norm)
-        s = rshift(raw, self.score_shift)
+        codes = centroids[kv.k_idx.astype(INT)]                 # (T, d) Q(centroid_frac)
+        norm = kv.k_norm.astype(INT)
+        q = np.asarray(q_rot, dtype=INT)
+
+        if self.score_mode == "fused":
+            # Sum first, one norm multiply, one shift. No dense key is built.
+            dot = np.einsum("...j,tj->...t", q, codes)
+            s = rshift(dot * norm, self.score_shift)
+        else:
+            s = self._scores_baseline(q, codes, norm, kv, trace)
         overflow = self.score_q.overflow_count(s)
         s = self.score_q.clamp(s)
         record(trace, Op.SCORE, "attention", m=self.z.d, k=1,
                n=int(np.prod(np.shape(s))))
         return s, overflow
 
-    def _accumulate_terms(self, p: np.ndarray, kv: CompressedKV) -> np.ndarray:
+    def _scores_baseline(self, q, codes, norm, kv, trace=None):
+        """Architecture A: decompress a cached key all the way back.
+
+        A reads the format as a specification. Its decode rule reconstructs the
+        original vector -- codes to centroids, scaled by the norm, then rotated
+        back out of the rotated basis -- so the attention unit downstream sees
+        ordinary keys and knows nothing about codebooks or rotations. That is
+        the clean interface, and this is what it costs:
+
+            rebuild   d multiplies, and a truncation from Q(threshold_frac)
+                      into Q(qk_frac) on every one of the d channels
+            unrotate  d log d add/sub, ending in another truncation
+            dot       d multiplies against the unrotated query
+
+        all of it per cached token. B pays none of it: it never leaves the
+        rotated basis, and the inverse it would need is folded into `W_o`
+        offline instead.
+
+        Because A lands in the original basis, its output must go through the
+        unfolded `W_o`. The kernel handles that; see `Weights.o_unrotated`.
+        """
+        if self.score_mode != "dense":
+            raise ValueError(
+                f"unknown score_mode {self.score_mode!r}; expected "
+                f"'fused' (B) or 'dense' (A)")
+        if self._q_unrot is None:
+            raise ValueError(
+                "architecture A scores in the original basis and needs the "
+                "pre-rotation query; the kernel supplies it before attending")
+        self.baseline_calls += 1
+
+        fmt = self.fmt
+        k_orig = self.z.rotation.inverse_apply(
+            rshift(codes * norm[:, None], self.z.key.threshold_frac - fmt.qk_frac),
+            trace, "unrotate")
+        qu = np.asarray(self._q_unrot, dtype=INT).reshape(np.shape(q))
+        return rshift(np.einsum("...j,tj->...t", qu, k_orig),
+                      2 * fmt.qk_frac - fmt.acc_frac)
+
+    def _accumulate_terms(self, p: np.ndarray, kv: CompressedKV,
+                          trace: Trace | None = None) -> np.ndarray:
         """`(norm * prob * centroid) >> acc_shift`, one truncation per term.
 
         Each term is truncated before it joins the running sum, not after. That
@@ -340,6 +406,20 @@ class CompressedAttention:
         sum instead would depend on what order the terms arrived in.
         """
         centroids = self.z.value.codebook.centroids
+        if self.score_mode == "dense":
+            # A decompresses the value the same way it decompressed the key:
+            # all the way back to the original basis. The accumulator is then
+            # in that basis and needs no correction afterwards -- which is the
+            # whole point of the interface, and the reason it costs a rotation
+            # per cached token.
+            fmt = self.fmt
+            v_orig = self.z.rotation.inverse_apply(
+                rshift(centroids[kv.v_idx.astype(INT)]
+                       * kv.v_norm.astype(INT)[:, None],
+                       self.z.value.threshold_frac - fmt.qk_frac), trace, "unrotate")
+            return rshift(p[..., None] * v_orig,
+                          fmt.prob_frac + fmt.qk_frac - fmt.acc_frac)
+
         v_hat = centroids[kv.v_idx.astype(INT)]                  # (T, d)
         weight = kv.v_norm.astype(INT)[..., None] * p[..., None]  # (..., T, 1)
         return rshift(weight * v_hat, self.acc_shift)             # (..., T, d)
@@ -358,7 +438,7 @@ class CompressedAttention:
         p = self.exp(m - s)                                       # Q(prob_frac)
         l = p.sum(axis=-1)                                        # Q(prob_frac)
 
-        terms = self._accumulate_terms(p, kv)
+        terms = self._accumulate_terms(p, kv, trace)
         acc = terms.sum(axis=-2)
         stats.acc_overflows = self.acc_q.overflow_count(acc)
         acc = self.acc_q.clamp(acc)
@@ -377,6 +457,13 @@ class CompressedAttention:
         cache gets read exactly once, which is the property that matters when it
         lives off-die.
         """
+        if self.score_mode != "fused":
+            raise ValueError(
+                f"attend_online inlines the fused value path and ignores score_mode; "
+                "architecture A would get its scores in the original basis and "
+                "its values in the rotated one, and the mixed-basis accumulator "
+                "would go through the unfolded W_o as plausible nonsense. Use "
+                "attend_two_pass for A.")
         s, ovf = self.scores(q_rot, kv, trace)
         s = np.atleast_2d(s)                                      # (H, T)
         n_heads, n_tok = s.shape
@@ -456,6 +543,13 @@ class CompressedAttention:
         `2**value_bits` BLAS calls rather than one enormous elementwise
         temporary.
         """
+        if self.score_mode != "fused":
+            raise ValueError(
+                f"attend_causal_batch inlines the fused value path and ignores score_mode; "
+                "architecture A would get its scores in the original basis and "
+                "its values in the rotated one, and the mixed-basis accumulator "
+                "would go through the unfolded W_o as plausible nonsense. Use "
+                "attend_two_pass for A.")
         q = np.asarray(q_rot, dtype=INT)
         if q.ndim == 2:
             q = q[:, None, :]
@@ -595,6 +689,13 @@ class CompressedAttention:
         token `q`. Before that the token is in that query's future and must not
         touch its running maximum.
         """
+        if self.score_mode != "fused":
+            raise ValueError(
+                f"attend_online_batch inlines the fused value path and ignores score_mode; "
+                "architecture A would get its scores in the original basis and "
+                "its values in the rotated one, and the mixed-basis accumulator "
+                "would go through the unfolded W_o as plausible nonsense. Use "
+                "attend_two_pass for A.")
         q = np.asarray(q_rot, dtype=INT)
         if q.ndim == 2:
             q = q[:, None, :]

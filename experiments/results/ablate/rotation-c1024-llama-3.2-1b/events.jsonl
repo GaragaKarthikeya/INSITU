@@ -1,0 +1,15 @@
+{"t": 1788937707.42196, "elapsed_h": 0.0016191989845699734, "kind": "start", "group": "rotation", "context": 1024, "windows": 12, "variants": ["baseline", "4b2b-rot1-gauss", "4b2b-rot0-gauss", "4b2b-rot0-unif", "4b2b-rot1-unif", "4b4b-rot1-gauss", "4b4b-rot0-gauss", "4b4b-rot0-unif", "4b4b-rot1-unif", "8b8b-rot1-gauss", "8b8b-rot0-gauss", "8b8b-rot0-unif", "8b8b-rot1-unif"]}
+{"t": 1788937750.3846107, "elapsed_h": 0.013553268512090048, "kind": "variant", "name": "baseline", "ppl": 10.848280408357741, "seconds": 43.0}
+{"t": 1788937995.742442, "elapsed_h": 0.08170822170045641, "kind": "variant", "name": "4b2b-rot1-gauss", "ppl": 12.823101026653276, "seconds": 241.4}
+{"t": 1788938242.211678, "elapsed_h": 0.15017189833852979, "kind": "variant", "name": "4b2b-rot0-gauss", "ppl": 59.92094329874542, "seconds": 243.1}
+{"t": 1788938471.4435163, "elapsed_h": 0.21384740895695156, "kind": "variant", "name": "4b2b-rot0-unif", "ppl": 73.87772469584206, "seconds": 225.9}
+{"t": 1788938689.4566324, "elapsed_h": 0.2744066078795327, "kind": "variant", "name": "4b2b-rot1-unif", "ppl": 12.977076052095475, "seconds": 215.0}
+{"t": 1788939047.0235984, "elapsed_h": 0.3737307651175393, "kind": "variant", "name": "4b4b-rot1-gauss", "ppl": 11.536206483866396, "seconds": 354.5}
+{"t": 1788939453.239074, "elapsed_h": 0.48656839728355405, "kind": "variant", "name": "4b4b-rot0-gauss", "ppl": 20.523737569621073, "seconds": 403.1}
+{"t": 1788939839.1152546, "elapsed_h": 0.5937562252415551, "kind": "variant", "name": "4b4b-rot0-unif", "ppl": 26.150717211342474, "seconds": 382.7}
+{"t": 1788940249.5406938, "elapsed_h": 0.7077632915973663, "kind": "variant", "name": "4b4b-rot1-unif", "ppl": 11.6389447346091, "seconds": 407.3}
+{"t": 1788944234.2486835, "elapsed_h": 1.8146266220675575, "kind": "variant", "name": "8b8b-rot1-gauss", "ppl": 10.861460242123947, "seconds": 3981.5}
+{"t": 1788947387.7275488, "elapsed_h": 2.690592973563406, "kind": "variant", "name": "8b8b-rot0-gauss", "ppl": 12.313159956208864, "seconds": 3150.4}
+{"t": 1788950342.628551, "elapsed_h": 3.511398807499144, "kind": "variant", "name": "8b8b-rot0-unif", "ppl": 12.222117391701703, "seconds": 2951.6}
+{"t": 1788954112.4141197, "elapsed_h": 4.558561465475294, "kind": "variant", "name": "8b8b-rot1-unif", "ppl": 10.857547129911323, "seconds": 3766.6}
+{"t": 1788954112.4155507, "elapsed_h": 4.558561862972048, "kind": "done"}

@@ -148,6 +148,20 @@ class AttentionKernel:
         # `forward`'s numbers are unchanged when it is.
         self.ingress_only = False
 
+        # Where the float -> fixed cast sits relative to RoPE. See `forward`.
+        #
+        # True puts it at the seam, which is where the boundary actually is:
+        # the host holds the model in float, so RoPE costs it nothing extra,
+        # and the fixed-point world starts at the wire. Measured against the
+        # other ordering with quantisation off, the two agree to 7.7e-5 in
+        # perplexity -- Q8.16 has enough fractional bits that two multiplies
+        # and an add per channel pair lose nothing worth having.
+        #
+        # False keeps RoPE inside the fixed-point datapath. The board's
+        # recorded results were taken that way, so anything compared against
+        # them must set it.
+        self.cast_after_rope = True
+
     def _tap(self, name: str, value) -> None:
         if self.on_stage is not None:
             self.on_stage(name, value)
@@ -204,14 +218,35 @@ class AttentionKernel:
         # scale of its input, so folding it in earlier would be erased.
         q = q * self.attn_scale
 
-        # 2. the one float -> fixed boundary -------------------------------
-        qi = to_fixed(q, self.qk_q, conv)
-        ki = to_fixed(k, self.qk_q, conv)
-        vi = to_fixed(v, self.qk_q, conv)
-
-        # 3. RoPE, before the rotation and before the cache -----------------
-        qi = self.rope.apply(qi, positions[:, None], self.cfg.fmt.qk_frac, trace, "rope")
-        ki = self.rope.apply(ki, positions[:, None], self.cfg.fmt.qk_frac, trace, "rope")
+        # 2 and 3. the float -> fixed boundary, and RoPE --------------------
+        #
+        # Their ORDER is a design decision, not an implementation detail.
+        #
+        # By default the cast comes first and RoPE runs in fixed point. That
+        # follows the package's rule of one cast, so everything downstream of
+        # it is integer -- but it makes RoPE part of the fixed-point datapath
+        # and charges it a truncation it would not otherwise pay.
+        #
+        # `cast_after_rope` puts the cast at the seam instead, where the real
+        # boundary is: RoPE runs in float on the host, and the fixed-point
+        # world begins at the wire. That is what a deployment would do, since
+        # the host already has the model in float.
+        #
+        # V is not rotated by RoPE either way; it carries no position.
+        if self.cast_after_rope:
+            q = self.rope.apply_float(q, positions[:, None], trace, "rope")
+            k = self.rope.apply_float(k, positions[:, None], trace, "rope")
+            qi = to_fixed(q, self.qk_q, conv)
+            ki = to_fixed(k, self.qk_q, conv)
+            vi = to_fixed(v, self.qk_q, conv)
+        else:
+            qi = to_fixed(q, self.qk_q, conv)
+            ki = to_fixed(k, self.qk_q, conv)
+            vi = to_fixed(v, self.qk_q, conv)
+            qi = self.rope.apply(qi, positions[:, None], self.cfg.fmt.qk_frac,
+                                 trace, "rope")
+            ki = self.rope.apply(ki, positions[:, None], self.cfg.fmt.qk_frac,
+                                 trace, "rope")
         # V carries no position. RoPE on the value path would have to be undone
         # by the output projection, and there is nothing there to undo it.
 
@@ -222,10 +257,23 @@ class AttentionKernel:
         self._tap("wire.k", ki)
         self._tap("wire.v", vi)
 
-        # 4. rotate all three ----------------------------------------------
-        qr = self.rotation.apply(qi, trace, "rotate")
+        # 4. rotate ----------------------------------------------------------
+        # K and V are always rotated: it is what makes a scalar codebook a good
+        # quantizer, so it belongs to the write path in both architectures.
+        #
+        # The QUERY is a different matter. B scores in the rotated domain and
+        # needs it. A reconstructs cached keys back into the original basis and
+        # scores there, so for A the rotated query is computed and discarded --
+        # and charging the trace for it would overstate A's cost, which is the
+        # one thing a comparison must not do. So A does not rotate the query,
+        # and pays instead on the read side: an inverse rotation per cached
+        # token, which is the trade this comparison exists to measure.
         kr = self.rotation.apply(ki, trace, "rotate")
         vr = self.rotation.apply(vi, trace, "rotate")
+        if self.compressed and self.attn.score_mode == "dense":
+            qr = qi
+        else:
+            qr = self.rotation.apply(qi, trace, "rotate")
         self._tap("rot.q", qr)
         self._tap("rot.k", kr)
         self._tap("rot.v", vr)
@@ -274,6 +322,7 @@ class AttentionKernel:
             for kvh in range(m.num_kv_heads):
                 heads = slice(kvh * m.kv_groups, (kvh + 1) * m.kv_groups)
                 kv = self.cache.view(kvh, trace, n_reads=n)
+                self._supply_unrotated_query(qi, heads)
                 if self.softmax == "online":
                     y, st = self.attn.attend_online_batch(
                         qr[:, heads], kv, base=base, trace=trace)
@@ -287,6 +336,7 @@ class AttentionKernel:
                 ctx = base + t + 1      # causal: this token sees itself and before
                 for kvh in range(m.num_kv_heads):
                     heads = slice(kvh * m.kv_groups, (kvh + 1) * m.kv_groups)
+                    self._supply_unrotated_query(qi[t], heads)
                     y, st = self._attend_one(qr[t, heads], kvh, ctx, trace)
                     out[t, heads] = y
                     report.attention.merge(st)
@@ -299,9 +349,35 @@ class AttentionKernel:
         merged = merge_heads(out)
         self._tap("out", merged)
         acc = self.qk_q.to_float(merged)
-        y = project(w.o, acc, unit="o_array", bias=w.o_bias,
+        y = project(self._output_proj(w), acc, unit="o_array", bias=w.o_bias,
                     chunk=self._chunk("o"), trace=trace)
         return y, report
+
+    def _supply_unrotated_query(self, qi, heads) -> None:
+        """Hand the attention the pre-rotation query. Architecture A only.
+
+        A reconstructs cached keys into the original basis, so it has to score
+        them against a query that was never rotated. B works entirely in the
+        rotated domain and never reads this.
+        """
+        if self.compressed and self.attn.score_mode == "dense":
+            self.attn._q_unrot = qi[..., heads, :]
+
+    def _output_proj(self, w):
+        """Which `W_o` the accumulator needs, which depends on its basis.
+
+        B leaves the accumulator rotated and relies on `R^-1` having been
+        folded into `W_o` offline. A has already rotated back, so it needs the
+        original matrix. Getting this wrong does not raise -- it produces a
+        model that runs and talks nonsense.
+        """
+        if self.compressed and self.attn.score_mode == "dense":
+            if w.o_unrotated is None:
+                raise ValueError(
+                    "architecture A needs the unfolded W_o; these weights only "
+                    "carry the folded one")
+            return w.o_unrotated
+        return w.o
 
     def _attend_one(self, q_rot, kv_head: int, ctx: int, trace: Trace | None):
         if self.compressed:

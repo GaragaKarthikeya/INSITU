@@ -1,0 +1,29 @@
+{
+ "pid": 3877287,
+ "started_at": 1788937578.6111383,
+ "phase": "running",
+ "group": "rotation",
+ "context": 1024,
+ "windows": 12,
+ "total_variants": 13,
+ "variant": "4b2b-rot1-gauss",
+ "config": "4b2b-rot1-gauss",
+ "variant_i": 2,
+ "window": 1,
+ "window_target": 12,
+ "done_windows": 12,
+ "total_windows": 156,
+ "activity": "forward",
+ "layer": 16,
+ "layers_total": 22,
+ "ppl": {
+  "baseline": 9.4232
+ },
+ "eta_h": 0.16,
+ "updated_at": 1788937650.7008657,
+ "elapsed_h": 0.020024924278259276,
+ "rss_gb": 6.65,
+ "rss_peak_gb": 6.65,
+ "mem_available_gb": 44.98,
+ "alarms": []
+}
