@@ -1,0 +1,9 @@
+loading /home/digital3/kernel/models/Llama-3.2-1B on cpu (fp32)
+Loading weights:   0%|          | 0/146 [00:00<?, ?it/s]Loading weights:  26%|██▌       | 38/146 [00:00<00:00, 376.56it/s]Loading weights:  82%|████████▏ | 120/146 [00:00<00:00, 615.45it/s]Loading weights: 100%|██████████| 146/146 [00:00<00:00, 624.30it/s]
+2048 tokens of WikiText-2, 16 layers, 3b keys / 4b values
+
+    path                                  perplexity   vs baseline    time
+    baseline, unmodified model                7.1439             —        
+    A   rebuild the dense key, then dot       9.6539       1.3513x    526s
+
+  one architecture only; no paired comparison to report.

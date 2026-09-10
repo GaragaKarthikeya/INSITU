@@ -1,0 +1,21 @@
+=== A k2v3 15:38:27 ===
+ A rebuild the dense key, then dot 82.5741 11.5586x 528s
+=== A k2v4 15:47:29 ===
+ A rebuild the dense key, then dot 66.1892 9.2651x 525s
+=== A k2v5 15:56:29 ===
+ A rebuild the dense key, then dot 64.6602 9.0511x 542s
+=== A k2v6 16:05:52 ===
+ A rebuild the dense key, then dot 77.2041 10.8070x 532s
+=== A k3v4 16:15:00 ===
+ A rebuild the dense key, then dot 9.6539 1.3513x 526s
+=== A k3v5 16:24:07 ===
+ A rebuild the dense key, then dot 9.5958 1.3432x 518s
+=== A k3v6 16:33:00 ===
+ A rebuild the dense key, then dot 9.6164 1.3461x 530s
+=== A k4v5 16:42:05 ===
+ A rebuild the dense key, then dot 7.5806 1.0611x 543s
+=== A k4v6 16:51:22 ===
+ A rebuild the dense key, then dot 7.5225 1.0530x 526s
+=== A k5v6 17:00:22 ===
+ A rebuild the dense key, then dot 7.2250 1.0114x 545s
+=== A sweep done 17:09:43 ===

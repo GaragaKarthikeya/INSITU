@@ -50,6 +50,15 @@ def main(argv=None) -> int:
     ap.add_argument("--key-bits", type=int, default=4)
     ap.add_argument("--value-bits", type=int, default=2)
     ap.add_argument("--device", default="cpu")
+    ap.add_argument("--save", default=None,
+                    help="directory to write per-token NLL arrays to, as "
+                         "<mode>_k<K>v<V>.npy. Without this the per-token "
+                         "detail is discarded when the process exits, and only "
+                         "the aggregate survives -- which is enough to report a "
+                         "perplexity but not enough to pair two runs against "
+                         "each other afterwards.")
+    ap.add_argument("--modes", default="dense,fused",
+                    help="which architectures to run: dense (A), fused (B), or both")
     a = ap.parse_args(argv)
 
     import torch
@@ -76,7 +85,11 @@ def main(argv=None) -> int:
     print(f"    {'baseline, unmodified model':<36}{base:>12.4f}{'—':>14}{'':>8}")
 
     quant = QuantConfig(key_bits=a.key_bits, value_bits=a.value_bits)
-    for mode, label in MODES:
+    wanted = [m.strip() for m in a.modes.split(",") if m.strip()]
+    for m in wanted:
+        if m not in dict(MODES):
+            raise SystemExit(f"unknown mode {m!r}; expected dense and/or fused")
+    for mode, label in [(m, l) for m, l in MODES if m in wanted]:
         t0 = time.time()
         original = graft(model, layers=list(range(n_layers)),
                          capacity=int(ids.shape[0]) + 1, quant=quant)
@@ -88,12 +101,22 @@ def main(argv=None) -> int:
             # prefill path never reaches `scores()` and would run the fused
             # datapath whatever mode is selected. The token loop is the path
             # that honours it.
-            k.force_token_loop = True
+            #
+            # B does not need it. The batched path is bit-identical to the loop
+            # for the fused datapath -- that is pinned by
+            # test_attention.py::check_causal_batch_is_bit_identical -- so when
+            # only B is asked for, the loop buys nothing and costs an order of
+            # magnitude. A still gets the loop, because for A the two paths are
+            # not the same arithmetic.
+            k.force_token_loop = (mode == "dense")
         try:
             per_token[mode] = np.array(nll(model, ids), dtype=np.float64)
             ppl = math.exp(per_token[mode].mean())
         finally:
             ungraft(model, original)
+        if a.save:
+            d = pathlib.Path(a.save); d.mkdir(parents=True, exist_ok=True)
+            np.save(d / f"{mode}_k{a.key_bits}v{a.value_bits}.npy", per_token[mode])
         used = sum(k.attn.baseline_calls for k in kernels)
         if mode != "fused" and used == 0:
             raise SystemExit(
@@ -101,7 +124,10 @@ def main(argv=None) -> int:
                 f"came from the fused path. Refusing to report it.")
         print(f"    {label:<36}{ppl:>12.4f}{ppl / base:>13.4f}x{time.time()-t0:>7.0f}s")
 
-    paired_report(per_token["dense"], per_token["fused"])
+    if len(per_token) == 2:
+        paired_report(per_token["dense"], per_token["fused"])
+    else:
+        print("\n  one architecture only; no paired comparison to report.")
     return 0
 
 

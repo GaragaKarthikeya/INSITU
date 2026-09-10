@@ -2227,24 +2227,38 @@ truncation to rebuild, `d log d` add/sub and another truncation to un-rotate,
 token. `R^-1` is folded into `W_o` offline instead of being applied to every
 token. The boundary between the two blocks is gone.
 
-WikiText-2, 2,048 tokens, Llama 3.2 1B, all 16 layers, paired over the same
-2,047 positions. Both paths read the *same* codes and the same quantised norm,
-so every difference below is arithmetic, not compression.
+WikiText-2, 2,048 tokens, Llama 3.2 1B, all 16 layers. The full 5x5 grid of
+key and value widths from 2b to 6b, twenty-five configs. Where a CI is given
+the two paths were differenced over the same 2,047 positions; see "On 'not
+paired'" below for the eleven that were not. Both paths read the *same* codes
+and the same quantised norm, so every difference below is arithmetic, not
+compression.
 
 | config | row | planes | A | B | A vs fp16 | B vs fp16 | paired result |
 |---|---|---|---|---|---|---|---|
-| 2b/2b | 36 B | **3** | 87.9170 | 94.5112 | 12.3065× | 13.2296× | A ahead, CI [1.0151, 1.1384] |
+| 2b/2b | 36 B | **3** | 87.9170 | 94.5112 | 12.3066× | 13.2296× | A ahead, CI [1.0151, 1.1384] |
+| 2b/3b | 44 B | **4** | 82.5741 | 74.2553 | 11.5587× | 10.3942× | B ahead, CI [0.8450, 0.9571] |
 | 3b/2b | 44 B | **4** | 11.5994 | 11.3830 | 1.6237× | 1.5934× | tie, CI [0.9549, 1.0086] |
+| 2b/4b | 52 B | **4** | 66.1892 | 69.8478 | 9.2651× | 9.7773× | tie, CI [0.9948, 1.1194] |
+| 3b/3b | 52 B | 5 | 10.0402 | 10.1547 | 1.4054× | 1.4215× | tie, CI [0.9847, 1.0388] |
 | 4b/2b | 52 B | **4** | 8.5463 | 8.7209 | 1.1963× | 1.2207× | A ahead, CI [1.0042, 1.0369] |
-| 4b/3b | 60 B | 5 | 7.6965 | 7.7710 | 1.0773× | 1.0878× | tie, CI [0.9946, 1.0250] |
+| 2b/5b | 60 B | 5 | 64.6602 | 66.0630 | 9.0511× | 9.2475× | tie, CI [0.9621, 1.0850] |
+| 3b/4b | 60 B | 5 | 9.6539 | 9.8474 | 1.3513× | 1.3784× | tie, CI [0.9942, 1.0465] |
+| 4b/3b | 60 B | 5 | 7.6965 | 7.7710 | 1.0774× | 1.0878× | tie, CI [0.9946, 1.0250] |
 | 5b/2b | 60 B | 5 | 7.9426 | 8.0035 | 1.1118× | 1.1203× | tie, CI [0.9954, 1.0201] |
+| 2b/6b | 68 B | 5 | 77.2041 | 71.3001 | 10.8070× | 9.9806× | B ahead, CI [0.8699, 0.9805] |
+| 3b/5b | 68 B | 6 | 9.5958 | 9.5943 | 1.3432× | 1.3430× | tie, CI [0.9729, 1.0275] |
 | 4b/4b | 68 B | 5 | 7.6146 | 7.5510 | 1.0659× | 1.0570× | tie, CI [0.9787, 1.0048] |
 | 5b/3b | 68 B | 6 | 7.3741 | 7.3614 | 1.0322× | 1.0304× | tie, CI [0.9888, 1.0079] |
 | 6b/2b | 68 B | 5 | 7.9608 | 7.9541 | 1.1143× | 1.1134× | tie, CI [0.9896, 1.0089] |
+| 3b/6b | 76 B | 6 | 9.6164 | 9.5107 | 1.3461× | 1.3313× | tie, CI [0.9632, 1.0155] |
+| 4b/5b | 76 B | 6 | 7.5806 | 7.5603 | 1.0611× | 1.0583× | tie, CI [0.9840, 1.0109] |
 | 5b/4b | 76 B | 6 | 7.2678 | 7.2794 | 1.0173× | 1.0190× | tie, CI [0.9935, 1.0097] |
 | 6b/3b | 76 B | 6 | 7.2963 | 7.3116 | 1.0213× | 1.0235× | tie, CI [0.9953, 1.0090] |
+| 4b/6b | 84 B | 6 | 7.5225 | 7.6375 | 1.0530× | 1.0691× | A ahead, CI [1.0008, 1.0300] |
 | 5b/5b | 84 B | 7 | 7.2637 | 7.2069 | 1.0168× | 1.0088× | B ahead, CI [0.9848, 0.9996] |
-| 6b/4b | 84 B | 6 | 7.2257 | 7.2192 | 1.0114× | 1.0105× | tie, CI [0.9939, 1.0043] |
+| 6b/4b | 84 B | 6 | 7.2257 | 7.2192 | 1.0115× | 1.0105× | tie, CI [0.9939, 1.0043] |
+| 5b/6b | 92 B | 7 | 7.2250 | 7.2572 | 1.0114× | 1.0159× | tie, CI [0.9971, 1.0119] |
 | 6b/5b | 92 B | 7 | 7.1531 | 7.1840 | 1.0013× | 1.0056× | tie, CI [0.9992, 1.0095] |
 | 6b/6b | 100 B | 7 | 7.1506 | 7.1668 | 1.0009× | 1.0032× | tie, CI [0.9980, 1.0065] |
 
@@ -2252,12 +2266,47 @@ fp16 baseline is 7.1439. The CI is a 95% bound on the perplexity ratio B/A;
 "tie" means it straddles 1. `planes` is `DdrLayout.for_quant`'s own count, in
 bold where it fits the four AXI-HP ports the board has.
 
-**The two architectures are indistinguishable.** Eleven of fourteen are ties. A
-is ahead at 2b/2b and 4b/2b, B at 5b/5b, and 5b/5b only barely (upper bound
-0.9996). Three hits in fourteen at the 5% level is more than the 0.7 chance
-would give, but both A wins are the lowest-precision configs and nothing above
-4b keys separates them — which reads as a small real effect where the codes
-are coarsest and nothing at all elsewhere.
+**All twenty-five are paired.** Every row differences the two paths over the
+same 2,047 positions. The eleven `v > k` configs were first run one
+architecture at a time, which discards the per-token detail and leaves only an
+aggregate — enough to report a perplexity, not enough to test a difference —
+and were re-run together to get the intervals above. The two passes agreed to
+four decimal places on every one of the twenty-two numbers, hours apart, which
+is the check that the protocol is deterministic across processes.
+`ppl_paths.py --save` now writes the per-token arrays, so a future comparison
+never has to re-run an architecture that has already been measured.
+
+**The two architectures are indistinguishable where it matters.** Nineteen of
+twenty-five are ties. The six that are not: A ahead at 2b/2b, 4b/2b and 4b/6b,
+B ahead at 2b/3b, 2b/6b and 5b/5b. Three of those six are marginal — 5b/5b
+(upper bound 0.9996), 4b/6b (lower bound 1.0008) and 4b/2b (1.0042) sit within
+a hair of 1, which is what six draws at the 5% level look like when the true
+effect is zero.
+
+**The real separation is at 2b keys, and it is not noise.** Three of the five
+2b-key configs exclude zero, and they do not share a sign: A ahead at 2 value
+bits, B ahead at 3 and at 6. Noise produces ties, not significant results in
+opposite directions, so this is a genuine interaction — at 2b keys the two
+paths make *different* errors, and which lands better depends on value width.
+Both paths are also non-monotonic in value width there, each getting worse from
+5b to 6b values. None of it is usable: the whole row runs 9x to 13x the fp16
+baseline.
+
+Away from that row the picture is flat. The largest |A − B| by key width:
+
+| key bits | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|
+| max gap | 10.1% | 2.0% | 2.0% | 0.8% | 0.4% |
+
+At 6b keys the five configs agree to within 0.43% and every one is a tie.
+
+This revises the earlier reading of the fourteen-config table. With only k >= v
+measured, A's wins at 2b/2b and 4b/2b looked like a small real effect where the
+codes are coarsest. The `v > k` half shows the 2b-key row is not a one-way
+effect at all but a sign-alternating one, so 2b/2b is one side of an
+interaction rather than evidence that A reconstructs better. 4b/2b still stands
+on its own interval, and it is the only significant result at a bit-width
+anyone would ship.
 
 **A's lead is bias cancellation, not a better reconstruction.** Holding the
 codes fixed and computing the reference in float64, so only rounding is left
@@ -2345,13 +2394,29 @@ percent of throughput for three quarters of the remaining accuracy gap.
 
 Two more things the grid says:
 
-**Splitting bits between key and value beats spending them on keys.** At the
-same 68 B row: 5b/3b is 1.0304×, 4b/4b is 1.0570×, 6b/2b is 1.1134×. The
-key-heavy config is worst by eight points. Same story at 60 B, where 4b/3b
-(1.0878×) beats 5b/2b (1.1203×). Values are starved at 2 bits and every bit
-moved to them pays. This is worth saying because 4b/2b, the configuration this
-whole design is built and measured around, sits at the starved end of that
-curve — it is where the port budget put us, not where the accuracy wanted us.
+**The best split is interior, and it is never value-heavy.** The full 5x5 grid
+puts every partition of a byte budget side by side. At 68 B: 2b/6b is 9.9806×,
+3b/5b 1.3430×, 4b/4b 1.0570×, **5b/3b 1.0304×**, 6b/2b 1.1134×. The optimum
+sits one or two bits to the key side of even, and falls off hard in both
+directions. The best split at every budget:
+
+| row | 44 B | 52 B | 60 B | 68 B | 76 B | 84 B | 92 B | 100 B |
+|---|---|---|---|---|---|---|---|---|
+| best | 3b/2b | 4b/2b | 4b/3b | 5b/3b | 5b/4b | 5b/5b | 6b/5b | 6b/6b |
+
+Keys are never given fewer bits than values, at any budget. Below 4b keys the
+model is not usable at any value width — the whole 2b-key row runs 9x to 13x
+the fp16 baseline, and 3b keys sit at 1.33x to 1.59x — so the key plane sets a
+floor that no amount of value precision lifts.
+
+This corrects what the fourteen-config table appeared to say. With only k >= v
+measured, the visible trend was that moving bits from keys to values always
+paid, and 4b/2b looked like it sat at the starved end of a curve that kept
+improving. It does not keep improving: 4b/4b to 3b/5b to 2b/6b at a constant
+68 B goes 1.0570× to 1.3430× to 9.9806×. 4b/2b is one bit of value short of the
+60 B optimum and two short of the 68 B one, which is a much smaller indictment
+than "the starved end". The port budget cost us about 3.4 points at 52 B, not a
+curve's worth.
 
 **Odd widths are punished by the layout, not by the model.** 5b/3b beats 4b/4b
 at an identical 68 B row, but needs six planes to 4b/4b's five, because 40 B

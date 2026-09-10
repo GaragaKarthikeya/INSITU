@@ -1,0 +1,18 @@
+loading /home/digital3/kernel/models/Llama-3.2-1B on cpu (fp32)
+Loading weights:   0%|          | 0/146 [00:00<?, ?it/s]Loading weights:   1%|          | 1/146 [00:00<00:15,  9.43it/s]Loading weights:  81%|████████  | 118/146 [00:00<00:00, 672.30it/s]Loading weights: 100%|██████████| 146/146 [00:00<00:00, 619.79it/s]
+2048 tokens of WikiText-2, 16 layers, 2b keys / 4b values
+
+    path                                  perplexity   vs baseline    time
+    baseline, unmodified model                7.1439             —        
+    A   rebuild the dense key, then dot      66.1892       9.2651x    524s
+    B   no rebuild, table form               69.8478       9.7772x    105s
+
+  paired over 2,047 tokens, d = NLL(A) - NLL(B), positive favours B
+    mean d          -0.053801  (se 0.030106)
+    t               -1.79
+    95% interval    [-0.112809, +0.005207]  includes zero
+    B better on     1,035 of 2,047 tokens that differ   (sign-test z +0.5)
+    perplexity ratio B/A in [0.99481, 1.11942]
+
+  Both read the same codes and the same quantised norm, so any
+  difference here is the arithmetic and not the compression.
