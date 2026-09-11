@@ -61,59 +61,57 @@ def relation(kb: int, vb: int) -> str:
     return "k = v"
 
 
+OUTLIER_PPL = 20  # 2b-key configs (66-94.5) are a different regime; drop them
+
+
+def spread_labels(ys: list[float], min_gap: float) -> list[float]:
+    """Push a sorted-ascending list of y-values apart so consecutive ones are
+    at least min_gap apart, anchored at the lowest value."""
+    ys = list(ys)
+    for i in range(1, len(ys)):
+        if ys[i] - ys[i - 1] < min_gap:
+            ys[i] = ys[i - 1] + min_gap
+    return ys
+
+
 def plot(out: Path) -> None:
     points = [
         {"label": f"({kb},{vb})", "sum": kb + vb, "ppl": b, "rel": relation(kb, vb)}
         for kb, vb, _row, _a, b in GRID
+        if b <= OUTLIER_PPL
     ]
 
     color = {"k > v": "tab:blue", "k < v": "tab:red", "k = v": "tab:green"}
     marker = {"k > v": "o", "k < v": "^", "k = v": "s"}
 
-    fig, ax = plt.subplots(figsize=(8, 6))
-
-    ylo, yhi = 5, 20
-    in_range = [p for p in points if p["ppl"] <= yhi]
-    off_scale = [p for p in points if p["ppl"] > yhi]
+    fig, ax = plt.subplots(figsize=(9, 9))
 
     for rel in ("k > v", "k < v", "k = v"):
-        pts = [p for p in in_range if p["rel"] == rel]
+        pts = [p for p in points if p["rel"] == rel]
         ax.scatter([p["sum"] for p in pts], [p["ppl"] for p in pts],
-                   color=color[rel], marker=marker[rel], s=45, label=rel, zorder=3)
+                   color=color[rel], marker=marker[rel], s=50, label=rel, zorder=3)
 
-    # Off-scale points (ppl > 20, all 2b-key configs) get a triangle pinned to
-    # the top edge instead of stretching the axis out to 94.5 and crushing
-    # everything else -- the label carries the real value.
-    for p in off_scale:
-        ax.scatter([p["sum"]], [yhi], marker="^", color=color[p["rel"]],
-                   s=55, zorder=4, clip_on=False)
-
-    # Labels within the same x-column collide when their ppl values are close,
-    # so stagger each column's labels through a small set of offsets instead
-    # of one fixed corner -- and draw a thin leader line to the point, since a
-    # displaced label is otherwise ambiguous about which marker it names.
-    offsets = [(14, 0), (14, 14), (14, -14), (-14, 14), (-14, -14), (-14, 0)]
+    # Give each label its own vertical slot, spread far enough apart to read
+    # without a leader line, instead of sitting exactly on a crowded marker.
+    lo = min(p["ppl"] for p in points)
+    hi = max(p["ppl"] for p in points)
+    min_gap = (hi - lo) * 0.05
     sums = sorted({p["sum"] for p in points})
     for s in sums:
         col = sorted((p for p in points if p["sum"] == s), key=lambda p: p["ppl"])
-        for i, p in enumerate(col):
-            dx, dy = offsets[i % len(offsets)]
-            ha = "left" if dx > 0 else "right"
-            y = min(p["ppl"], yhi)
-            text = p["label"] if p["ppl"] <= yhi else f"{p['label']} {p['ppl']:.0f}"
-            ax.annotate(text, (p["sum"], y),
-                        textcoords="offset points", xytext=(dx, dy),
-                        fontsize=7, ha=ha, va="center",
-                        arrowprops=dict(arrowstyle="-", color="gray",
-                                         lw=0.5, shrinkA=0, shrinkB=3))
+        label_ys = spread_labels([p["ppl"] for p in col], min_gap)
+        for p, ly in zip(col, label_ys):
+            ax.annotate(p["label"], xy=(p["sum"], p["ppl"]),
+                        xytext=(p["sum"] + 0.12, ly), fontsize=8, ha="left",
+                        va="center")
 
-    ax.set_ylim(ylo, yhi)
     ax.set_xlabel("key_bits + value_bits")
-    ax.set_ylabel(f"Perplexity, path B, {ylo}-{yhi} (WikiText-2, 2,048 tok, 16 layers)")
+    ax.set_ylabel("Perplexity, path B (WikiText-2, 2,048 tok, 16 layers)")
     ax.set_title("Llama 3.2 1B: more key bits than value bits wins at every fixed budget\n"
-                 "(triangles at top edge: off-scale, actual value labeled)")
+                 f"(2b-key configs, ppl > {OUTLIER_PPL}, omitted)")
     ax.set_xticks(sums)
-    ax.set_xlim(min(sums) - 0.5, max(sums) + 0.5)
+    ax.set_xlim(min(sums) - 0.5, max(sums) + 1.3)
+    ax.set_ylim(lo - min_gap, hi + min_gap * 6)
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
