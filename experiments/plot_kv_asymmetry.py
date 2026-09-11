@@ -79,15 +79,20 @@ def plot(out: Path) -> None:
 
     # Labels within the same x-column collide when their ppl values are close,
     # so stagger each column's labels through a small set of offsets instead
-    # of one fixed corner.
-    offsets = [(7, 6), (7, -12), (-38, 6), (-38, -12), (7, 20), (-38, 20)]
+    # of one fixed corner -- and draw a thin leader line to the point, since a
+    # displaced label is otherwise ambiguous about which marker it names.
+    offsets = [(14, 0), (14, 14), (14, -14), (-14, 14), (-14, -14), (-14, 0)]
     sums = sorted({p["sum"] for p in points})
     for s in sums:
         col = sorted((p for p in points if p["sum"] == s), key=lambda p: p["ppl"])
         for i, p in enumerate(col):
             dx, dy = offsets[i % len(offsets)]
+            ha = "left" if dx > 0 else "right"
             ax.annotate(p["label"], (p["sum"], p["ppl"]),
-                        textcoords="offset points", xytext=(dx, dy), fontsize=7)
+                        textcoords="offset points", xytext=(dx, dy),
+                        fontsize=7, ha=ha, va="center",
+                        arrowprops=dict(arrowstyle="-", color="gray",
+                                         lw=0.5, shrinkA=0, shrinkB=3))
 
     ax.set_xlabel("key_bits + value_bits")
     ax.set_ylabel("Perplexity, path B (WikiText-2, 2,048 tok, 16 layers)")
