@@ -2335,6 +2335,36 @@ interaction above being the only place `v > k` pays off at all, and it does not
 pay off there either (the whole row is 9x-13x fp16).
 `kernel/experiments/plot_pareto_llama32.py` reproduces this table and plots it.
 
+**More key bits than value bits wins at every fixed budget that matters.**
+Grouping the 25 configs by `key_bits + value_bits` instead of by row size
+makes the same point a different way: at every sum from 7 through 12, the
+split with `key_bits > value_bits` has the lowest path-B perplexity in its
+group, and every `value_bits > key_bits` split is worse than *both* the
+`k > v` and the `k = v` split at that sum (sum = 5 and 6 have no `k = v`
+split to compare against; the 2b-key row, sum = 4, is a different regime
+entirely — 9x-13x fp16 — and is left out below):
+
+| sum | k > v (best) | k = v | k < v (best) |
+|---|---|---|---|
+| 5 | (3,2) 11.3830 | — | (2,3) 74.2553 |
+| 6 | (4,2) 8.7209 | (3,3) 10.1547 | (2,4) 69.8478 |
+| 7 | (4,3) 7.7710 | — | (3,4) 9.8474 |
+| 8 | (5,3) 7.3614 | (4,4) 7.5510 | (3,5) 9.5943 |
+| 9 | (5,4) 7.2794 | — | (4,5) 7.5603 |
+| 10 | (6,4) 7.2192 | (5,5) 7.2069 | (4,6) 7.6375 |
+| 11 | (6,5) 7.1840 | — | (5,6) 7.2572 |
+| 12 | — | (6,6) 7.1668 | — |
+
+The one exception is at sum = 10, where `k = v` (5,5 at 7.2069) edges out
+`k > v` (6,4 at 7.2192) by 0.017 ppl — both are within 1% of the 7.1439 fp16
+baseline, which is the range where these differences stop being interesting.
+Everywhere else the ranking by perplexity, best to worst, is: more key bits
+than value bits, then equal bits, then more value bits than key bits.
+`kernel/experiments/plot_kv_asymmetry.py` plots this, x-axis
+`key_bits + value_bits`, points colored by which side won; the 2b-key row is
+dropped from the plot (it would force the axis out to 94.5 and crush the
+7.15-11.4 range everything else lives in).
+
 **A's lead is bias cancellation, not a better reconstruction.** Holding the
 codes fixed and computing the reference in float64, so only rounding is left
 (64 heads × 512 tokens, 4b keys):
