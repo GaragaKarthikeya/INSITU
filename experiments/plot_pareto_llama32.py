@@ -69,11 +69,27 @@ def pareto_frontier(points: list[dict], y_key: str) -> list[dict]:
     return sorted(frontier, key=lambda p: p["bytes"])
 
 
+def best_per_bytes(points: list[dict]) -> list[dict]:
+    """Collapse configs sharing the same bytes/token to their lowest-ppl one.
+
+    (key_bits, value_bits) pairs with the same total, e.g. (4,2) and (2,4),
+    land at the same row size -- they're the same storage cost, so only the
+    better-perplexity split is worth showing.
+    """
+    best: dict[float, dict] = {}
+    for p in points:
+        cur = best.get(p["bytes"])
+        if cur is None or p["B"] < cur["B"]:
+            best[p["bytes"]] = p
+    return sorted(best.values(), key=lambda p: p["bytes"])
+
+
 def plot(out: Path) -> None:
     points = [
         {"label": f"k{kb}v{vb}", "bytes": row * NUM_KV_HEADS, "A": a, "B": b}
         for kb, vb, row, a, b in GRID
     ]
+    points = best_per_bytes(points)
 
     frontier_b = pareto_frontier(points, "B")
     frontier_b_labels = {p["label"] for p in frontier_b}
