@@ -72,10 +72,21 @@ def plot(out: Path) -> None:
 
     fig, ax = plt.subplots(figsize=(8, 6))
 
+    ylo, yhi = 5, 20
+    in_range = [p for p in points if p["ppl"] <= yhi]
+    off_scale = [p for p in points if p["ppl"] > yhi]
+
     for rel in ("k > v", "k < v", "k = v"):
-        pts = [p for p in points if p["rel"] == rel]
+        pts = [p for p in in_range if p["rel"] == rel]
         ax.scatter([p["sum"] for p in pts], [p["ppl"] for p in pts],
                    color=color[rel], marker=marker[rel], s=45, label=rel, zorder=3)
+
+    # Off-scale points (ppl > 20, all 2b-key configs) get a triangle pinned to
+    # the top edge instead of stretching the axis out to 94.5 and crushing
+    # everything else -- the label carries the real value.
+    for p in off_scale:
+        ax.scatter([p["sum"]], [yhi], marker="^", color=color[p["rel"]],
+                   s=55, zorder=4, clip_on=False)
 
     # Labels within the same x-column collide when their ppl values are close,
     # so stagger each column's labels through a small set of offsets instead
@@ -88,15 +99,19 @@ def plot(out: Path) -> None:
         for i, p in enumerate(col):
             dx, dy = offsets[i % len(offsets)]
             ha = "left" if dx > 0 else "right"
-            ax.annotate(p["label"], (p["sum"], p["ppl"]),
+            y = min(p["ppl"], yhi)
+            text = p["label"] if p["ppl"] <= yhi else f"{p['label']} {p['ppl']:.0f}"
+            ax.annotate(text, (p["sum"], y),
                         textcoords="offset points", xytext=(dx, dy),
                         fontsize=7, ha=ha, va="center",
                         arrowprops=dict(arrowstyle="-", color="gray",
                                          lw=0.5, shrinkA=0, shrinkB=3))
 
+    ax.set_ylim(ylo, yhi)
     ax.set_xlabel("key_bits + value_bits")
-    ax.set_ylabel("Perplexity, path B (WikiText-2, 2,048 tok, 16 layers)")
-    ax.set_title("Llama 3.2 1B: more key bits than value bits wins at every fixed budget")
+    ax.set_ylabel(f"Perplexity, path B, {ylo}-{yhi} (WikiText-2, 2,048 tok, 16 layers)")
+    ax.set_title("Llama 3.2 1B: more key bits than value bits wins at every fixed budget\n"
+                 "(triangles at top edge: off-scale, actual value labeled)")
     ax.set_xticks(sums)
     ax.set_xlim(min(sums) - 0.5, max(sums) + 0.5)
     ax.legend(fontsize=9)
