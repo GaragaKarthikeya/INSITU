@@ -63,7 +63,7 @@ def relation(kb: int, vb: int) -> str:
 
 def plot(out: Path) -> None:
     points = [
-        {"label": f"k{kb}v{vb}", "sum": kb + vb, "ppl": b, "rel": relation(kb, vb)}
+        {"label": f"({kb},{vb})", "sum": kb + vb, "ppl": b, "rel": relation(kb, vb)}
         for kb, vb, _row, _a, b in GRID
     ]
 
@@ -77,9 +77,9 @@ def plot(out: Path) -> None:
         ax.scatter([p["sum"] for p in pts], [p["ppl"] for p in pts],
                    color=color[rel], marker=marker[rel], s=45, label=rel, zorder=3)
 
-    # Labels within the same x-column collide when their ppl values are close
-    # (log scale compresses the axis further), so stagger each column's
-    # labels through a small set of offsets instead of one fixed corner.
+    # Labels within the same x-column collide when their ppl values are close,
+    # so stagger each column's labels through a small set of offsets instead
+    # of one fixed corner.
     offsets = [(7, 6), (7, -12), (-38, 6), (-38, -12), (7, 20), (-38, 20)]
     sums = sorted({p["sum"] for p in points})
     for s in sums:
@@ -89,14 +89,13 @@ def plot(out: Path) -> None:
             ax.annotate(p["label"], (p["sum"], p["ppl"]),
                         textcoords="offset points", xytext=(dx, dy), fontsize=7)
 
-    ax.set_yscale("log")
     ax.set_xlabel("key_bits + value_bits")
-    ax.set_ylabel("Perplexity, path B (WikiText-2, 2,048 tok, 16 layers), log scale")
+    ax.set_ylabel("Perplexity, path B (WikiText-2, 2,048 tok, 16 layers)")
     ax.set_title("Llama 3.2 1B: more key bits than value bits wins at every fixed budget")
     ax.set_xticks(sums)
     ax.set_xlim(min(sums) - 0.5, max(sums) + 0.5)
     ax.legend(fontsize=9)
-    ax.grid(True, alpha=0.3, which="both")
+    ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(out, dpi=200)
     print(f"wrote {out}")
