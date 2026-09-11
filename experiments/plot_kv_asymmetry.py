@@ -89,12 +89,14 @@ def spread_labels(ys: list[float], min_gap: float, iters: int = 500) -> list[flo
     return out
 
 
-def plot(out: Path) -> None:
+def plot(out: Path, invert: bool = False) -> None:
     points = [
         {"label": f"({kb},{vb})", "sum": kb + vb, "ppl": b, "rel": relation(kb, vb)}
         for kb, vb, _row, _a, b in GRID
         if b <= OUTLIER_PPL
     ]
+    for p in points:
+        p["y"] = 1.0 / p["ppl"] if invert else p["ppl"]
 
     color = {"k > v": "tab:blue", "k < v": "tab:red", "k = v": "tab:green"}
     marker = {"k > v": "o", "k < v": "^", "k = v": "s"}
@@ -103,27 +105,29 @@ def plot(out: Path) -> None:
 
     for rel in ("k > v", "k < v", "k = v"):
         pts = [p for p in points if p["rel"] == rel]
-        ax.scatter([p["sum"] for p in pts], [p["ppl"] for p in pts],
+        ax.scatter([p["sum"] for p in pts], [p["y"] for p in pts],
                    color=color[rel], marker=marker[rel], s=50, label=rel, zorder=3)
 
     # Give each label its own vertical slot, spread far enough apart to read
     # without a leader line, instead of sitting exactly on a crowded marker.
-    lo = min(p["ppl"] for p in points)
-    hi = max(p["ppl"] for p in points)
+    lo = min(p["y"] for p in points)
+    hi = max(p["y"] for p in points)
     min_gap = (hi - lo) * 0.025
     sums = sorted({p["sum"] for p in points})
     for s in sums:
-        col = sorted((p for p in points if p["sum"] == s), key=lambda p: p["ppl"])
-        label_ys = spread_labels([p["ppl"] for p in col], min_gap)
+        col = sorted((p for p in points if p["sum"] == s), key=lambda p: p["y"])
+        label_ys = spread_labels([p["y"] for p in col], min_gap)
         for p, ly in zip(col, label_ys):
-            ax.annotate(p["label"], xy=(p["sum"], p["ppl"]),
+            ax.annotate(p["label"], xy=(p["sum"], p["y"]),
                         xytext=(p["sum"] + 0.12, ly), fontsize=8, ha="left",
                         va="center")
 
+    y_label = "1 / Perplexity" if invert else "Perplexity"
     ax.set_xlabel("key_bits + value_bits")
-    ax.set_ylabel("Perplexity, path B (WikiText-2, 2,048 tok, 16 layers)")
+    ax.set_ylabel(f"{y_label}, path B (WikiText-2, 2,048 tok, 16 layers)")
+    title_dir = "higher is better" if invert else "lower is better"
     ax.set_title("Llama 3.2 1B: more key bits than value bits wins at every fixed budget\n"
-                 f"(2b-key configs, ppl > {OUTLIER_PPL}, omitted)")
+                 f"({title_dir}; 2b-key configs omitted)")
     ax.set_xticks(sums)
     ax.set_xlim(min(sums) - 0.5, max(sums) + 1.3)
     ax.set_ylim(lo - min_gap, hi + min_gap * 6)
@@ -133,19 +137,22 @@ def plot(out: Path) -> None:
     fig.savefig(out, dpi=200)
     print(f"wrote {out}")
 
-    print("\nBy bit budget (key_bits + value_bits), best to worst ppl(B):")
+    print(f"\nBy bit budget (key_bits + value_bits), best to worst ({y_label}):")
     sums = sorted({p["sum"] for p in points})
     for s in sums:
-        row = sorted((p for p in points if p["sum"] == s), key=lambda p: p["ppl"])
-        print(f"  sum={s}: " + ", ".join(f"{p['label']}={p['ppl']:.4f}" for p in row))
+        row = sorted((p for p in points if p["sum"] == s),
+                     key=lambda p: -p["y"] if invert else p["y"])
+        print(f"  sum={s}: " + ", ".join(f"{p['label']}={p['y']:.4f}" for p in row))
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path,
                      default=Path("experiments/results/kv_asymmetry_llama32.png"))
+    ap.add_argument("--invert", action="store_true",
+                     help="plot 1/perplexity (higher is better) instead of perplexity")
     args = ap.parse_args()
-    plot(args.out)
+    plot(args.out, invert=args.invert)
 
 
 if __name__ == "__main__":
