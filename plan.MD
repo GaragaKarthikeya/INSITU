@@ -2308,6 +2308,33 @@ interaction rather than evidence that A reconstructs better. 4b/2b still stands
 on its own interval, and it is the only significant result at a bit-width
 anyone would ship.
 
+**The storage-optimal split at each cache size.** `(key_bits, value_bits)`
+pairs sharing a total land at the same row size — `4b/2b` and `2b/4b` are both
+52 B, `5b/3b` and `3b/5b` are both 68 B — so they cost the same and only the
+better perplexity is worth shipping. Collapsing each row size to its
+lower-perplexity split, on path B (table form, what the hardware implements),
+bytes/token/layer scaled by the 8 KV heads:
+
+| config | B/token/layer | ppl (B) | vs fp16 |
+|---|---|---|---|
+| 2b/2b | 288 | 94.5112 | 13.230× |
+| 3b/2b | 352 | 11.3830 | 1.593× |
+| 4b/2b | 416 | 8.7209 | 1.221× |
+| 4b/3b | 480 | 7.7710 | 1.088× |
+| 5b/3b | 544 | 7.3614 | 1.030× |
+| 5b/4b | 608 | 7.2794 | 1.019× |
+| 5b/5b | 672 | 7.2069 | 1.009× |
+| 6b/5b | 736 | 7.1840 | 1.006× |
+| 6b/6b | 800 | 7.1668 | 1.003× |
+
+Every one of these nine is Pareto-optimal by construction: each already won
+its row size, so none is beaten on both bytes and ppl by another row's winner.
+`key_bits >= value_bits` wins every group above 288 B — a `v > k` split is
+never the winner once the 2b-key row is left behind, consistent with the 2b-key
+interaction above being the only place `v > k` pays off at all, and it does not
+pay off there either (the whole row is 9x-13x fp16).
+`kernel/experiments/plot_pareto_llama32.py` reproduces this table and plots it.
+
 **A's lead is bias cancellation, not a better reconstruction.** Holding the
 codes fixed and computing the reference in float64, so only rounding is left
 (64 heads × 512 tokens, 4b keys):
