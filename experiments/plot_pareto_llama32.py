@@ -109,9 +109,6 @@ def plot(out: Path) -> None:
             color="black", linewidth=1, linestyle="--", zorder=1,
             label="Pareto frontier (path B)")
 
-    ax.axhline(FP16_BASELINE, color="gray", linewidth=1, linestyle=":",
-               label=f"fp16 baseline ({FP16_BASELINE})")
-
     ax.set_xlabel("KV cache bytes / token / layer (8 KV heads)")
     ax.set_ylabel("Perplexity (WikiText-2, 2,048 tok, 16 layers)")
     ax.set_title("Llama 3.2 1B: perplexity vs. KV cache footprint, 25 key/value widths")
