@@ -98,15 +98,19 @@ def plot(out: Path, invert: bool = False) -> None:
     for p in points:
         p["y"] = 1.0 / p["ppl"] if invert else p["ppl"]
 
-    color = {"k > v": "tab:blue", "k < v": "tab:red", "k = v": "tab:green"}
+    # Monochrome: distinguish by marker shape + fill/edge instead of hue.
+    color = {"k > v": "black", "k < v": "black", "k = v": "black"}
     marker = {"k > v": "o", "k < v": "^", "k = v": "s"}
+    facecolor = {"k > v": "black", "k < v": "none", "k = v": "0.6"}
 
     fig, ax = plt.subplots(figsize=(9, 9))
 
     for rel in ("k > v", "k < v", "k = v"):
         pts = [p for p in points if p["rel"] == rel]
         ax.scatter([p["sum"] for p in pts], [p["y"] for p in pts],
-                   color=color[rel], marker=marker[rel], s=50, label=rel, zorder=3)
+                   marker=marker[rel], edgecolors=color[rel],
+                   facecolors=facecolor[rel], linewidths=1.2,
+                   s=55, label=rel, zorder=3)
 
     # Give each label its own vertical slot, spread far enough apart to read
     # without a leader line, instead of sitting exactly on a crowded marker.
