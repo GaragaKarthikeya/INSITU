@@ -64,14 +64,29 @@ def relation(kb: int, vb: int) -> str:
 OUTLIER_PPL = 20  # 2b-key configs (66-94.5) are a different regime; drop them
 
 
-def spread_labels(ys: list[float], min_gap: float) -> list[float]:
-    """Push a sorted-ascending list of y-values apart so consecutive ones are
-    at least min_gap apart, anchored at the lowest value."""
-    ys = list(ys)
-    for i in range(1, len(ys)):
-        if ys[i] - ys[i - 1] < min_gap:
-            ys[i] = ys[i - 1] + min_gap
-    return ys
+def spread_labels(ys: list[float], min_gap: float, iters: int = 500) -> list[float]:
+    """Nudge a list of y-values apart so consecutive ones are >= min_gap,
+    splitting each adjustment between both neighbors so a label stays close
+    to its own point instead of drifting away from the whole column (which
+    anchoring at the lowest value and stacking upward does)."""
+    z = sorted(ys)
+    n = len(z)
+    for _ in range(iters):
+        moved = False
+        for i in range(n - 1):
+            gap = z[i + 1] - z[i]
+            if gap < min_gap:
+                delta = (min_gap - gap) / 2
+                z[i] -= delta
+                z[i + 1] += delta
+                moved = True
+        if not moved:
+            break
+    order = sorted(range(n), key=lambda i: ys[i])
+    out = [0.0] * n
+    for rank, idx in enumerate(order):
+        out[idx] = z[rank]
+    return out
 
 
 def plot(out: Path) -> None:
@@ -95,7 +110,7 @@ def plot(out: Path) -> None:
     # without a leader line, instead of sitting exactly on a crowded marker.
     lo = min(p["ppl"] for p in points)
     hi = max(p["ppl"] for p in points)
-    min_gap = (hi - lo) * 0.05
+    min_gap = (hi - lo) * 0.025
     sums = sorted({p["sum"] for p in points})
     for s in sums:
         col = sorted((p for p in points if p["sum"] == s), key=lambda p: p["ppl"])
