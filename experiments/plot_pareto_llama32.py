@@ -97,7 +97,8 @@ def plot(out: Path) -> None:
     fig, ax = plt.subplots(figsize=(8, 6))
 
     ax.scatter([p["bytes"] for p in points], [p["B"] for p in points],
-               marker="o", color="tab:blue", s=35, label="path B (table form, hw)", zorder=3)
+               marker="o", facecolors="none", edgecolors="black", linewidths=1.2,
+               s=45, label="path B (table form, hw)", zorder=3)
 
     for p in points:
         weight = "bold" if p["label"] in frontier_b_labels else "normal"
