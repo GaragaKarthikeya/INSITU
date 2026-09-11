@@ -1,0 +1,45 @@
+=== AB k2v3 18:09:21 ===
+ A rebuild the dense key, then dot 82.5741 11.5586x 536s
+ B no rebuild, table form 74.2553 10.3942x 78s
+ 95% interval [+0.043903, +0.168471] excludes zero
+=== AB k2v4 18:19:50 ===
+ A rebuild the dense key, then dot 66.1892 9.2651x 524s
+ B no rebuild, table form 69.8478 9.7772x 105s
+ 95% interval [-0.112809, +0.005207] includes zero
+=== AB k2v5 18:30:48 ===
+ A rebuild the dense key, then dot 64.6602 9.0511x 525s
+ B no rebuild, table form 66.0630 9.2474x 163s
+ 95% interval [-0.081542, +0.038614] includes zero
+=== AB k2v6 18:42:31 ===
+ A rebuild the dense key, then dot 77.2041 10.8070x 526s
+ B no rebuild, table form 71.3001 9.9805x 306s
+ 95% interval [+0.019685, +0.139426] excludes zero
+=== AB k3v3 18:56:37 ===
+ A rebuild the dense key, then dot 10.0402 1.4054x 534s
+ B no rebuild, table form 10.1547 1.4214x 73s
+ 95% interval [-0.038074, +0.015399] includes zero
+=== AB k3v4 19:06:59 ===
+ A rebuild the dense key, then dot 9.6539 1.3513x 524s
+ B no rebuild, table form 9.8474 1.3784x 112s
+ 95% interval [-0.045473, +0.005788] includes zero
+=== AB k3v5 19:17:50 ===
+ A rebuild the dense key, then dot 9.5958 1.3432x 541s
+ B no rebuild, table form 9.5943 1.3430x 158s
+ 95% interval [-0.027152, +0.027467] includes zero
+=== AB k3v6 19:29:42 ===
+ A rebuild the dense key, then dot 9.6164 1.3461x 538s
+ B no rebuild, table form 9.5107 1.3313x 280s
+ 95% interval [-0.015338, +0.037453] includes zero
+=== AB k4v5 19:43:35 ===
+ A rebuild the dense key, then dot 7.5806 1.0611x 536s
+ B no rebuild, table form 7.5603 1.0583x 165s
+ 95% interval [-0.010832, +0.016182] includes zero
+=== AB k4v6 19:55:29 ===
+ A rebuild the dense key, then dot 7.5225 1.0530x 530s
+ B no rebuild, table form 7.6375 1.0691x 278s
+ 95% interval [-0.029517, -0.000813] excludes zero
+=== AB k5v6 20:09:13 ===
+ A rebuild the dense key, then dot 7.2250 1.0114x 522s
+ B no rebuild, table form 7.2572 1.0159x 293s
+ 95% interval [-0.011827, +0.002943] includes zero
+=== AB sweep done 20:23:02 ===
