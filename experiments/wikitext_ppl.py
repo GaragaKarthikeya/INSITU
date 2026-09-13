@@ -97,15 +97,27 @@ def _install_signal_handlers(log: RunLog) -> None:
         except (ValueError, OSError):
             pass
 
-# name -> (mode, QuantConfig, max_windows or None for "all")
+# name -> (mode, QuantConfig, max_windows or None for "all", score_mode or
+# None to leave the kernel's own default ("fused") alone)
 CONFIGS = {
-    "baseline": (None, None, None),
-    "dense":    ("dense", QuantConfig(), 12),
-    "k4v4":     ("compressed", QuantConfig(key_bits=4, value_bits=4), None),
-    "k4v3":     ("compressed", QuantConfig(key_bits=4, value_bits=3), None),
-    "k4v2":     ("compressed", QuantConfig(key_bits=4, value_bits=2), None),
-    "k3v2":     ("compressed", QuantConfig(key_bits=3, value_bits=2), None),
+    "baseline": (None, None, None, None),
+    "dense":    ("dense", QuantConfig(), 12, None),
+    "k4v4":     ("compressed", QuantConfig(key_bits=4, value_bits=4), None, None),
+    "k4v3":     ("compressed", QuantConfig(key_bits=4, value_bits=3), None, None),
+    "k4v2":     ("compressed", QuantConfig(key_bits=4, value_bits=2), None, None),
+    "k3v2":     ("compressed", QuantConfig(key_bits=3, value_bits=2), None, None),
 }
+
+# The architecture A/B grid from plan.MD's "Architecture A against
+# architecture B" section, extended from one window to many. A is
+# `score_mode="dense"` (rebuild the key, then dot; `attend_causal_batch_dense`
+# decodes the cache once and reuses it across query tiles). B is
+# `score_mode="fused"` (never rebuild; table form), the kernel default.
+KV_GRID = [(k, v) for k in range(2, 7) for v in range(2, 7)]
+for _k, _v in KV_GRID:
+    _q = QuantConfig(key_bits=_k, value_bits=_v)
+    CONFIGS[f"k{_k}v{_v}-A"] = ("compressed", _q, None, "dense")
+    CONFIGS[f"k{_k}v{_v}-B"] = ("compressed", _q, None, "fused")
 
 
 def load_windows(tok, context, limit):
@@ -190,6 +202,7 @@ def main() -> None:
     ap.add_argument("--windows", type=int, default=None)
     ap.add_argument("--dir", default="kernel/experiments/results/qwen3-8b")
     ap.add_argument("--dtype", default="float32", choices=["float32", "bfloat16"])
+    ap.add_argument("--device", default="cpu")
     ap.add_argument("--pilot-chunk", type=int, default=2)
     ap.add_argument("--chunk", type=int, default=4)
     ap.add_argument("--dense-tol", type=float, default=0.005)
@@ -221,8 +234,9 @@ def main() -> None:
 
     tok = AutoTokenizer.from_pretrained(args.model)
     ids, n_windows, n_tokens = load_windows(tok, args.context, args.windows)
+    ids = ids.to(args.device)
     model = AutoModelForCausalLM.from_pretrained(
-        args.model, dtype=getattr(torch, args.dtype)).eval()
+        args.model, dtype=getattr(torch, args.dtype)).eval().to(args.device)
     m = ModelConfig.from_hf(model.config)
     layers = list(range(model.config.num_hidden_layers))
     attach_heartbeat(model, log)
@@ -261,7 +275,7 @@ def main() -> None:
                 if rec["windows"] >= target:
                     continue
                 stop = min(rec["windows"] + chunk, target)
-                mode, quant, _ = CONFIGS[name]
+                mode, quant, _, score_mode = CONFIGS[name]
 
                 original = None
                 if mode is not None:
@@ -272,6 +286,18 @@ def main() -> None:
                                      compressed=(mode == "compressed"))
                     rec["bytes_per_token_per_layer"] = \
                         model.model.layers[0].self_attn.kernel.cache.bytes_per_token
+                    if score_mode is not None:
+                        # `attend_causal_batch` always runs the fused datapath
+                        # regardless of `score_mode`; architecture A gets its
+                        # own batched path, `attend_causal_batch_dense`, which
+                        # decodes the cache once instead of once per query. No
+                        # config needs the O(n) python token loop any more --
+                        # see `ops/attention.py`'s `attend_causal_batch_dense`.
+                        for L in layers:
+                            k = model.model.layers[L].self_attn.kernel
+                            k.attn.score_mode = score_mode
+                            k.attn.baseline_calls = 0
+                            k.force_token_loop = False
                     log.event("graft", config=name, seconds=round(time.time() - t0, 1),
                               bytes_per_token_per_layer=rec["bytes_per_token_per_layer"])
                 try:

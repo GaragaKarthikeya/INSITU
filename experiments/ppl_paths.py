@@ -97,18 +97,13 @@ def main(argv=None) -> int:
         for k in kernels:
             k.attn.score_mode = mode
             k.attn.baseline_calls = 0
-            # `attend_causal_batch` inlines its own scoring, so the batched
-            # prefill path never reaches `scores()` and would run the fused
-            # datapath whatever mode is selected. The token loop is the path
-            # that honours it.
-            #
-            # B does not need it. The batched path is bit-identical to the loop
-            # for the fused datapath -- that is pinned by
-            # test_attention.py::check_causal_batch_is_bit_identical -- so when
-            # only B is asked for, the loop buys nothing and costs an order of
-            # magnitude. A still gets the loop, because for A the two paths are
-            # not the same arithmetic.
-            k.force_token_loop = (mode == "dense")
+            # Both architectures now have a batched prefill path: B's
+            # `attend_causal_batch` and A's `attend_causal_batch_dense`, each
+            # bit-identical to its own token-at-a-time loop (pinned by
+            # test_attention.py::check_causal_batch_is_bit_identical and
+            # ::check_causal_batch_dense_is_bit_identical). Neither mode needs
+            # the python token loop for a measurement run any more.
+            k.force_token_loop = False
         try:
             per_token[mode] = np.array(nll(model, ids), dtype=np.float64)
             ppl = math.exp(per_token[mode].mean())

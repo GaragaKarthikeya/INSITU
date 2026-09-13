@@ -233,6 +233,50 @@ def check_causal_batch_is_bit_identical():
         approx(got, ref, tol=0, what=f"batch vs loop at {kb}/{vb} bits")
 
 
+def check_causal_batch_dense_is_bit_identical():
+    """`attend_causal_batch_dense` is architecture A's token loop, not close to it.
+
+    Same guarantee as `check_causal_batch_is_bit_identical`, for the other
+    architecture: the loop calls `attend_two_pass` once per query against a
+    growing prefix (`ctx = t+1`), re-decoding the cache from scratch every
+    time; the batched path decodes once and reuses it. If those ever drift
+    apart it means the per-term truncation order stopped matching, not that
+    the batched path found a faster but different answer.
+    """
+    for kb, vb in ((4, 2), (3, 2), (4, 4), (6, 6), (1, 1)):
+        quant = QuantConfig(key_bits=kb, value_bits=vb)
+        d, T = 64, 53
+        z = KVQuantizer(d, quant, FMT)
+        a = CompressedAttention(z, FMT, quant)
+        a.score_mode = "dense"
+        rng = np.random.default_rng(kb * 10 + vb)
+        kv = z.encode(z.rotation.apply(QQ.from_float(rng.standard_normal((T, d)))),
+                      z.rotation.apply(QQ.from_float(rng.standard_normal((T, d)))))
+        q = z.rotation.apply(QQ.from_float(rng.standard_normal((T, 3, d)) / 8))
+        q_unrot = QQ.from_float(rng.standard_normal((T, 3, d)) / 8)
+
+        a._q_unrot = q_unrot
+        got, _ = a.attend_causal_batch_dense(q, kv, base=0, tile=8, kchunk=16)
+
+        ref = np.empty_like(got)
+        for t in range(T):
+            a._q_unrot = q_unrot[t]
+            ref[t], _ = a.attend_two_pass(q[t], kv.select(slice(0, t + 1)))
+        approx(got, ref, tol=0, what=f"dense batch vs loop at {kb}/{vb} bits")
+
+
+def check_causal_batch_dense_rejects_fused():
+    quant = QuantConfig(key_bits=4, value_bits=2)
+    d, T = 64, 8
+    z = KVQuantizer(d, quant, FMT)
+    a = CompressedAttention(z, FMT, quant)
+    rng = np.random.default_rng(0)
+    kv = z.encode(z.rotation.apply(QQ.from_float(rng.standard_normal((T, d)))),
+                  z.rotation.apply(QQ.from_float(rng.standard_normal((T, d)))))
+    q = z.rotation.apply(QQ.from_float(rng.standard_normal((T, d))))
+    raises(ValueError, lambda: a.attend_causal_batch_dense(q, kv))
+
+
 def check_batch_tile_is_invisible():
     """`tile` bounds memory and nothing else."""
     quant = QuantConfig(key_bits=4, value_bits=2)

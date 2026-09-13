@@ -323,7 +323,10 @@ class AttentionKernel:
                 heads = slice(kvh * m.kv_groups, (kvh + 1) * m.kv_groups)
                 kv = self.cache.view(kvh, trace, n_reads=n)
                 self._supply_unrotated_query(qi, heads)
-                if self.softmax == "online":
+                if self.attn.score_mode == "dense":
+                    y, st = self.attn.attend_causal_batch_dense(
+                        qr[:, heads], kv, base=base, tile=self.batch_tile, trace=trace)
+                elif self.softmax == "online":
                     y, st = self.attn.attend_online_batch(
                         qr[:, heads], kv, base=base, trace=trace)
                 else:

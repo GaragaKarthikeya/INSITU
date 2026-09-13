@@ -669,6 +669,128 @@ class CompressedAttention:
         record(trace, Op.ACCUMULATE, "attention", m=d, n=causal)
         return out.reshape(np.shape(q_rot)), stats
 
+    def attend_causal_batch_dense(self, q_rot: np.ndarray, kv: CompressedKV,
+                                  base: int = 0, tile: int = 256, kchunk: int = 256,
+                                  trace: Trace | None = None
+                                  ) -> tuple[np.ndarray, AttentionStats]:
+        """Architecture A's `attend_causal_batch`: decode the cache once.
+
+        The token-at-a-time path (`attend_two_pass`, called once per query from
+        `Kernel._attend_one`) re-derives `k_orig`/`v_orig` from scratch at every
+        step, because `kv.select(slice(0, ctx))` hands it a growing prefix each
+        time. Decoding token 0 happens `n_q` times over a window instead of
+        once -- the whole cache is dequantized and unrotated on every single
+        query, which is the `O(n^2 d)` cost that made A take 9x longer than B
+        in the ab-grid run. Nothing about the rebuild depends on the query, so
+        it only has to happen once per window; this hoists it out of the loop
+        and reuses it for every query tile, same as B's own batched path
+        reuses `k_hat`/`v_cent` across tiles.
+
+        Same per-term truncation order as `_accumulate_terms`'s dense branch
+        (`floor` before the sum over cached tokens, not after) so this is
+        bit-identical to `attend_two_pass`, not merely close -- pinned by
+        `check_causal_batch_dense_is_bit_identical`, the same guarantee
+        `check_causal_batch_is_bit_identical` gives B. `kchunk` bounds the
+        `(tile*heads, kchunk, d)` intermediate the per-term floor needs; it
+        only trades memory for python-loop overhead and changes no value.
+        """
+        if self.score_mode != "dense":
+            raise ValueError(
+                f"attend_causal_batch_dense inlines architecture A's decode-then-dot "
+                f"path; use attend_causal_batch for 'fused' (B)")
+        if self._q_unrot is None:
+            raise ValueError(
+                "architecture A scores in the original basis and needs the "
+                "pre-rotation query; the kernel supplies it before attending")
+        fmt = self.fmt
+        q = np.asarray(q_rot, dtype=INT)
+        if q.ndim == 2:
+            q = q[:, None, :]
+        n_q, heads, d = q.shape
+        n_tok = kv.k_idx.shape[0]
+        qu = np.asarray(self._q_unrot, dtype=INT).reshape(q.shape)
+
+        # Decode the whole cache once, exactly as `_scores_baseline` and the
+        # dense branch of `_accumulate_terms` decode it per call.
+        k_orig = self.z.rotation.inverse_apply(
+            rshift(self.z.key.codebook.centroids[kv.k_idx.astype(INT)]
+                   * kv.k_norm.astype(INT)[:, None],
+                   self.z.key.threshold_frac - fmt.qk_frac), trace, "unrotate")
+        v_orig = self.z.rotation.inverse_apply(
+            rshift(self.z.value.codebook.centroids[kv.v_idx.astype(INT)]
+                   * kv.v_norm.astype(INT)[:, None],
+                   self.z.value.threshold_frac - fmt.qk_frac), trace, "unrotate")
+        k_orig_f = k_orig.astype(np.float64)
+        v_orig_f = v_orig.astype(np.float64)
+        k_max = absmax(k_orig)
+        v_max = absmax(v_orig)
+
+        score_shift = 2 * fmt.qk_frac - fmt.acc_frac
+        acc_shift = fmt.prob_frac + fmt.qk_frac - fmt.acc_frac
+        acc_scale = 2.0 ** -acc_shift
+
+        out = np.empty((n_q, heads, d), dtype=INT)
+        stats = AttentionStats(n_tokens=n_tok)
+        positions = np.arange(n_tok)
+        self.baseline_calls += 1
+
+        for lo in range(0, n_q, tile):
+            hi = min(lo + tile, n_q)
+            nt = hi - lo
+
+            qt = qu[lo:hi].reshape(-1, d)
+            q_max = absmax(qt)
+            if q_max * k_max * d >= FLOAT64_EXACT:
+                raise OverflowError(
+                    f"score: |q|*|k_orig|*d = {q_max * k_max * d} >= 2^53")
+            dot_f = qt.astype(np.float64) @ k_orig_f.T          # exact, Q(2*qk_frac)
+            # A power-of-two rescale of an exact float64 integer is exact too.
+            s = np.floor(dot_f * (2.0 ** -score_shift)).astype(INT)
+            s, ovf, peak = self.score_q.check_and_clamp(s)
+            stats.score_overflows += ovf
+            stats.max_abs_score = max(stats.max_abs_score, peak)
+            s = s.reshape(nt, heads, n_tok)
+
+            valid = (positions[None, :] <= (base + np.arange(lo, hi))[:, None])
+            s = np.where(valid[:, None, :], s, self.score_q.lo)
+
+            m = s.max(axis=-1, keepdims=True)
+            p = self.exp(m - s)
+            l = p.sum(axis=-1)
+
+            pf = p.reshape(-1, n_tok).astype(np.float64)        # (nt*heads, T)
+            p_max = absmax(p)
+            if p_max * v_max >= FLOAT64_EXACT:
+                raise OverflowError(
+                    f"accumulate: |p|*|v_orig| = {p_max * v_max} >= 2^53")
+            if p_max * v_max * acc_scale * n_tok >= FLOAT64_EXACT:
+                raise OverflowError(
+                    f"accumulate: the reduction over {n_tok} tokens exceeds 2^53; "
+                    f"lower `tile` will not help"
+                )
+            # Each term is floored before it joins the sum -- see
+            # `_accumulate_terms` -- so this chunks over cached tokens purely to
+            # bound the `(nt*heads, kchunk, d)` intermediate. Chunking changes
+            # nothing about the value: floor-then-sum is the same regardless of
+            # which tokens land in which chunk.
+            acc = np.zeros((nt * heads, d), dtype=np.float64)
+            for klo in range(0, n_tok, kchunk):
+                khi = min(klo + kchunk, n_tok)
+                term = np.floor(pf[:, klo:khi, None] * acc_scale
+                                * v_orig_f[None, klo:khi, :])
+                acc += term.sum(axis=1)
+            acc, ovf, peak = self.acc_q.check_and_clamp(acc.astype(INT))
+            stats.acc_overflows += ovf
+            stats.max_abs_acc = max(stats.max_abs_acc, peak)
+            acc = acc.reshape(nt, heads, d)
+            out[lo:hi] = self._finalize(acc, l)
+
+        causal = heads * sum(base + i + 1 for i in range(n_q))
+        record(trace, Op.SCORE, "attention", m=d, n=causal)
+        record(trace, Op.SOFTMAX, "attention", m=1, n=n_q * heads)
+        record(trace, Op.ACCUMULATE, "attention", m=d, n=causal)
+        return out.reshape(np.shape(q_rot)), stats
+
     def attend_online_batch(self, q_rot: np.ndarray, kv: CompressedKV,
                             base: int = 0, trace: Trace | None = None
                             ) -> tuple[np.ndarray, AttentionStats]:
