@@ -2429,6 +2429,78 @@ a fixed-point RoPE the hardware does not have.
 The 4,096-token board figure above (9.074 → 10.640) predates the cast move and
 has not been re-measured.
 
+### The same grid, twelve windows instead of one
+
+The table above scores one 2,048-token window. `kernel/experiments/wikitext_ppl.py`
+now runs the whole 25-config grid, both architectures, interleaved in chunks
+across 12 non-overlapping windows of the WikiText-2 test split (cache reset
+per window, 24,564 scored tokens per config — see the file's own docstring for
+why interleaved beats one-config-at-a-time). `experiments/results/ab-grid-llama32-1b`
+is the finished run: all 51 configs (baseline + 25 × {A, B}) at 12/12 windows.
+fp32 baseline here is **9.3895**, not 7.1439 — a different, wider slice of the
+corpus, not a regression; the single-window number above is one twelfth of
+this one's text and was never claimed to be representative on its own.
+
+| config | ppl A | ppl B | A vs fp32 | B vs fp32 |
+|---|---|---|---|---|
+| 2b/2b | 102.1468 | 103.3080 | 10.879× | 11.003× |
+| 2b/3b | 91.4258 | 91.7121 | 9.737× | 9.768× |
+| 2b/4b | 84.2349 | 85.3821 | 8.971× | 9.093× |
+| 2b/5b | 83.3800 | 82.7317 | 8.880× | 8.811× |
+| 2b/6b | 82.4657 | 83.5500 | 8.783× | 8.898× |
+| 3b/2b | 14.6583 | 14.6055 | 1.561× | 1.556× |
+| 3b/3b | 13.0430 | 13.0365 | 1.389× | 1.388× |
+| 3b/4b | 12.6855 | 12.6456 | 1.351× | 1.347× |
+| 3b/5b | 12.4893 | 12.5388 | 1.330× | 1.335× |
+| 3b/6b | 12.4504 | 12.6234 | 1.326× | 1.344× |
+| 4b/2b | 11.0146 | 11.1043 | 1.173× | 1.183× |
+| 4b/3b | 10.1944 | 10.1830 | 1.086× | 1.084× |
+| 4b/4b | 10.0136 | 10.0084 | 1.067× | 1.066× |
+| 4b/5b | 9.9556 | 9.9409 | 1.060× | 1.059× |
+| 4b/6b | 10.0084 | 9.9738 | 1.066× | 1.062× |
+| 5b/2b | 10.5020 | 10.5001 | 1.119× | 1.118× |
+| 5b/3b | 9.7404 | 9.7362 | 1.037× | 1.037× |
+| 5b/4b | 9.5789 | 9.5808 | 1.020× | 1.020× |
+| 5b/5b | 9.5270 | 9.5267 | 1.015× | 1.015× |
+| 5b/6b | 9.5403 | 9.5256 | 1.016× | 1.015× |
+| 6b/2b | 10.3528 | 10.3308 | 1.103× | 1.100× |
+| 6b/3b | 9.6385 | 9.6270 | 1.027× | 1.025× |
+| 6b/4b | 9.4828 | 9.4822 | 1.010× | 1.010× |
+| 6b/5b | 9.4551 | 9.4505 | 1.007× | 1.007× |
+| 6b/6b | 9.4552 | 9.4381 | 1.007× | 1.005× |
+
+No paired CIs here — the run stores an aggregate ppl per config, not the
+per-token arrays `ppl_paths.py --save` writes, so unlike the single-window
+table this one cannot say which gaps are significant, only how big they are.
+Read it as a shape check on the single-window table, not a replacement for its
+statistics.
+
+**The shape holds.** A and B stay within a percent of each other everywhere
+except the 2b-key row, same as the single-window grid: max |A − B| at 6b keys
+is 0.19% (6b/6b), at 5b keys 0.15%, growing to as much as 8.3% at 2b/3b — the
+same key-width-dependent gap, same sign pattern (B ahead at 2b/3b and 2b/6b, A
+ahead elsewhere in that row), on an entirely disjoint slice of text. Whatever
+is producing the A/B gap is a property of the arithmetic, not of which 2,048
+tokens happened to be sampled.
+
+**The key/value asymmetry is sharper here than in the single window.**
+`key_bits > value_bits` beats `value_bits > key_bits` at every matched byte
+budget, by a wider margin than the 12x-fewer-tokens table showed: 4b/2b
+(1.173×–1.183×) against 2b/4b (8.971×–9.093×) at the same 416 B/token/layer,
+and 6b/2b (1.100×–1.103×) against 2b/6b (8.783×–8.898×) at 544 B. The 2b-key
+row is catastrophic regardless of value width, confirming the earlier finding
+that this is a floor the value side cannot buy its way out of, not a
+continuous tradeoff.
+
+This run also carries the fix in `ops/attention.py`
+(`attend_causal_batch_dense`): architecture A's prefill used to re-decode the
+whole causal prefix from scratch at every query token, an
+`O(n^2 d)` path that made A take roughly 9x longer than B per window. The fix
+lands after this run started, so this table ran the slow path throughout (the
+A rows in `run.log` cost 1.7-1.8 s/window against B's 0.2-1.0 s) — it changes
+nothing about the numbers above, both paths remain bit-identical to the token
+loop by construction, only the wall clock a future run of this size will cost.
+
 ### What the bit widths buy, and what the ports cost
 
 A plane is a port, so the plane column is the price. Only three configurations
