@@ -15,8 +15,8 @@
   <!-- write path, left to right -->
   <rect x="235" y="170" width="115" height="62" fill="#ffffff"/>
   <rect x="370" y="170" width="115" height="62" fill="#ffffff"/>
-  <rect x="505" y="170" width="245" height="62" fill="#e8e8e8"/>
-  <path d="M610,170 L610,232"/>
+  <rect x="505" y="170" width="105" height="62" fill="#e8e8e8"/>
+  <rect x="630" y="170" width="120" height="62" fill="#e8e8e8"/>
   <rect x="770" y="170" width="115" height="62" fill="#e8e8e8"/>
 
   <!-- lane array (x G) -- kv_store_ddr deliberately sits OUTSIDE it -->
@@ -37,6 +37,7 @@
   <path d="M195,201 L231,201" marker-end="url(#ar)"/>
   <path d="M350,201 L366,201" marker-end="url(#ar)"/>
   <path d="M485,201 L501,201" marker-end="url(#ar)"/>
+  <path d="M610,201 L626,201" marker-end="url(#ar)"/>
   <path d="M750,201 L766,201" marker-end="url(#ar)"/>
   <path d="M885,201 L1096,201" marker-end="url(#ar)"/>
 
@@ -73,7 +74,7 @@
   <text x="427" y="199" font-size="14">rot_fwht</text>
   <text x="427" y="218" font-size="10" fill="#555555">k, v, q</text>
   <text x="557" y="206" font-size="13">rot_norm</text>
-  <text x="680" y="206" font-size="13">rot_encode</text>
+  <text x="690" y="206" font-size="13">rot_encode</text>
   <text x="827" y="199" font-size="14">kv_write</text>
   <text x="827" y="218" font-size="10" fill="#555555">one row / token</text>
 
