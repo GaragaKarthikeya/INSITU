@@ -7,7 +7,7 @@
 <rect width="1280" height="455" fill="#ffffff"/>
 
 <g stroke="#1a1a1a" stroke-width="1.5" fill="none">
-  <rect x="40" y="110" width="165" height="310" fill="#ffffff"/>
+  <rect x="40" y="110" width="165" height="310" fill="#f2f2f2"/>
   <rect x="235" y="110" width="810" height="310" fill="#ffffff"/>
   <rect x="1075" y="110" width="175" height="310" fill="#d8d8d8"/>
 
@@ -41,7 +41,7 @@
 
   <!-- read arrows, right to left, same lengths -->
   <path d="M1071,336 L1032,336" marker-end="url(#ar)"/>
-  <path d="M888,336 L869,336" stroke-width="2.6" marker-end="url(#ar)"/>
+  <path d="M888,336 L869,336" marker-end="url(#ar)"/>
   <path d="M728,336 L710,336" marker-end="url(#ar)"/>
   <path d="M568,336 L550,336" marker-end="url(#ar)"/>
   <path d="M408,336 L390,336" marker-end="url(#ar)"/>
