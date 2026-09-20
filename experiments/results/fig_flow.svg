@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 400" width="1280" height="400" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+<defs>
+  <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/>
+  </marker>
+</defs>
+<rect width="1280" height="400" fill="#ffffff"/>
+
+<g stroke="#1a1a1a" stroke-width="1.5" fill="none">
+  <!-- one token through the model -->
+  <rect x="40" y="58" width="120" height="52" fill="#f2f2f2"/>
+  <rect x="200" y="58" width="120" height="52" fill="#ffffff"/>
+  <rect x="360" y="58" width="120" height="52" fill="#ffffff"/>
+  <rect x="520" y="58" width="120" height="52" fill="#ffffff"/>
+  <rect x="740" y="58" width="120" height="52" fill="#ffffff"/>
+  <rect x="900" y="58" width="120" height="52" fill="#ffffff"/>
+  <rect x="1060" y="58" width="120" height="52" fill="#f2f2f2"/>
+
+  <path d="M160,84 L196,84" marker-end="url(#ar)"/>
+  <path d="M320,84 L356,84" marker-end="url(#ar)"/>
+  <path d="M480,84 L516,84" marker-end="url(#ar)"/>
+  <path d="M640,84 L676,84" marker-end="url(#ar)"/>
+  <path d="M700,84 L736,84" marker-end="url(#ar)"/>
+  <path d="M860,84 L896,84" marker-end="url(#ar)"/>
+  <path d="M1020,84 L1056,84" marker-end="url(#ar)"/>
+
+  <!-- the next token re-enters at the front: no prefill, ever -->
+  <path d="M1120,110 L1120,146 L100,146 L100,114" marker-end="url(#ar)"/>
+
+  <!-- callout from one layer down to the expansion -->
+  <path d="M560,110 L560,150 L250,150 L250,196" stroke-dasharray="5 4" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <!-- one layer, expanded -->
+  <rect x="40" y="200" width="330" height="130" fill="#f2f2f2"/>
+  <rect x="420" y="200" width="420" height="130" fill="#ffffff"/>
+  <rect x="890" y="200" width="350" height="130" fill="#f2f2f2"/>
+
+  <rect x="450" y="248" width="360" height="56" fill="#ffffff"/>
+
+  <path d="M370,264 L416,264" marker-end="url(#ar)"/>
+  <path d="M840,264 L886,264" marker-end="url(#ar)"/>
+</g>
+
+<g fill="#1a1a1a" text-anchor="middle">
+  <text x="100" y="89" font-size="13">token</text>
+  <text x="260" y="89" font-size="13">embed</text>
+  <text x="420" y="89" font-size="13">layer 1</text>
+  <text x="580" y="89" font-size="13">layer 2</text>
+  <text x="688" y="90" font-size="15" fill="#555555">…</text>
+  <text x="800" y="89" font-size="13">layer L</text>
+  <text x="960" y="89" font-size="13">logits</text>
+  <text x="1120" y="89" font-size="13">next token</text>
+
+  <text x="610" y="163" font-size="9.5" fill="#333333">every token re-enters here, prompt tokens included — there is no prefill stage anywhere</text>
+
+  <text x="205" y="225" font-size="13">Host</text>
+  <text x="630" y="225" font-size="13">Programmable logic</text>
+  <text x="1065" y="225" font-size="13">Host</text>
+
+  <text x="205" y="258" font-size="10.5" fill="#444444">W_q ,  W_k ,  W_v</text>
+  <text x="205" y="276" font-size="10.5" fill="#444444">RoPE</text>
+  <text x="205" y="302" font-size="9.5" fill="#777777">both O(1) in context</text>
+
+  <text x="630" y="272" font-size="12.5">the attention block of Fig. 1</text>
+  <text x="630" y="292" font-size="9.5" fill="#444444">H KV heads one after the other; the KV cache is here, and nowhere else</text>
+
+  <text x="1065" y="258" font-size="10.5" fill="#444444">W_o′  (R⁻¹ folded in)</text>
+  <text x="1065" y="276" font-size="10.5" fill="#444444">MLP,  residual</text>
+  <text x="1065" y="302" font-size="9.5" fill="#777777">also O(1) in context</text>
+
+  <text x="393" y="255" font-size="9" fill="#333333">q, k, v</text>
+  <text x="393" y="281" font-size="9" fill="#333333">every head</text>
+  <text x="863" y="255" font-size="9" fill="#333333">output</text>
+  <text x="863" y="281" font-size="9" fill="#333333">every head</text>
+</g>
+
+<g fill="#1a1a1a" text-anchor="start">
+  <text x="40" y="36" font-size="12.5">One token, one pass</text>
+  <text x="40" y="190" font-size="12.5">Inside one layer — the only place the two sides meet</text>
+
+  <text x="40" y="360" font-size="9.5" fill="#666666">Each token costs L of these crossings, one per layer, and the cache row every scan reads was written by the block itself on an earlier step.</text>
+  <text x="40" y="376" font-size="9.5" fill="#666666">Nothing is preloaded into DDR and no weight is ever streamed through it, so every byte the block moves is cache traffic.</text>
+</g>
+</svg>
