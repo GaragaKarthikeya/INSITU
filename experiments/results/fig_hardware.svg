@@ -19,7 +19,7 @@
   <rect x="890" y="170" width="138" height="63" fill="#ffffff"/>
 
   <!-- lane array; kv_store_ddr sits outside it, because it is shared -->
-  <rect x="240" y="292" width="638" height="88" fill="#fafafa"/>
+  <rect x="240" y="292" width="632" height="88" fill="#fafafa"/>
   <rect x="250" y="304" width="138" height="63" fill="#ffffff"/>
   <rect x="410" y="304" width="138" height="63" fill="#ffffff"/>
   <rect x="570" y="304" width="138" height="63" fill="#ffffff"/>
