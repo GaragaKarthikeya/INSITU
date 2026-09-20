@@ -79,7 +79,7 @@
   <text x="395" y="202" font-size="11" fill="#555555">(2+G) vec / group</text>
 
   <text x="560" y="180" font-size="18">rot_fwht</text>
-  <text x="560" y="202" font-size="11" fill="#555555">Hadamard, d = 2^m</text>
+  <text x="560" y="202" font-size="11" fill="#555555">Walsh–Hadamard</text>
 
   <text x="737" y="180" font-size="18">rot_norm</text>
   <text x="737" y="202" font-size="11" fill="#555555">→ w_n</text>
