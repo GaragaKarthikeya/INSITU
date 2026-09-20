@@ -1,0 +1,189 @@
+% =====================================================================
+%  Figure: the attention block on the ZCU104
+%
+%  Include from the paper:
+%
+%      \begin{figure*}[t]
+%        \centering
+%        \input{fig_hardware}
+%        \caption{...}\label{fig:hw}
+%      \end{figure*}
+%
+%  Preamble needs:
+%      \usepackage{tikz}
+%      \usetikzlibrary{arrows.meta}
+%
+%  NOT YET COMPILED -- written without a LaTeX toolchain available.
+%  Check it renders before trusting it.
+%
+%  ---------------------------------------------------------------------
+%  Geometry is in the same 1280 x 455 coordinate space as
+%  fig_hardware.svg, so the two can be compared line for line.  The unit
+%  vectors below set the printed size; text is set in real LaTeX sizes
+%  and deliberately does NOT scale with the drawing.
+%
+%  To resize the drawing   : change \figunit
+%  To resize the type      : change \figTitle / \figMod / \figNote
+%
+%  \figunit = 0.13906mm gives a width of 178mm (7in), a two-column
+%  figure*.  For a single-column figure use about 0.0664mm, but at that
+%  size the type will have to come down with it.
+%
+%  TIGHTEST LABEL: \texttt{softmax\_online} in a 138-unit box.  At
+%  \figunit = 0.13906mm that box is 54.4pt wide, and the label needs
+%  roughly 59pt at \scriptsize.  If it overflows, either set \figMod to
+%  \tiny or widen that column.
+% =====================================================================
+
+\providecommand{\figunit}{0.13906mm}
+\providecommand{\figTitle}{\small}      % Host, DDR
+\providecommand{\figMod}{\scriptsize}   % module names, section headings
+\providecommand{\figNote}{\tiny}        % annotations and body text
+
+\definecolor{figink}{HTML}{1A1A1A}
+\definecolor{fighost}{HTML}{F2F2F2}
+\definecolor{figddr}{HTML}{D8D8D8}
+\definecolor{figlane}{HTML}{FAFAFA}
+\definecolor{figcell}{HTML}{F0F0F0}
+\definecolor{figrulec}{HTML}{9A9A9A}
+\definecolor{figdim}{HTML}{555555}
+\definecolor{figbody}{HTML}{333333}
+\definecolor{figleg}{HTML}{666666}
+
+\begin{tikzpicture}[
+    x = {(\figunit,0mm)},
+    y = {(0mm,\figunit)},
+    line width = 0.5pt,
+    draw       = figink,
+    every node/.style = {inner sep=0pt, outer sep=0pt, text=figink},
+    box/.style    = {draw=figink, fill=white},
+    arw/.style    = {draw=figink, -{Stealth[length=3.2pt,width=2.6pt]}},
+    rul/.style    = {draw=figrulec, line width=0.3pt},
+    mod/.style    = {anchor=base, font=\figMod\ttfamily},
+    ttl/.style    = {anchor=base, font=\figTitle},
+    hed/.style    = {anchor=base west, font=\figMod},
+    nte/.style    = {anchor=base, font=\figNote, text=figbody},
+    dim/.style    = {anchor=base, font=\figNote, text=figdim},
+    nteW/.style   = {anchor=base west, font=\figNote, text=figbody},
+    dimW/.style   = {anchor=base west, font=\figNote, text=figdim},
+]
+
+% ---------------------------------------------------------------- regions
+\draw[box, fill=fighost] (40,35)   rectangle (205,345);
+\draw[box]               (235,35)  rectangle (1045,345);
+\draw[box, fill=figddr]  (1075,35) rectangle (1250,345);
+
+% ------------------------------------------------- write path, left to right
+\draw[box] (250,222) rectangle (388,285);
+\draw[box] (410,222) rectangle (548,285);
+\draw[box] (570,222) rectangle (708,285);
+\draw[box] (730,222) rectangle (868,285);
+\draw[box] (890,222) rectangle (1028,285);
+
+% --------------------- lane array; kv_store_ddr sits outside it, being shared
+\draw[box, fill=figlane] (240,75) rectangle (872,163);
+\draw[box] (250,88) rectangle (388,151);
+\draw[box] (410,88) rectangle (548,151);
+\draw[box] (570,88) rectangle (708,151);
+\draw[box] (730,88) rectangle (868,151);
+
+\draw[box] (890,77) rectangle (1028,161);
+\draw[box, fill=figcell] (897,89) rectangle (927,117);
+\draw[box, fill=figcell] (933,89) rectangle (963,117);
+\draw[box, fill=figcell] (987,89) rectangle (1021,117);
+
+% ---------------------------------------------------------------- arrows
+\draw[arw] (208,254)  -- (246,254);
+\draw[arw] (390,254)  -- (408,254);
+\draw[arw] (550,254)  -- (568,254);
+\draw[arw] (710,254)  -- (728,254);
+\draw[arw] (870,254)  -- (888,254);
+\draw[arw] (1032,254) -- (1071,254);
+
+\draw[arw] (1071,119) -- (1032,119);
+\draw[arw] (888,119)  -- (869,119);
+\draw[arw] (728,119)  -- (710,119);
+\draw[arw] (568,119)  -- (550,119);
+\draw[arw] (408,119)  -- (390,119);
+\draw[arw] (246,119)  -- (208,119);
+
+\draw[arw] (479,222) -- (479,191) -- (799,191) -- (799,152);
+
+% ------------------------------------------------- rules in host and DDR
+\draw[rul] (56,301)   -- (189,301);
+\draw[rul] (56,197)   -- (189,197);
+\draw[rul] (56,123)   -- (189,123);
+\draw[rul] (1090,285) -- (1235,285);
+\draw[rul] (1090,235) -- (1235,235);
+\draw[rul] (1090,143) -- (1235,143);
+
+% ---------------------------------------------------------------- host
+\node[ttl]  at (122,317) {Host};
+\node[hed]  at (56,279)  {sent to the block};
+\node[dimW] at (64,260)  {$q$, $k$ and $v$ for every};
+\node[dimW] at (64,245)  {head, already projected};
+\node[dimW] at (64,230)  {through $W_q$, $W_k$, $W_v$};
+\node[dimW] at (64,215)  {and carrying RoPE};
+\node[hed]  at (56,175)  {back from the block};
+\node[dimW] at (64,156)  {the attention output};
+\node[dimW] at (64,141)  {for all of the heads};
+\node[hed]  at (56,101)  {finished on the host};
+\node[dimW] at (64,82)   {$W_o'$ \ ($R^{-1}$ folded in)};
+\node[dimW] at (64,67)   {MLP \ $\rightarrow$ \ logits};
+\node[dimW] at (64,52)   {then the next layer};
+
+% ---------------------------------------------------------------- DDR
+\node[ttl] at (1162,319) {DDR};
+\node[anchor=base, font=\figMod] at (1162,299) {KV cache};
+\node[nte] at (1162,265) {one 52-byte row per};
+\node[nte] at (1162,251) {token, per KV head};
+\node[nte] at (1162,215) {the row is cut into $P$};
+\node[nte] at (1162,201) {slices, and each one is};
+\node[nte] at (1162,187) {kept as its own array,};
+\node[nte] at (1162,173) {contiguous and running};
+\node[nte] at (1162,159) {across all the tokens};
+\node[nte] at (1162,123) {each AXI port reads};
+\node[nte] at (1162,109) {one slice and nothing};
+\node[nte] at (1162,95)  {else, which turns the};
+\node[nte] at (1162,81)  {whole scan into long};
+\node[nte] at (1162,67)  {sequential bursts};
+
+% ------------------------------------------------------- programmable logic
+\node[hed]  at (250,322) {Programmable logic};
+\node[dimW] at (250,305) {one KV head at a time --- the $H$ heads of a token run one after the other};
+\node[nteW] at (240,169) {$\times\,G$ \ --- one lane per query head of this KV head};
+
+% ---------------------------------------------------------------- write path
+\node[mod] at (319,249) {attn\_ingress};
+\node[mod] at (479,258) {rot\_fwht};
+\node[dim] at (479,239) {$k$, $v$, $q$};
+\node[mod] at (639,249) {rot\_norm};
+\node[mod] at (799,249) {rot\_encode};
+\node[mod] at (959,262) {kv\_write};
+\node[dim] at (959,245) {one row per token,};
+\node[dim] at (959,233) {per KV head};
+
+% ---------------------------------------------------------------- lanes
+\node[mod] at (319,115) {finalize};
+\node[mod] at (479,115) {accum};
+\node[mod] at (639,115) {softmax\_online};
+\node[mod] at (799,115) {score\_lane};
+
+% ------------------------------------------------------- shared read engine
+\node[mod] at (959,138) {kv\_store\_ddr};
+\node[nte] at (912,98)  {0};
+\node[nte] at (948,98)  {1};
+\node[dim] at (975,97)  {$\dots$};
+\node[nte] at (1004,98) {$P\!-\!1$};
+\node[nte] at (959,64)  {the $P$ ports fetch one};
+\node[nte] at (959,52)  {whole row per cycle, and};
+\node[nte] at (959,40)  {all $G$ lanes score on it};
+
+% ---------------------------------------------------------------- q branch
+\node[nte] at (639,198) {$q$ is held inside each lane and never written to the cache};
+
+% ---------------------------------------------------------------- legend
+\node[anchor=base west, font=\figNote, text=figleg] at (40,15)
+  {The ZCU104 provides four AXI-HP ports, each carrying 128 bits --- 16 bytes --- per cycle, so a cache row can be at most 64 bytes wide};
+
+\end{tikzpicture}
