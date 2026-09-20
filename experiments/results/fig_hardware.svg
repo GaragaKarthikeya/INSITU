@@ -1,143 +1,120 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 565" width="1280" height="565" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 455" width="1280" height="455" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
 <defs>
   <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
     <path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/>
   </marker>
 </defs>
-<rect width="1280" height="565" fill="#ffffff"/>
+<rect width="1280" height="455" fill="#ffffff"/>
 
-<!-- ============================ PANEL (a) ============================ -->
 <g stroke="#1a1a1a" stroke-width="1.5" fill="none">
-  <rect x="760" y="30" width="480" height="76" fill="#d8d8d8"/>
-  <rect x="40" y="150" width="155" height="250" fill="#f2f2f2"/>
-  <rect x="228" y="150" width="1012" height="250" fill="#ffffff"/>
+  <!-- three regions -->
+  <rect x="40" y="120" width="155" height="295" fill="#f2f2f2"/>
+  <rect x="215" y="120" width="865" height="295" fill="#ffffff"/>
+  <rect x="1100" y="120" width="150" height="295" fill="#d8d8d8"/>
 
-  <!-- row 1 -->
-  <rect x="250" y="188" width="115" height="60" fill="#ffffff"/>
-  <rect x="390" y="188" width="115" height="60" fill="#ffffff"/>
-  <rect x="530" y="188" width="245" height="60" fill="#e8e8e8"/>
-  <path d="M630,188 L630,248"/>
-  <rect x="800" y="188" width="115" height="60" fill="#e8e8e8"/>
-  <rect x="975" y="180" width="240" height="78" fill="#ffffff"/>
-  <rect x="985" y="224" width="50" height="22" fill="#f0f0f0"/>
-  <rect x="1041" y="224" width="50" height="22" fill="#f0f0f0"/>
-  <rect x="1097" y="224" width="50" height="22" fill="#f0f0f0"/>
-  <rect x="1153" y="224" width="50" height="22" fill="#f0f0f0"/>
+  <!-- write path, left to right -->
+  <rect x="235" y="170" width="115" height="62" fill="#ffffff"/>
+  <rect x="370" y="170" width="115" height="62" fill="#ffffff"/>
+  <rect x="505" y="170" width="245" height="62" fill="#e8e8e8"/>
+  <path d="M610,170 L610,232"/>
+  <rect x="770" y="170" width="115" height="62" fill="#e8e8e8"/>
 
-  <!-- lane array, x G -->
-  <rect x="258" y="298" width="670" height="85" fill="#ffffff" stroke="#aaaaaa" stroke-width="1.1"/>
-  <rect x="254" y="294" width="670" height="85" fill="#ffffff" stroke="#aaaaaa" stroke-width="1.1"/>
-  <rect x="250" y="290" width="670" height="85" fill="#fafafa"/>
-  <rect x="268" y="308" width="150" height="54" fill="#e8e8e8"/>
-  <rect x="438" y="308" width="170" height="54" fill="#ffffff"/>
-  <rect x="628" y="308" width="105" height="54" fill="#ffffff"/>
-  <rect x="753" y="308" width="120" height="54" fill="#ffffff"/>
+  <!-- lane array (x G) -- kv_store_ddr deliberately sits OUTSIDE it -->
+  <rect x="225" y="288" width="590" height="92" fill="#fafafa"/>
+  <rect x="240" y="302" width="110" height="56" fill="#ffffff"/>
+  <rect x="370" y="302" width="100" height="56" fill="#ffffff"/>
+  <rect x="490" y="302" width="160" height="56" fill="#ffffff"/>
+  <rect x="670" y="302" width="130" height="56" fill="#e8e8e8"/>
 
-  <!-- arrows -->
-  <path d="M195,218 L244,218" marker-end="url(#ar)"/>
-  <path d="M365,218 L384,218" marker-end="url(#ar)"/>
-  <path d="M505,218 L524,218" marker-end="url(#ar)"/>
-  <path d="M775,218 L794,218" marker-end="url(#ar)"/>
-  <path d="M857,188 L857,112" marker-end="url(#ar)"/>
-  <path d="M1095,106 L1095,176" marker-end="url(#ar)"/>
-  <path d="M418,335 L432,335" marker-end="url(#ar)"/>
-  <path d="M608,335 L622,335" marker-end="url(#ar)"/>
-  <path d="M733,335 L747,335" marker-end="url(#ar)"/>
-  <path d="M447,248 L447,272 L343,272 L343,302" marker-end="url(#ar)"/>
-  <path d="M873,335 L945,335 L945,144" marker-end="url(#ar)"/>
-  <path d="M1095,258 L1095,392 L300,392 L300,379" stroke-width="2.6" marker-end="url(#ar)"/>
+  <!-- the one shared read engine -->
+  <rect x="830" y="290" width="230" height="88" fill="#ffffff"/>
+  <rect x="842" y="325" width="47" height="30" fill="#f0f0f0"/>
+  <rect x="894" y="325" width="47" height="30" fill="#f0f0f0"/>
+  <rect x="946" y="325" width="47" height="30" fill="#f0f0f0"/>
+  <rect x="998" y="325" width="47" height="30" fill="#f0f0f0"/>
 
-  <!-- seam -->
-  <path d="M212,152 L212,398" stroke-dasharray="6 4" stroke-width="1.2"/>
+  <!-- write path arrows -->
+  <path d="M195,201 L231,201" marker-end="url(#ar)"/>
+  <path d="M350,201 L366,201" marker-end="url(#ar)"/>
+  <path d="M485,201 L501,201" marker-end="url(#ar)"/>
+  <path d="M750,201 L766,201" marker-end="url(#ar)"/>
+  <path d="M885,201 L1096,201" marker-end="url(#ar)"/>
+
+  <!-- read path arrows, right to left, ending at the host -->
+  <path d="M1096,334 L1064,334" marker-end="url(#ar)"/>
+  <path d="M830,334 L804,334" stroke-width="2.4" marker-end="url(#ar)"/>
+  <path d="M670,334 L654,334" marker-end="url(#ar)"/>
+  <path d="M490,334 L474,334" marker-end="url(#ar)"/>
+  <path d="M370,334 L354,334" marker-end="url(#ar)"/>
+  <path d="M240,334 L199,334" marker-end="url(#ar)"/>
+
+  <!-- q branch -->
+  <path d="M427,232 L427,262 L735,262 L735,298" marker-end="url(#ar)"/>
 </g>
 
 <g fill="#1a1a1a" text-anchor="middle">
-  <text x="1000" y="58" font-size="17">DDR — the KV cache</text>
-  <text x="1000" y="80" font-size="10.5" fill="#444444">stored transposed: plane p holds row bytes [ ΣW, +W_p ) for every token</text>
+  <!-- host -->
+  <text x="117" y="147" font-size="15">Host</text>
+  <text x="117" y="352" font-size="9" fill="#777777">all O(1) in context</text>
 
-  <text x="117" y="180" font-size="15">Host</text>
-  <text x="117" y="203" font-size="10" fill="#555555">W_q  W_k  W_v</text>
-  <text x="117" y="219" font-size="10" fill="#555555">RoPE</text>
-  <text x="117" y="243" font-size="10" fill="#555555">W_o′  (R⁻¹ folded in)</text>
-  <text x="117" y="267" font-size="10" fill="#555555">MLP, logits</text>
-  <text x="117" y="300" font-size="9.5" fill="#777777">all O(1) in context</text>
+  <!-- DDR -->
+  <text x="1175" y="150" font-size="15">DDR</text>
+  <text x="1175" y="170" font-size="12">KV cache</text>
+  <text x="1175" y="204" font-size="9.5" fill="#333333">stored transposed —</text>
+  <text x="1175" y="219" font-size="9.5" fill="#333333">each plane holds the</text>
+  <text x="1175" y="234" font-size="9.5" fill="#333333">same byte range of</text>
+  <text x="1175" y="249" font-size="9.5" fill="#333333">every token's row</text>
+  <text x="1175" y="278" font-size="9.5" fill="#333333">so the P planes</text>
+  <text x="1175" y="293" font-size="9.5" fill="#333333">stream in parallel,</text>
+  <text x="1175" y="308" font-size="9.5" fill="#333333">one whole row a cycle</text>
 
-  <text x="307" y="212" font-size="14">attn_ingress</text>
-  <text x="307" y="231" font-size="9.5" fill="#555555">(2+G) vec / group</text>
-  <text x="447" y="212" font-size="14">rot_fwht</text>
-  <text x="447" y="231" font-size="9.5" fill="#555555">Walsh–Hadamard</text>
-  <text x="580" y="212" font-size="13">rot_norm</text>
-  <text x="580" y="231" font-size="9.5" fill="#555555">→ w_n</text>
-  <text x="702" y="212" font-size="13">rot_encode ×2</text>
-  <text x="702" y="231" font-size="9.5" fill="#555555">2^b_k / 2^b_v</text>
-  <text x="857" y="212" font-size="14">kv_write</text>
-  <text x="857" y="231" font-size="9.5" fill="#555555">1 row / token</text>
+  <!-- write path -->
+  <text x="292" y="206" font-size="14">attn_ingress</text>
+  <text x="427" y="199" font-size="14">rot_fwht</text>
+  <text x="427" y="218" font-size="10" fill="#555555">k, v, q</text>
+  <text x="557" y="206" font-size="13">rot_norm</text>
+  <text x="680" y="206" font-size="13">rot_encode</text>
+  <text x="827" y="199" font-size="14">kv_write</text>
+  <text x="827" y="218" font-size="10" fill="#555555">one row / token</text>
 
-  <text x="1095" y="200" font-size="14">kv_store_ddr</text>
-  <text x="1095" y="217" font-size="9.5" fill="#555555">P × AXI-HP read, burst 64</text>
-  <text x="1010" y="239" font-size="9.5">0</text>
-  <text x="1066" y="239" font-size="9.5">1</text>
-  <text x="1122" y="239" font-size="9.5">2</text>
-  <text x="1178" y="239" font-size="9.5">P−1</text>
+  <!-- lanes -->
+  <text x="295" y="336" font-size="13">finalize</text>
+  <text x="420" y="336" font-size="13">accum</text>
+  <text x="570" y="336" font-size="13">softmax_online</text>
+  <text x="735" y="336" font-size="13">score_lane</text>
 
-  <text x="343" y="331" font-size="13">score_lane</text>
-  <text x="343" y="349" font-size="9.5" fill="#555555">⟨rq, codes⟩ → w_s</text>
-  <text x="523" y="331" font-size="13">softmax_online</text>
-  <text x="523" y="349" font-size="9.5" fill="#555555">+ exp_lut</text>
-  <text x="680" y="331" font-size="13">accum</text>
-  <text x="680" y="349" font-size="9.5" fill="#555555">w_a</text>
-  <text x="813" y="331" font-size="13">finalize</text>
-  <text x="813" y="349" font-size="9.5" fill="#555555">÷ l → w_o</text>
+  <!-- shared read engine -->
+  <text x="945" y="313" font-size="14">kv_store_ddr</text>
+  <text x="866" y="345" font-size="9.5">0</text>
+  <text x="918" y="345" font-size="9.5">1</text>
+  <text x="970" y="345" font-size="9.5">2</text>
+  <text x="1022" y="345" font-size="9.5">P−1</text>
 
-  <text x="690" y="387" font-size="10">shared row — one per cycle, broadcast to all G lanes</text>
+  <text x="945" y="398" font-size="9.5" fill="#333333">instantiated once — its P read masters and the row</text>
+  <text x="945" y="411" font-size="9.5" fill="#333333">they assemble are shared by all G lanes</text>
 </g>
 
 <g fill="#1a1a1a" text-anchor="start">
-  <text x="40" y="144" font-size="14">(a)</text>
-  <text x="238" y="169" font-size="12.5">Attention block  (programmable logic)</text>
-  <text x="250" y="284" font-size="11">lane array  × G</text>
-  <text x="455" y="268" font-size="9.5">q_0 … q_(G−1), held — never cached</text>
-  <text x="955" y="152" font-size="9.5">→ host</text>
-  <text x="216" y="146" font-size="9.5" fill="#555555">seam: w_L</text>
+  <text x="225" y="142" font-size="12.5">Attention block  (programmable logic)</text>
+  <text x="225" y="282" font-size="11">× G  — one lane per query head in the KV group</text>
+  <text x="742" y="256" font-size="9.5" fill="#555555">q held per lane, never cached</text>
+  <text x="890" y="192" font-size="9.5" fill="#555555">write</text>
+
+  <!-- host detail -->
+  <text x="55" y="180" font-size="10">into the block</text>
+  <text x="66" y="198" font-size="9.5" fill="#555555">W_q ,  W_k ,  W_v</text>
+  <text x="66" y="213" font-size="9.5" fill="#555555">RoPE</text>
+  <text x="55" y="250" font-size="10">out of the block</text>
+  <text x="66" y="268" font-size="9.5" fill="#555555">W_o′   (R⁻¹ folded in)</text>
+  <text x="66" y="283" font-size="9.5" fill="#555555">MLP  →  logits</text>
+
+  <text x="40" y="437" font-size="9.5" fill="#666666">H KV groups run one at a time.  G query heads share their group's cache row.  P planes — one per AXI port needed to deliver a whole row each cycle.</text>
+  <text x="40" y="450" font-size="9.5" fill="#666666">As evaluated: H = 8, G = 4, P = 4; 4-bit keys, 2-bit values; a 52-byte row per token per KV head, 4.92× smaller than fp16.</text>
 </g>
 
-<!-- ============================ PANEL (b) ============================ -->
-<g stroke="#1a1a1a" stroke-width="1.3" fill="none">
-  <rect x="140" y="462" width="430" height="24" fill="#f0f0f0"/>
-  <path d="M355,462 L355,486" stroke-width="1"/>
-  <rect x="140" y="500" width="87" height="24" fill="#b8b8b8"/>
-
-  <rect x="760" y="462" width="271" height="24" fill="#b8b8b8"/>
-  <rect x="1031" y="462" width="135" height="24" fill="#d8d8d8"/>
-  <rect x="1166" y="462" width="34" height="24" fill="#8a8a8a"/>
-
-  <rect x="760" y="500" width="135" height="22" fill="#ffffff"/>
-  <rect x="895" y="500" width="135" height="22" fill="#f0f0f0"/>
-  <rect x="1030" y="500" width="135" height="22" fill="#ffffff"/>
-  <rect x="1165" y="500" width="35" height="22" fill="#f0f0f0"/>
-  <path d="M895,458 L895,526" stroke-dasharray="4 3" stroke-width="1.4" stroke="#1a1a1a"/>
-</g>
-
-<g fill="#1a1a1a">
-  <text x="40" y="448" font-size="14">(b)</text>
-  <text x="70" y="448" font-size="11.5">cache row per token per KV head — drawn to scale</text>
-  <text x="40" y="479" font-size="10" text-anchor="start">fp16</text>
-  <text x="40" y="517" font-size="10" text-anchor="start">codes</text>
-  <text x="247" y="511" font-size="10.5" text-anchor="start">R = d(b_k+b_v) + 2w_n = 52 B</text>
-  <text x="247" y="524" font-size="10.5" text-anchor="start" fill="#444444">4.92× smaller</text>
-  <text x="580" y="479" font-size="10" text-anchor="start">2·d·16 = 256 B</text>
-  <text x="247" y="479" font-size="9.5" text-anchor="start" fill="#777777">d keys  |  d values</text>
-
-  <text x="760" y="448" font-size="11.5" text-anchor="start">fields (above) vs P planes (below), magnified</text>
-  <text x="895" y="477" font-size="9.5" text-anchor="middle" fill="#ffffff">d · b_k</text>
-  <text x="1098" y="477" font-size="9.5" text-anchor="middle">d · b_v</text>
-  <text x="1183" y="477" font-size="8.5" text-anchor="middle" fill="#ffffff">2w_n</text>
-  <text x="827" y="515" font-size="9.5" text-anchor="middle">plane 0</text>
-  <text x="962" y="515" font-size="9.5" text-anchor="middle">1</text>
-  <text x="1097" y="515" font-size="9.5" text-anchor="middle">2</text>
-  <text x="1182" y="515" font-size="9.5" text-anchor="middle">3</text>
-  <text x="760" y="542" font-size="9.5" text-anchor="start" fill="#444444">planes are byte-ranges sized to saturate one w_axi port each — they do not align with the fields:  P = ⌈ R / (w_axi/8) ⌉</text>
-
-  <text x="40" y="560" font-size="9.5" fill="#666666">Symbols are parameters. As evaluated: d=64, b_k=4, b_v=2, w_n=16, w_L=24, w_axi=128, H=8 KV heads, G=4 queries/head, P=4 (16,16,16,4 B); H groups run sequentially.</text>
+<g stroke="#999999" stroke-width="1" fill="none">
+  <path d="M57,160 L178,160"/>
+  <path d="M57,230 L178,230"/>
+  <path d="M1112,182 L1238,182"/>
 </g>
 </svg>
