@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 800" width="1280" height="800" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+<defs>
+  <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/>
+  </marker>
+</defs>
+<rect width="1280" height="800" fill="#ffffff"/>
+<g stroke="#1a1a1a" stroke-width="1.6" fill="none">
+
+<!-- ================= DDR ================= -->
+<rect x="70" y="28" width="1130" height="64" fill="#d8d8d8"/>
+
+<!-- ================= write path ================= -->
+<rect x="200" y="152" width="90" height="70" fill="#f0f0f0"/>
+<rect x="330" y="152" width="130" height="70" fill="#ffffff"/>
+<rect x="495" y="152" width="130" height="70" fill="#ffffff"/>
+<rect x="680" y="152" width="115" height="70" fill="#ffffff"/>
+<rect x="830" y="152" width="170" height="70" fill="#e8e8e8"/>
+<rect x="1035" y="152" width="130" height="70" fill="#e8e8e8"/>
+
+<path d="M290,187 L322,187" marker-end="url(#ar)"/>
+<path d="M460,187 L487,187" marker-end="url(#ar)"/>
+<path d="M625,187 L672,187" marker-end="url(#ar)"/>
+<path d="M795,187 L822,187" marker-end="url(#ar)"/>
+<path d="M1000,187 L1027,187" marker-end="url(#ar)"/>
+<path d="M1100,152 L1100,98" marker-end="url(#ar)"/>
+
+<!-- ================= DDR -> planes ================= -->
+<path d="M185,92 L185,279" marker-end="url(#ar)"/>
+
+<!-- ================= kv_store_ddr ================= -->
+<rect x="70" y="285" width="230" height="120" fill="#ffffff"/>
+<rect x="80" y="350" width="48" height="28" fill="#f0f0f0"/>
+<rect x="134" y="350" width="48" height="28" fill="#f0f0f0"/>
+<rect x="188" y="350" width="48" height="28" fill="#f0f0f0"/>
+<rect x="242" y="350" width="48" height="28" fill="#f0f0f0"/>
+
+<!-- ================= shared row bus ================= -->
+<path d="M185,405 L185,600 L580,600 L580,552" stroke-width="2.6" marker-end="url(#ar)"/>
+
+<!-- ================= q path ================= -->
+<path d="M655,225 L655,420 L412,420 L412,464" marker-end="url(#ar)"/>
+<circle cx="655" cy="187" r="4.5" fill="#1a1a1a" stroke="none"/>
+
+<!-- ================= lane container (x G) ================= -->
+<rect x="352" y="452" width="865" height="138" fill="#ffffff" stroke="#aaaaaa" stroke-width="1.2"/>
+<rect x="346" y="446" width="865" height="138" fill="#ffffff" stroke="#aaaaaa" stroke-width="1.2"/>
+<rect x="340" y="440" width="865" height="138" fill="#fafafa" stroke="#1a1a1a" stroke-dasharray="7 4"/>
+
+<rect x="355" y="470" width="115" height="78" fill="#ffffff"/>
+<rect x="505" y="470" width="150" height="78" fill="#e8e8e8"/>
+<rect x="690" y="470" width="180" height="78" fill="#ffffff"/>
+<rect x="905" y="470" width="115" height="78" fill="#ffffff"/>
+<rect x="1055" y="470" width="140" height="78" fill="#ffffff"/>
+
+<path d="M470,509 L499,509" marker-end="url(#ar)"/>
+<path d="M655,509 L684,509" marker-end="url(#ar)"/>
+<path d="M870,509 L899,509" marker-end="url(#ar)"/>
+<path d="M1020,509 L1049,509" marker-end="url(#ar)"/>
+<path d="M1205,509 L1252,509" marker-end="url(#ar)"/>
+
+<!-- ================= control strip ================= -->
+<rect x="70" y="630" width="1130" height="50" fill="#f5f5f5" stroke="#999999" stroke-width="1.2"/>
+
+<!-- ================= parameter box ================= -->
+<rect x="70" y="700" width="1130" height="88" fill="#fafafa" stroke="#999999" stroke-width="1.2"/>
+</g>
+
+<g fill="#1a1a1a" text-anchor="middle">
+  <!-- DDR -->
+  <text x="635" y="55" font-size="20">External DDR — the KV cache (the only cache in the design)</text>
+  <text x="635" y="78" font-size="13" fill="#444444">stored transposed: plane p holds row bytes [ Σ(i&lt;p) W_i , +W_p ) for every token — not packed rows at a flat stride</text>
+
+  <!-- write path -->
+  <text x="245" y="182" font-size="17">host</text>
+  <text x="245" y="203" font-size="11" fill="#555555">w_beat</text>
+
+  <text x="395" y="180" font-size="18">attn_ingress</text>
+  <text x="395" y="202" font-size="11" fill="#555555">(2+G) vec / group</text>
+
+  <text x="560" y="180" font-size="18">rot_fwht</text>
+  <text x="560" y="202" font-size="11" fill="#555555">Hadamard, d = 2^m</text>
+
+  <text x="737" y="180" font-size="18">rot_norm</text>
+  <text x="737" y="202" font-size="11" fill="#555555">→ w_n</text>
+
+  <text x="915" y="180" font-size="18">rot_encode × 2</text>
+  <text x="915" y="202" font-size="11" fill="#555555">2^b_k / 2^b_v centroids</text>
+
+  <text x="1100" y="180" font-size="18">kv_write</text>
+  <text x="1100" y="201" font-size="10" fill="#555555">R = d(b_k+b_v)+2w_n</text>
+
+  <!-- kv_store_ddr -->
+  <text x="185" y="313" font-size="18">kv_store_ddr</text>
+  <text x="185" y="333" font-size="11" fill="#555555">P × AXI-HP read master</text>
+  <text x="104" y="369" font-size="11">0</text>
+  <text x="158" y="369" font-size="11">1</text>
+  <text x="212" y="369" font-size="11">2</text>
+  <text x="266" y="369" font-size="11">P−1</text>
+  <text x="185" y="395" font-size="10" fill="#555555">planes = byte-ranges of the row</text>
+
+  <!-- lanes -->
+  <text x="412" y="501" font-size="16">q_vec</text>
+  <text x="412" y="521" font-size="10" fill="#555555">d × w_L, held</text>
+
+  <text x="580" y="499" font-size="17">score_lane</text>
+  <text x="580" y="519" font-size="10" fill="#555555">⟨rq, codes⟩ → w_s</text>
+
+  <text x="780" y="499" font-size="17">softmax_online</text>
+  <text x="780" y="519" font-size="10" fill="#555555">+ exp_lut, w_l</text>
+
+  <text x="962" y="499" font-size="17">accum</text>
+  <text x="962" y="519" font-size="10" fill="#555555">w_a</text>
+
+  <text x="1125" y="499" font-size="17">finalize</text>
+  <text x="1125" y="519" font-size="10" fill="#555555">÷ l → w_o</text>
+
+  <!-- bus label -->
+  <text x="390" y="592" font-size="12">one R-bit row / cycle — shared by all G lanes (row_ready = &amp; lane_row_ready)</text>
+</g>
+
+<g fill="#1a1a1a" text-anchor="start">
+  <text x="1115" y="126" font-size="12">1 row / token</text>
+  <text x="668" y="300" font-size="12">q_0 … q_(G−1)</text>
+  <text x="668" y="316" font-size="11" fill="#555555">rotated, never cached</text>
+  <text x="340" y="432" font-size="14">× G lanes  (query heads per KV head)</text>
+  <text x="1213" y="495" font-size="11">egress</text>
+  <text x="1213" y="509" font-size="10" fill="#555555">w_beat</text>
+
+  <text x="85" y="652" font-size="13">control — per KV group:  RECV → ROT → NORM → ENC → WRITE → QLOAD → COMMIT → SCAN → FIN → EGRESS</text>
+  <text x="85" y="670" font-size="11" fill="#555555">× H KV groups, sequential (PARALLEL_KV = 1).  Ingress + write is O(1) per group; SCAN is O(T) — the row the group just wrote is read back in the same invocation.</text>
+
+  <text x="85" y="722" font-size="11">Parameters:   d head dim (2^m)  ·  b_k, b_v code widths  ·  w_n norm  ·  w_L seam  ·  w_beat host stream  ·  w_axi AXI  ·  H KV heads  ·  G queries / KV head  ·  P planes  ·  T = ctx+1</text>
+  <text x="85" y="746" font-size="11">Derived:   R = d(b_k + b_v) + 2w_n bits per row   ·   P = ⌈ R / (w_axi/8) ⌉   ·   egress beats = G·d·w_L / w_beat   ·   cache compression = 2·d·16 / R</text>
+  <text x="85" y="770" font-size="11">As evaluated:   d=64, b_k=4, b_v=2, w_n=16, w_L=24, w_beat=512, w_axi=128, H=8, G=4, P=4   →   R = 416 b = 52 B  ·  planes 16/16/16/4 B  ·  12 beats  ·  4.92× vs fp16</text>
+</g>
+
+<g text-anchor="end" fill="#1a1a1a">
+  <text x="173" y="150" font-size="11">P sequential streams</text>
+  <text x="173" y="165" font-size="10" fill="#555555">burst 64, 2 outstanding</text>
+</g>
+</svg>
