@@ -19,7 +19,7 @@
   <rect x="630" y="170" width="120" height="62" fill="#e8e8e8"/>
   <rect x="770" y="170" width="115" height="62" fill="#e8e8e8"/>
 
-  <!-- lane array (x G) -- kv_store_ddr deliberately sits OUTSIDE it -->
+  <!-- lane array (x G); kv_store_ddr deliberately sits OUTSIDE it -->
   <rect x="225" y="288" width="590" height="92" fill="#fafafa"/>
   <rect x="240" y="302" width="110" height="56" fill="#ffffff"/>
   <rect x="370" y="302" width="100" height="56" fill="#ffffff"/>
