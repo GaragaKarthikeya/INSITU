@@ -20,7 +20,7 @@
 
   <!-- lane array; kv_store_ddr sits outside it, because it is shared -->
   <rect x="240" y="292" width="638" height="88" fill="#fafafa" stroke="none"/>
-  <path d="M240,292 L790,292 M808,292 L878,292 L878,327 M878,345 L878,380 L240,380 Z"/>
+  <path d="M240,292 L790,292 M808,292 L878,292 L878,327 M878,345 L878,380 L240,380 L240,292"/>
   <rect x="250" y="304" width="138" height="63" fill="#ffffff"/>
   <rect x="410" y="304" width="138" height="63" fill="#ffffff"/>
   <rect x="570" y="304" width="138" height="63" fill="#ffffff"/>
@@ -41,7 +41,7 @@
 
   <!-- read arrows, right to left, same lengths -->
   <path d="M1071,336 L1032,336" marker-end="url(#ar)"/>
-  <path d="M893,336 L869,336" stroke-width="2.6" marker-end="url(#ar)"/>
+  <path d="M888,336 L869,336" stroke-width="2.6" marker-end="url(#ar)"/>
   <path d="M728,336 L710,336" marker-end="url(#ar)"/>
   <path d="M568,336 L550,336" marker-end="url(#ar)"/>
   <path d="M408,336 L390,336" marker-end="url(#ar)"/>
