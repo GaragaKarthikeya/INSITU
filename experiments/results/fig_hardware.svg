@@ -7,115 +7,128 @@
 <rect width="1280" height="455" fill="#ffffff"/>
 
 <g stroke="#1a1a1a" stroke-width="1.5" fill="none">
-  <!-- three regions -->
-  <rect x="40" y="120" width="155" height="295" fill="#f2f2f2"/>
-  <rect x="215" y="120" width="865" height="295" fill="#ffffff"/>
-  <rect x="1100" y="120" width="150" height="295" fill="#d8d8d8"/>
+  <rect x="40" y="110" width="165" height="310" fill="#f2f2f2"/>
+  <rect x="235" y="110" width="810" height="310" fill="#ffffff"/>
+  <rect x="1075" y="110" width="175" height="310" fill="#d8d8d8"/>
 
-  <!-- write path, left to right -->
-  <rect x="235" y="170" width="115" height="62" fill="#ffffff"/>
-  <rect x="370" y="170" width="115" height="62" fill="#ffffff"/>
-  <rect x="505" y="170" width="105" height="62" fill="#e8e8e8"/>
-  <rect x="630" y="170" width="120" height="62" fill="#e8e8e8"/>
-  <rect x="770" y="170" width="115" height="62" fill="#e8e8e8"/>
+  <!-- write path, left to right, five equal columns -->
+  <rect x="250" y="170" width="138" height="63" fill="#ffffff"/>
+  <rect x="410" y="170" width="138" height="63" fill="#ffffff"/>
+  <rect x="570" y="170" width="138" height="63" fill="#e8e8e8"/>
+  <rect x="730" y="170" width="138" height="63" fill="#e8e8e8"/>
+  <rect x="890" y="170" width="138" height="63" fill="#e8e8e8"/>
 
-  <!-- lane array (x G); kv_store_ddr deliberately sits OUTSIDE it -->
-  <rect x="225" y="288" width="590" height="92" fill="#fafafa"/>
-  <rect x="240" y="302" width="110" height="56" fill="#ffffff"/>
-  <rect x="370" y="302" width="100" height="56" fill="#ffffff"/>
-  <rect x="490" y="302" width="160" height="56" fill="#ffffff"/>
-  <rect x="670" y="302" width="130" height="56" fill="#e8e8e8"/>
+  <!-- lane array; kv_store_ddr sits outside it, because it is shared -->
+  <rect x="240" y="292" width="638" height="88" fill="#fafafa"/>
+  <rect x="250" y="304" width="138" height="63" fill="#ffffff"/>
+  <rect x="410" y="304" width="138" height="63" fill="#ffffff"/>
+  <rect x="570" y="304" width="138" height="63" fill="#ffffff"/>
+  <rect x="730" y="304" width="138" height="63" fill="#e8e8e8"/>
 
-  <!-- the one shared read engine -->
-  <rect x="830" y="290" width="230" height="88" fill="#ffffff"/>
-  <rect x="842" y="325" width="47" height="30" fill="#f0f0f0"/>
-  <rect x="894" y="325" width="47" height="30" fill="#f0f0f0"/>
-  <rect x="946" y="325" width="47" height="30" fill="#f0f0f0"/>
-  <rect x="998" y="325" width="47" height="30" fill="#f0f0f0"/>
+  <rect x="890" y="294" width="138" height="84" fill="#ffffff"/>
+  <rect x="898" y="338" width="26" height="28" fill="#f0f0f0"/>
+  <rect x="930" y="338" width="26" height="28" fill="#f0f0f0"/>
+  <rect x="962" y="338" width="26" height="28" fill="#f0f0f0"/>
+  <rect x="994" y="338" width="26" height="28" fill="#f0f0f0"/>
 
-  <!-- write path arrows -->
-  <path d="M195,201 L231,201" marker-end="url(#ar)"/>
-  <path d="M350,201 L366,201" marker-end="url(#ar)"/>
-  <path d="M485,201 L501,201" marker-end="url(#ar)"/>
-  <path d="M610,201 L626,201" marker-end="url(#ar)"/>
-  <path d="M750,201 L766,201" marker-end="url(#ar)"/>
-  <path d="M885,201 L1096,201" marker-end="url(#ar)"/>
+  <!-- write arrows: 18 px inside the block, 38 px across a boundary -->
+  <path d="M208,201 L246,201" marker-end="url(#ar)"/>
+  <path d="M390,201 L408,201" marker-end="url(#ar)"/>
+  <path d="M550,201 L568,201" marker-end="url(#ar)"/>
+  <path d="M710,201 L728,201" marker-end="url(#ar)"/>
+  <path d="M870,201 L888,201" marker-end="url(#ar)"/>
+  <path d="M1032,201 L1071,201" marker-end="url(#ar)"/>
 
-  <!-- read path arrows, right to left, ending at the host -->
-  <path d="M1096,334 L1064,334" marker-end="url(#ar)"/>
-  <path d="M830,334 L804,334" stroke-width="2.4" marker-end="url(#ar)"/>
-  <path d="M670,334 L654,334" marker-end="url(#ar)"/>
-  <path d="M490,334 L474,334" marker-end="url(#ar)"/>
-  <path d="M370,334 L354,334" marker-end="url(#ar)"/>
-  <path d="M240,334 L199,334" marker-end="url(#ar)"/>
+  <!-- read arrows, right to left, same lengths -->
+  <path d="M1071,336 L1032,336" marker-end="url(#ar)"/>
+  <path d="M888,336 L870,336" stroke-width="2.4" marker-end="url(#ar)"/>
+  <path d="M728,336 L710,336" marker-end="url(#ar)"/>
+  <path d="M568,336 L550,336" marker-end="url(#ar)"/>
+  <path d="M408,336 L390,336" marker-end="url(#ar)"/>
+  <path d="M246,336 L208,336" marker-end="url(#ar)"/>
 
   <!-- q branch -->
-  <path d="M427,232 L427,262 L735,262 L735,298" marker-end="url(#ar)"/>
+  <path d="M479,233 L479,264 L799,264 L799,300" marker-end="url(#ar)"/>
+
+  <!-- rules inside host and DDR -->
+  <g stroke="#9a9a9a" stroke-width="1">
+    <path d="M56,150 L189,150"/>
+    <path d="M56,230 L189,230"/>
+    <path d="M56,300 L189,300"/>
+    <path d="M1090,166 L1235,166"/>
+    <path d="M1090,210 L1235,210"/>
+    <path d="M1090,310 L1235,310"/>
+  </g>
 </g>
 
 <g fill="#1a1a1a" text-anchor="middle">
-  <!-- host -->
-  <text x="117" y="147" font-size="15">Host</text>
-  <text x="117" y="352" font-size="9" fill="#777777">all O(1) in context</text>
+  <text x="122" y="137" font-size="15">Host</text>
 
-  <!-- DDR -->
-  <text x="1175" y="150" font-size="15">DDR</text>
-  <text x="1175" y="170" font-size="12">KV cache</text>
-  <text x="1175" y="204" font-size="9.5" fill="#333333">stored transposed —</text>
-  <text x="1175" y="219" font-size="9.5" fill="#333333">each plane holds the</text>
-  <text x="1175" y="234" font-size="9.5" fill="#333333">same byte range of</text>
-  <text x="1175" y="249" font-size="9.5" fill="#333333">every token's row</text>
-  <text x="1175" y="278" font-size="9.5" fill="#333333">so the P planes</text>
-  <text x="1175" y="293" font-size="9.5" fill="#333333">stream in parallel,</text>
-  <text x="1175" y="308" font-size="9.5" fill="#333333">one whole row a cycle</text>
+  <text x="1162" y="135" font-size="15">DDR</text>
+  <text x="1162" y="154" font-size="12">KV cache</text>
+  <text x="1162" y="185" font-size="9.5" fill="#333333">one 52-byte row per</text>
+  <text x="1162" y="199" font-size="9.5" fill="#333333">token, per KV head</text>
+  <text x="1162" y="229" font-size="9.5" fill="#333333">stored transposed — the</text>
+  <text x="1162" y="243" font-size="9.5" fill="#333333">row is cut into P byte-</text>
+  <text x="1162" y="257" font-size="9.5" fill="#333333">range slices, and each</text>
+  <text x="1162" y="271" font-size="9.5" fill="#333333">slice is kept as its own</text>
+  <text x="1162" y="285" font-size="9.5" fill="#333333">contiguous array running</text>
+  <text x="1162" y="299" font-size="9.5" fill="#333333">across every token</text>
+  <text x="1162" y="329" font-size="9.5" fill="#333333">so each port marches</text>
+  <text x="1162" y="343" font-size="9.5" fill="#333333">down one slice on its</text>
+  <text x="1162" y="357" font-size="9.5" fill="#333333">own — a long sequential</text>
+  <text x="1162" y="371" font-size="9.5" fill="#333333">read, which is the only</text>
+  <text x="1162" y="385" font-size="9.5" fill="#333333">access DDR is fast at</text>
 
   <!-- write path -->
-  <text x="292" y="206" font-size="14">attn_ingress</text>
-  <text x="427" y="199" font-size="14">rot_fwht</text>
-  <text x="427" y="218" font-size="10" fill="#555555">k, v, q</text>
-  <text x="557" y="206" font-size="13">rot_norm</text>
-  <text x="690" y="206" font-size="13">rot_encode</text>
-  <text x="827" y="199" font-size="14">kv_write</text>
-  <text x="827" y="218" font-size="10" fill="#555555">one row / token</text>
+  <text x="319" y="206" font-size="13.5">attn_ingress</text>
+  <text x="479" y="197" font-size="13.5">rot_fwht</text>
+  <text x="479" y="216" font-size="9.5" fill="#555555">k, v, q</text>
+  <text x="639" y="206" font-size="13.5">rot_norm</text>
+  <text x="799" y="206" font-size="13.5">rot_encode</text>
+  <text x="959" y="193" font-size="13.5">kv_write</text>
+  <text x="959" y="210" font-size="9" fill="#555555">one row per token,</text>
+  <text x="959" y="222" font-size="9" fill="#555555">per KV head</text>
 
   <!-- lanes -->
-  <text x="295" y="336" font-size="13">finalize</text>
-  <text x="420" y="336" font-size="13">accum</text>
-  <text x="570" y="336" font-size="13">softmax_online</text>
-  <text x="735" y="336" font-size="13">score_lane</text>
+  <text x="319" y="340" font-size="13.5">finalize</text>
+  <text x="479" y="340" font-size="13.5">accum</text>
+  <text x="639" y="340" font-size="13.5">softmax_online</text>
+  <text x="799" y="340" font-size="13.5">score_lane</text>
 
   <!-- shared read engine -->
-  <text x="945" y="313" font-size="14">kv_store_ddr</text>
-  <text x="866" y="345" font-size="9.5">0</text>
-  <text x="918" y="345" font-size="9.5">1</text>
-  <text x="970" y="345" font-size="9.5">2</text>
-  <text x="1022" y="345" font-size="9.5">P−1</text>
+  <text x="959" y="317" font-size="13.5">kv_store_ddr</text>
+  <text x="911" y="357" font-size="9">0</text>
+  <text x="943" y="357" font-size="9">1</text>
+  <text x="975" y="357" font-size="9">2</text>
+  <text x="1007" y="357" font-size="9">3</text>
 
-  <text x="945" y="398" font-size="9.5" fill="#333333">instantiated once — its P read masters and the row</text>
-  <text x="945" y="411" font-size="9.5" fill="#333333">they assemble are shared by all G lanes</text>
+  <text x="639" y="264" font-size="9.5" fill="#ffffff" stroke="#ffffff" stroke-width="4">q is held inside each lane, never written to the cache</text>
+  <text x="639" y="264" font-size="9.5" fill="#333333">q is held inside each lane, never written to the cache</text>
+
+  <text x="700" y="400" font-size="10" fill="#333333">the P ports together fetch one whole row each cycle, and every one of the G lanes scores against that same row</text>
 </g>
 
 <g fill="#1a1a1a" text-anchor="start">
-  <text x="225" y="142" font-size="12.5">Attention block  (programmable logic)</text>
-  <text x="225" y="282" font-size="11">× G  — one lane per query head in the KV group</text>
-  <text x="742" y="256" font-size="9.5" fill="#555555">q held per lane, never cached</text>
-  <text x="890" y="192" font-size="9.5" fill="#555555">write</text>
+  <text x="250" y="133" font-size="12.5">Attention block  (programmable logic)</text>
+  <text x="250" y="150" font-size="10" fill="#555555">one KV head at a time — the H heads of a token run one after the other</text>
+  <text x="240" y="286" font-size="10.5">× G  — one lane per query head of this KV head</text>
 
-  <!-- host detail -->
-  <text x="55" y="180" font-size="10">into the block</text>
-  <text x="66" y="198" font-size="9.5" fill="#555555">W_q ,  W_k ,  W_v</text>
-  <text x="66" y="213" font-size="9.5" fill="#555555">RoPE</text>
-  <text x="55" y="250" font-size="10">out of the block</text>
-  <text x="66" y="268" font-size="9.5" fill="#555555">W_o′   (R⁻¹ folded in)</text>
-  <text x="66" y="283" font-size="9.5" fill="#555555">MLP  →  logits</text>
+  <text x="56" y="170" font-size="10">sent to the block</text>
+  <text x="66" y="188" font-size="9.5" fill="#555555">q, k and v, already</text>
+  <text x="66" y="202" font-size="9.5" fill="#555555">projected through</text>
+  <text x="66" y="216" font-size="9.5" fill="#555555">W_q, W_k, W_v and</text>
+  <text x="66" y="230" font-size="9.5" fill="#555555">carrying RoPE</text>
 
-  <text x="40" y="437" font-size="9.5" fill="#666666">H KV groups run one at a time.  G query heads share their group's cache row.  P planes — one per AXI port needed to deliver a whole row each cycle.</text>
-  <text x="40" y="450" font-size="9.5" fill="#666666">As evaluated: H = 8, G = 4, P = 4; 4-bit keys, 2-bit values; a 52-byte row per token per KV head, 4.92× smaller than fp16.</text>
-</g>
+  <text x="56" y="250" font-size="10">back from the block</text>
+  <text x="66" y="268" font-size="9.5" fill="#555555">this KV head's share</text>
+  <text x="66" y="282" font-size="9.5" fill="#555555">of the attention output</text>
 
-<g stroke="#999999" stroke-width="1" fill="none">
-  <path d="M57,160 L178,160"/>
-  <path d="M57,230 L178,230"/>
-  <path d="M1112,182 L1238,182"/>
+  <text x="56" y="320" font-size="10">finished on the host</text>
+  <text x="66" y="338" font-size="9.5" fill="#555555">W_o′  (R⁻¹ folded in)</text>
+  <text x="66" y="352" font-size="9.5" fill="#555555">MLP  →  logits</text>
+  <text x="66" y="366" font-size="9.5" fill="#555555">then the next layer</text>
+
+  <text x="40" y="440" font-size="9.5" fill="#666666">G query heads share their KV head's cache row.  One plane is one AXI-HP port — the ZCU104 provides four, which is what bounds the row at 64 bytes.</text>
 </g>
 </svg>
