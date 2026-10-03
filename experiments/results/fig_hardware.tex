@@ -41,14 +41,22 @@
 \providecommand{\figNote}{\tiny}        % annotations and body text
 
 \definecolor{figink}{HTML}{1A1A1A}
-\definecolor{fighost}{HTML}{F2F2F2}
-\definecolor{figddr}{HTML}{CFE2F3}
-\definecolor{figlane}{HTML}{FAFAFA}
+\definecolor{fighost}{HTML}{EDE4F3}       % the processor side
+\definecolor{fighostedge}{HTML}{7B5EA7}
+\definecolor{fighosttext}{HTML}{5B3F85}
+\definecolor{fighostbody}{HTML}{4A3663}
+\definecolor{figlogic}{HTML}{E6F0E2}      % the programmable logic
+\definecolor{figlogicedge}{HTML}{4C8C3F}
+\definecolor{figlogictext}{HTML}{35682C}
+\definecolor{figlane}{HTML}{D4E7CE}       % the replicated part, nested in it
+\definecolor{figddr}{HTML}{D9E7F5}        % memory, and the KV cache in it
 \definecolor{figcell}{HTML}{AECDE9}
-\definecolor{figblue}{HTML}{0072B2}     % the compressed row, and the cache
+\definecolor{figblue}{HTML}{0072B2}
+\definecolor{figwrite}{HTML}{D55E00}      % a token on its way into the cache
+\definecolor{figwritetext}{HTML}{A24A00}
+\definecolor{fighostrule}{HTML}{B49CC9}
 \definecolor{figddrtext}{HTML}{14506F}
 \definecolor{figddrrule}{HTML}{7BA4C6}
-\definecolor{figrulec}{HTML}{9A9A9A}
 \definecolor{figdim}{HTML}{555555}
 \definecolor{figbody}{HTML}{333333}
 \definecolor{figleg}{HTML}{666666}
@@ -59,11 +67,13 @@
     line width = 0.5pt,
     draw       = figink,
     every node/.style = {inner sep=0pt, outer sep=0pt, text=figink},
-    box/.style    = {draw=figink, fill=white},
-    arw/.style    = {draw=figink, -{Stealth[length=3.2pt,width=2.6pt]}},
-    rul/.style    = {draw=figrulec, line width=0.3pt},
-    rulb/.style   = {draw=figddrrule, line width=0.3pt},
-    arwb/.style   = {draw=figblue, line width=0.9pt, -{Stealth[length=3.2pt,width=2.6pt]}},
+    rgn/.style    = {line width=0.55pt},
+    box/.style    = {draw=figlogicedge, fill=white, line width=0.48pt},
+    cbox/.style   = {draw=figblue, fill=white, line width=0.48pt},
+    arw/.style    = {draw=figwrite, line width=0.55pt, -{Stealth[length=3.2pt,width=2.6pt]}},
+    arwr/.style   = {draw=figblue, line width=0.55pt, -{Stealth[length=3.2pt,width=2.6pt]}},
+    rulh/.style   = {draw=fighostrule, line width=0.3pt},
+    rul/.style    = {draw=figddrrule, line width=0.3pt},
     nteb/.style   = {anchor=base, font=\figNote, text=figddrtext},
     mod/.style    = {anchor=base, font=\figMod\ttfamily},
     ttl/.style    = {anchor=base, font=\figTitle},
@@ -75,9 +85,9 @@
 ]
 
 % ---------------------------------------------------------------- regions
-\draw[box, fill=fighost] (40,35)   rectangle (205,345);
-\draw[box]               (235,35)  rectangle (1045,345);
-\draw[box, fill=figddr, draw=figblue] (1075,35) rectangle (1250,345);
+\draw[rgn, fill=fighost, draw=fighostedge]  (40,35)   rectangle (205,345);
+\draw[rgn, fill=figlogic, draw=figlogicedge] (235,35)  rectangle (1045,345);
+\draw[rgn, fill=figddr, draw=figblue]        (1075,35) rectangle (1250,345);
 
 % ------------------------------------------------- write path, left to right
 \draw[box] (250,222) rectangle (388,285);
@@ -93,71 +103,71 @@
 \draw[box] (570,88) rectangle (708,151);
 \draw[box] (730,88) rectangle (868,151);
 
-\draw[box] (890,77) rectangle (1028,161);
-\draw[box, fill=figcell] (897,89) rectangle (927,117);
-\draw[box, fill=figcell] (933,89) rectangle (963,117);
-\draw[box, fill=figcell] (987,89) rectangle (1021,117);
+\draw[cbox] (890,77) rectangle (1028,161);
+\draw[cbox, fill=figcell] (897,89) rectangle (927,117);
+\draw[cbox, fill=figcell] (933,89) rectangle (963,117);
+\draw[cbox, fill=figcell] (987,89) rectangle (1021,117);
 
 % ---------------------------------------------------------------- arrows
 \draw[arw] (208,254)  -- (246,254);
 \draw[arw] (390,254)  -- (408,254);
 \draw[arw] (550,254)  -- (568,254);
 \draw[arw] (710,254)  -- (728,254);
-\draw[arwb] (870,254)  -- (888,254);
-\draw[arwb] (1032,254) -- (1071,254);
+\draw[arw] (870,254)  -- (888,254);
+\draw[arw] (1032,254) -- (1071,254);
 
-\draw[arwb] (1071,119) -- (1032,119);
-\draw[arwb] (888,119)  -- (869,119);
-\draw[arw] (728,119)  -- (710,119);
-\draw[arw] (568,119)  -- (550,119);
-\draw[arw] (408,119)  -- (390,119);
-\draw[arw] (246,119)  -- (208,119);
+\draw[arw] (1071,119) -- (1032,119);
+\draw[arw] (888,119)  -- (869,119);
+\draw[arwr] (728,119)  -- (710,119);
+\draw[arwr] (568,119)  -- (550,119);
+\draw[arwr] (408,119)  -- (390,119);
+\draw[arwr] (246,119)  -- (208,119);
 
 \draw[arw] (479,222) -- (479,191) -- (799,191) -- (799,152);
 
 % ------------------------------------------------- rules in host and DDR
-\draw[rul] (56,301)   -- (189,301);
-\draw[rul] (56,197)   -- (189,197);
-\draw[rul] (56,123)   -- (189,123);
-\draw[rulb] (1090,285) -- (1235,285);
-\draw[rulb] (1090,235) -- (1235,235);
-\draw[rulb] (1090,143) -- (1235,143);
+\draw[rulh] (56,301)   -- (189,301);
+\draw[rulh] (56,197)   -- (189,197);
+\draw[rulh] (56,123)   -- (189,123);
+\draw[rul] (1090,285) -- (1235,285);
+\draw[rul] (1090,235) -- (1235,235);
+\draw[rul] (1090,143) -- (1235,143);
 
 % ---------------------------------------------------------------- host
-\node[ttl]  at (122,317) {Host};
-\node[hed]  at (56,279)  {sent to the block};
-\node[dimW] at (64,260)  {$q$, $k$ and $v$ for every};
-\node[dimW] at (64,245)  {head, already projected};
-\node[dimW] at (64,230)  {through $W_q$, $W_k$, $W_v$};
-\node[dimW] at (64,215)  {and carrying RoPE};
-\node[hed]  at (56,175)  {back from the block};
-\node[dimW] at (64,156)  {the attention output};
-\node[dimW] at (64,141)  {for all of the heads};
-\node[hed]  at (56,101)  {finished on the host};
-\node[dimW] at (64,82)   {$W_o'$ \ ($R^{-1}$ folded in)};
-\node[dimW] at (64,67)   {MLP \ $\rightarrow$ \ logits};
-\node[dimW] at (64,52)   {then the next layer};
+\node[ttl, text=fighosttext] at (122,317) {Host};
+\node[hed, text=fighosttext] at (56,279)  {sent to the block};
+\node[nteW, text=fighostbody] at (64,260)  {$q$, $k$ and $v$ for every};
+\node[nteW, text=fighostbody] at (64,245)  {head, already projected};
+\node[nteW, text=fighostbody] at (64,230)  {through $W_q$, $W_k$, $W_v$};
+\node[nteW, text=fighostbody] at (64,215)  {and carrying RoPE};
+\node[hed, text=fighosttext] at (56,175)  {back from the block};
+\node[nteW, text=fighostbody] at (64,156)  {the attention output};
+\node[nteW, text=fighostbody] at (64,141)  {for all of the heads};
+\node[hed, text=fighosttext] at (56,101)  {finished on the host};
+\node[nteW, text=fighostbody] at (64,82)   {$W_o'$ \ ($R^{-1}$ folded in)};
+\node[nteW, text=fighostbody] at (64,67)   {MLP \ $\rightarrow$ \ logits};
+\node[nteW, text=fighostbody] at (64,52)   {then the next layer};
 
 % ---------------------------------------------------------------- DDR
-\node[ttl] at (1162,319) {DDR};
-\node[anchor=base, font=\figMod] at (1162,299) {KV cache};
-\node[nteb] at (1162,265) {one 52-byte row per};
-\node[nteb] at (1162,251) {token, per KV head};
-\node[nteb] at (1162,215) {the row is cut into $P$};
-\node[nteb] at (1162,201) {slices, and each one is};
-\node[nteb] at (1162,187) {kept as its own array,};
-\node[nteb] at (1162,173) {contiguous and running};
-\node[nteb] at (1162,159) {across all the tokens};
-\node[nteb] at (1162,123) {each AXI port reads};
-\node[nteb] at (1162,109) {one slice and nothing};
-\node[nteb] at (1162,95)  {else, which turns the};
-\node[nteb] at (1162,81)  {whole scan into long};
-\node[nteb] at (1162,67)  {sequential bursts};
+\node[ttl, text=figblue] at (1162,319) {DDR};
+\node[anchor=base, font=\figMod, text=figblue] at (1162,299) {KV cache};
+\node[nte, text=figddrtext] at (1162,265) {one 52-byte row per};
+\node[nte, text=figddrtext] at (1162,251) {token, per KV head};
+\node[nte, text=figddrtext] at (1162,215) {the row is cut into $P$};
+\node[nte, text=figddrtext] at (1162,201) {slices, and each one is};
+\node[nte, text=figddrtext] at (1162,187) {kept as its own array,};
+\node[nte, text=figddrtext] at (1162,173) {contiguous and running};
+\node[nte, text=figddrtext] at (1162,159) {across all the tokens};
+\node[nte, text=figddrtext] at (1162,123) {each AXI port reads};
+\node[nte, text=figddrtext] at (1162,109) {one slice and nothing};
+\node[nte, text=figddrtext] at (1162,95)  {else, which turns the};
+\node[nte, text=figddrtext] at (1162,81)  {whole scan into long};
+\node[nte, text=figddrtext] at (1162,67)  {sequential bursts};
 
 % ------------------------------------------------------- programmable logic
-\node[hed]  at (250,322) {Programmable logic};
-\node[dimW] at (250,305) {one KV head at a time --- the $H$ heads of a token run one after the other};
-\node[nteW] at (240,169) {$\times\,G$ \ --- one lane per query head of this KV head};
+\node[hed, text=figlogictext] at (250,322) {Programmable logic};
+\node[nteW, text=figlogicedge] at (250,305) {one KV head at a time --- the $H$ heads of a token run one after the other};
+\node[nteW, text=figlogictext] at (240,169) {$\times\,G$ \ --- one lane per query head of this KV head};
 
 % ---------------------------------------------------------------- write path
 \node[mod] at (319,249) {attn\_ingress};
@@ -176,17 +186,17 @@
 \node[mod] at (799,115) {score\_lane};
 
 % ------------------------------------------------------- shared read engine
-\node[mod] at (959,138) {kv\_store\_ddr};
-\node[nte] at (912,98)  {0};
-\node[nte] at (948,98)  {1};
-\node[dim] at (975,97)  {$\dots$};
-\node[nte] at (1004,98) {$P\!-\!1$};
-\node[nte] at (959,64)  {the $P$ ports fetch one};
-\node[nte] at (959,52)  {whole row per cycle, and};
-\node[nte] at (959,40)  {all $G$ lanes score on it};
+\node[mod, text=figddrtext] at (959,138) {kv\_store\_ddr};
+\node[nte, text=figddrtext] at (912,98)  {0};
+\node[nte, text=figddrtext] at (948,98)  {1};
+\node[nte, text=figddrtext] at (975,97)  {$\dots$};
+\node[nte, text=figddrtext] at (1004,98) {$P\!-\!1$};
+\node[nte, text=figddrtext] at (959,64)  {the $P$ ports fetch one};
+\node[nte, text=figddrtext] at (959,52)  {whole row per cycle, and};
+\node[nte, text=figddrtext] at (959,40)  {all $G$ lanes score on it};
 
 % ---------------------------------------------------------------- q branch
-\node[nte] at (639,198) {$q$ is held inside each lane and never written to the cache};
+\node[nte, text=figwritetext] at (639,198) {$q$ is held inside each lane and never written to the cache};
 
 % ---------------------------------------------------------------- legend
 \node[anchor=base west, font=\figNote, text=figleg] at (40,15)
