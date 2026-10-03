@@ -120,11 +120,18 @@ def plot(out: Path) -> None:
 
     ax.set_xlabel("KV cache bytes / token / layer (8 KV heads)")
     ax.set_ylabel("Perplexity (WikiText-2, mean of 12 windows, 16 layers)")
+    # Log y: k2v2 is 103 against 9.4 for everything above k3v2, so on a linear
+    # axis the one configuration nobody would ship flattens the eight that are
+    # actually being chosen between into an unreadable band.
+    ax.set_yscale("log")
+    ax.set_yticks([10, 20, 50, 100])
+    ax.get_yaxis().set_major_formatter(plt.matplotlib.ticker.ScalarFormatter())
+
     # The title used to say "25 key/value widths", but `best_per_bytes` has
     # already collapsed the grid to one point per row size -- 9 of them.  The
     # 25 are all in the asymmetry plot; here they would stack invisibly.
-    ax.set_title("Llama 3.2 1B: perplexity vs. KV cache footprint, "
-                 "best of 25 key/value widths at each row size")
+    ax.set_title("Llama 3.2 1B: perplexity vs. KV cache footprint\n"
+                 "(best of 25 key/value widths at each row size)")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()

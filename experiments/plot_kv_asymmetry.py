@@ -131,7 +131,7 @@ def plot(out: Path, invert: bool = False) -> None:
 
     y_label = "1 / Perplexity" if invert else "Perplexity"
     ax.set_xlabel("key_bits + value_bits")
-    ax.set_ylabel(f"{y_label}, path B (WikiText-2, 2,048 tok, 16 layers)")
+    ax.set_ylabel(f"{y_label}, path B (WikiText-2, mean of 12 windows, 16 layers)")
     title_dir = "higher is better" if invert else "lower is better"
     ax.set_title("Llama 3.2 1B: more key bits than value bits wins at every fixed budget\n"
                  f"({title_dir}; 2b-key configs omitted)")
