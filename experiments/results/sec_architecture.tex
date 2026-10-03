@@ -147,11 +147,10 @@ over channels of query element times codebook entry, scaled once by that
 norm. The per-channel product can therefore take only $2^{b_k}$ distinct
 values, one for each codebook entry.
 
-The table-building unit \texttt{qtab\_build} evaluates those $2^{b_k}$
-products for every channel once per query vector. Each cached token
-afterwards costs $d$ table lookups, an adder tree, and a single
-multiplication by the row norm, which is two DSP slices per lane rather
-than $d$.
+Those $2^{b_k}$ products are therefore evaluated for every channel once
+per query vector and held on chip. Each cached token afterwards costs
+$d$ table lookups, an adder tree, and a single multiplication by the row
+norm, which is two DSP slices per lane rather than $d$.
 
 The read engine \texttt{kv\_store\_ddr} is instantiated once per block
 and shared by all $G$ lanes, so one row fetch serves $G$ query heads.
@@ -163,10 +162,10 @@ Each lane then scores, normalises and accumulates. The scoring unit
 \texttt{softmax\_online} maintains a running maximum and rescales the
 accumulator whenever that maximum grows, which allows the scan to finish
 in a single pass. A two-pass formulation would require a second
-traversal of an off-die cache and is not affordable. A small lookup
-table \texttt{exp\_lut} evaluates the exponential by splitting it into a
-shift and a table index, so the table need only cover the unit interval
-however large its argument becomes. The accumulator \texttt{accum}
+traversal of an off-die cache and is not affordable. The exponential it
+needs is evaluated by splitting the argument into a shift and an index
+into a small table, so that table need only cover the unit interval
+however large the argument becomes. The accumulator \texttt{accum}
 weights the decoded value and adds it to a running sum, exploiting the
 same property on the value side, since with $2^{b_v}$ value centroids
 one multiplication produces a shared factor and every channel reduces to
