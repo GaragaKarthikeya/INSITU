@@ -1,0 +1,181 @@
+% =====================================================================
+%  Section: Architecture
+%
+%  Destination is the ISFPGA_Submission repository, which is a separate
+%  repo synced to Overleaf and gitignored here. This copy is staged
+%  beside the figure it includes so the two stay in step; copy both into
+%  the paper project, or \input this file from main.tex once the figure
+%  is on its TEXINPUTS path.
+%
+%  PROSE IS NOT YET IN THE PROJECT VOICE. CLAUDE.md requires reading
+%  ISFPGA_Submission/persona.md before this reaches main.tex, and that
+%  file is not reachable from this repository. Treat the wording as a
+%  content draft.
+%
+%  Preamble needs:
+%      \usepackage{tikz}
+%      \usetikzlibrary{arrows.meta}
+%      \usepackage{amsmath}
+%
+%  Symbols used, all introduced in the text on first use:
+%      H     KV heads per layer                        (8)
+%      G     query heads sharing one KV head           (4)
+%      d     head dimension                            (64)
+%      b_k   bits per key codeword                     (4)
+%      b_v   bits per value codeword                   (2)
+%      w_n   bits per stored norm                      (16)
+%      R     bits in one cache row                     (416, i.e. 52 B)
+%      P     slices the row is cut into, one per port  (4)
+%      T     tokens the scan covers
+% =====================================================================
+
+\begin{figure*}[t]
+  \centering
+  \input{fig_hardware}
+  \caption{The accelerator. Attention is split once. Everything whose
+  cost is constant in context length stays on the host, while the KV
+  cache and the scan over it sit in programmable logic. Vermilion
+  follows a token on its way into the cache and blue follows the scan on
+  its way back out. The read engine sits outside the replicated lane
+  array because one row fetch serves all $G$ query heads of a KV head.}
+  \label{fig:hw}
+\end{figure*}
+
+\section{Architecture}
+\label{sec:arch}
+
+Figure~\ref{fig:hw} shows the organisation of the accelerator. The design
+partitions attention at a single point. Every operation whose cost is
+constant in context length remains on the host, while the KV cache and
+the scan over it are placed in programmable logic. The block is invoked
+once per layer and once per decode step. A single invocation processes
+that layer's $H$ KV heads one after another, and within each head the
+$G$ query heads that share it proceed in parallel. In the model
+evaluated here $H{=}8$ and $G{=}4$, giving 32 attention heads of
+dimension $d{=}64$.
+
+\subsection{Partitioning}
+
+The host computes the token embedding, the three projections $W_q$,
+$W_k$ and $W_v$, and applies rotary position embedding. Position
+therefore enters the datapath before the cache and never within it.
+
+The target platform is a Xilinx ZCU104, whose Zynq UltraScale+ device
+couples a processing system to programmable logic through AXI4
+interfaces. Vectors cross to the accelerator over a 512-bit AXI4-Stream
+port, each of the $d$ lanes carried as a 24-bit fixed-point value. Every
+invocation receives $H$ groups of $2{+}G$ vectors, namely one key, one
+value and $G$ queries for each KV head.
+
+Keys and values are encoded and written to DDR before the scan begins,
+because a token attends to itself as well as to every token before it.
+The scan therefore covers $T$ rows, where $T$ counts the tokens seen so
+far including the current one.
+
+\subsection{Rotation and quantisation}
+
+The rotation unit \texttt{rot\_fwht} applies one round of a randomised
+Walsh--Hadamard rotation to keys, values and queries alike. All
+subsequent arithmetic is performed in this rotated basis, and the
+inverse rotation is folded into $W_o$ offline so that none is performed
+at run time.
+
+The norm unit \texttt{rot\_norm} computes the root-mean-square of the
+rotated vector at the precision at which it will be stored. It is the
+only producer of this norm, which guarantees that the quantiser's
+decision thresholds and the eventual decoder operate on the same value.
+
+The encoder \texttt{rot\_encode} maps each rotated vector to codewords
+without division. Comparing a normalised channel against a threshold is
+equivalent to comparing the raw channel against that threshold scaled by
+the norm, so the thresholds are scaled once per vector and each of the
+$d$ channels reduces to a comparison. Separate instances serve keys and
+values, which differ in codeword width and in threshold table.
+
+\subsection{The cache row}
+
+For one token and one KV head the cache holds $d$ key codewords, $d$
+value codewords, and two scalar norms, one for the key vector and one
+for the value vector. Writing $b_k$ and $b_v$ for the codeword widths
+and $w_n$ for the norm width, a row occupies
+
+\begin{equation}
+  R \;=\;
+  \underbrace{d\,b_k}_{\text{key codewords}} \;+\;
+  \underbrace{d\,b_v}_{\text{value codewords}} \;+\;
+  \underbrace{2\,w_n}_{\text{two norms}}
+  \quad \text{bits.}
+  \label{eq:row}
+\end{equation}
+
+In the configuration built, $d{=}64$, $b_k{=}4$, $b_v{=}2$ and
+$w_n{=}16$, so a row is 416 bits, or 52 bytes. The write unit
+\texttt{kv\_write} assembles this row and issues it to DDR.
+
+\subsection{Cache layout}
+
+The cache resides entirely in DDR and is stored transposed. A row is
+partitioned into $P$ slices, and each slice is held as a contiguous
+array spanning all tokens.
+
+This layout follows from a bandwidth constraint. The scan consumes one
+row per cycle, while a single 128-bit AXI high-performance port supplies
+16 bytes per cycle. $P$ ports must therefore operate concurrently, and
+each requires its own sequential access stream. A row-major layout
+contains only one such stream. Partitioning the token range across ports
+does not help either, because the causal scan advances through tokens in
+order and would leave all but one port idle. Under the transposed layout
+each port traverses a single slice, and the $P$ streams jointly deliver
+one complete row every cycle.
+
+A slice never spans a field boundary, so the port requirement is not a
+function of row size alone. The key codewords, the value codewords and
+the norms must together occupy at most four slices, which is the number
+of high-performance ports the device provides. At 250\,MHz the scan
+sustains 1.14 cycles per row against a one-cycle ideal.
+
+\subsection{Scan datapath}
+
+Attention is computed directly on codewords rather than on reconstructed
+vectors. A cached key is the product of its norm and a codebook entry
+selected by its codeword, so the inner product with a query is a sum
+over channels of query element times codebook entry, scaled once by that
+norm. The per-channel product can therefore take only $2^{b_k}$ distinct
+values, one for each codebook entry.
+
+The table-building unit \texttt{qtab\_build} evaluates those $2^{b_k}$
+products for every channel once per query vector. Each cached token
+afterwards costs $d$ table lookups, an adder tree, and a single
+multiplication by the row norm, which is two DSP slices per lane rather
+than $d$.
+
+The read engine \texttt{kv\_store\_ddr} is instantiated once per block
+and shared by all $G$ lanes, so one row fetch serves $G$ query heads.
+This makes the reuse already present in grouped-query attention explicit
+in the hardware.
+
+Each lane then scores, normalises and accumulates. The scoring unit
+\texttt{score\_lane} produces the score for the row. The softmax unit
+\texttt{softmax\_online} maintains a running maximum and rescales the
+accumulator whenever that maximum grows, which allows the scan to finish
+in a single pass. A two-pass formulation would require a second
+traversal of an off-die cache and is not affordable. A small lookup
+table \texttt{exp\_lut} evaluates the exponential by splitting it into a
+shift and a table index, so the table need only cover the unit interval
+however large its argument becomes. The accumulator \texttt{accum}
+weights the decoded value and adds it to a running sum, exploiting the
+same property on the value side, since with $2^{b_v}$ value centroids
+one multiplication produces a shared factor and every channel reduces to
+a multiplexer and an adder. The normalisation unit \texttt{finalize}
+inverts the softmax denominator once per head and multiplies across
+channels, the denominator not being final until the scan ends.
+
+\subsection{Egress}
+
+Each group returns its $G$ outputs over the same 512-bit stream, after
+which the block advances to the next KV head. The host then applies
+$W_o$, followed by the MLP and the residual connection. A decode step
+completes in 22 to 26 microseconds on the device.
+
+Prompt tokens traverse this path identically, so every row the scan
+reads was written by the accelerator itself.
