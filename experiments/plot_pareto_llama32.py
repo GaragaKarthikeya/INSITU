@@ -1,10 +1,17 @@
 """Pareto plot: perplexity vs. KV cache bytes/token/layer, Llama 3.2 1B.
 
-The 25-config (key_bits, value_bits) grid, WikiText-2, 2,048 tokens, all 16
-layers, paths A ("rebuild the dense key, then dot") and B ("no rebuild, table
-form" -- what the hardware implements). Source: `plan.MD`, the table under
-"All twenty-five are paired" (identical numbers to
-`experiments/results/paths/sweep_AB.log`).
+The 25-config (key_bits, value_bits) grid, WikiText-2, all 16 layers, paths A
+("rebuild the dense key, then dot") and B ("no rebuild, table form" -- what the
+hardware implements).
+
+Every perplexity here is the mean over **12 windows**, which supersedes the
+earlier single-run grid (baseline 7.1439) that `plan.MD` records. None of the
+conclusions moved: the best config at each plane count is unchanged, and keys
+still beat values at every bit budget. The numbers themselves all did.
+
+The 12 windows are 24,564 of WikiText-2 test's 289,077 tokens, so the baseline
+is a baseline for this grid and is **not** comparable to published
+full-test-set numbers for this model.
 
 `row` in that table is bytes/token for one KV head; Llama 3.2 1B has 8 KV
 heads, so `bytes_per_token_per_layer = row_bytes * 8` -- this reproduces the
@@ -24,36 +31,37 @@ import matplotlib.pyplot as plt
 
 NUM_KV_HEADS = 8  # Llama 3.2 1B
 
-# (key_bits, value_bits, row_bytes, ppl_A, ppl_B) -- from plan.MD
+# (key_bits, value_bits, row_bytes, ppl_A, ppl_B)
+# Perplexity is the mean over 12 WikiText-2 windows, not a single run.
 GRID = [
-    (2, 2, 36, 87.9170, 94.5112),
-    (2, 3, 44, 82.5741, 74.2553),
-    (3, 2, 44, 11.5994, 11.3830),
-    (2, 4, 52, 66.1892, 69.8478),
-    (3, 3, 52, 10.0402, 10.1547),
-    (4, 2, 52, 8.5463, 8.7209),
-    (2, 5, 60, 64.6602, 66.0630),
-    (3, 4, 60, 9.6539, 9.8474),
-    (4, 3, 60, 7.6965, 7.7710),
-    (5, 2, 60, 7.9426, 8.0035),
-    (2, 6, 68, 77.2041, 71.3001),
-    (3, 5, 68, 9.5958, 9.5943),
-    (4, 4, 68, 7.6146, 7.5510),
-    (5, 3, 68, 7.3741, 7.3614),
-    (6, 2, 68, 7.9608, 7.9541),
-    (3, 6, 76, 9.6164, 9.5107),
-    (4, 5, 76, 7.5806, 7.5603),
-    (5, 4, 76, 7.2678, 7.2794),
-    (6, 3, 76, 7.2963, 7.3116),
-    (4, 6, 84, 7.5225, 7.6375),
-    (5, 5, 84, 7.2637, 7.2069),
-    (6, 4, 84, 7.2257, 7.2192),
-    (5, 6, 92, 7.2250, 7.2572),
-    (6, 5, 92, 7.1531, 7.1840),
-    (6, 6, 100, 7.1506, 7.1668),
+    (2, 2, 36, 102.1468, 103.3080),
+    (2, 3, 44, 91.4258, 91.7121),
+    (3, 2, 44, 14.6583, 14.6055),
+    (2, 4, 52, 84.2349, 85.3821),
+    (3, 3, 52, 13.0430, 13.0365),
+    (4, 2, 52, 11.0146, 11.1043),
+    (2, 5, 60, 83.3800, 82.7317),
+    (3, 4, 60, 12.6855, 12.6456),
+    (4, 3, 60, 10.1944, 10.1830),
+    (5, 2, 60, 10.5020, 10.5001),
+    (2, 6, 68, 82.4657, 83.5500),
+    (3, 5, 68, 12.4893, 12.5388),
+    (4, 4, 68, 10.0136, 10.0084),
+    (5, 3, 68, 9.7404, 9.7362),
+    (6, 2, 68, 10.3528, 10.3308),
+    (3, 6, 76, 12.4504, 12.6234),
+    (4, 5, 76, 9.9556, 9.9409),
+    (5, 4, 76, 9.5789, 9.5808),
+    (6, 3, 76, 9.6385, 9.6270),
+    (4, 6, 84, 10.0084, 9.9738),
+    (5, 5, 84, 9.5270, 9.5267),
+    (6, 4, 84, 9.4828, 9.4822),
+    (5, 6, 92, 9.5403, 9.5256),
+    (6, 5, 92, 9.4551, 9.4505),
+    (6, 6, 100, 9.4552, 9.4381),
 ]
 
-FP16_BASELINE = 7.1439
+FP16_BASELINE = 9.3895
 
 
 def pareto_frontier(points: list[dict], y_key: str) -> list[dict]:
@@ -111,8 +119,12 @@ def plot(out: Path) -> None:
             label="Pareto frontier (path B)")
 
     ax.set_xlabel("KV cache bytes / token / layer (8 KV heads)")
-    ax.set_ylabel("Perplexity (WikiText-2, 2,048 tok, 16 layers)")
-    ax.set_title("Llama 3.2 1B: perplexity vs. KV cache footprint, 25 key/value widths")
+    ax.set_ylabel("Perplexity (WikiText-2, mean of 12 windows, 16 layers)")
+    # The title used to say "25 key/value widths", but `best_per_bytes` has
+    # already collapsed the grid to one point per row size -- 9 of them.  The
+    # 25 are all in the asymmetry plot; here they would stack invisibly.
+    ax.set_title("Llama 3.2 1B: perplexity vs. KV cache footprint, "
+                 "best of 25 key/value widths at each row size")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
