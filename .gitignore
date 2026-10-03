@@ -23,6 +23,8 @@ sw/attn_vectors.h
 # stray gitlink. Note that `git clean -fdx` in this directory WILL delete it.
 ISFPGA_Submission/
 
-# Proofing artifacts from experiments/results/fig_check.tex
+# Proofing artifacts from experiments/results/fig_check.tex. The PDF it
+# produces IS tracked -- it is the compiled proof of the figure and the
+# section, and keeping it in the tree means a reviewer can see what the
+# LaTeX actually renders to without a toolchain.
 *.aux
-experiments/results/fig_check.pdf
