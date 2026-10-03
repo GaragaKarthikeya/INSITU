@@ -22,3 +22,7 @@ sw/attn_vectors.h
 # synced to Overleaf. Ignored here so `git add .` cannot record it as a
 # stray gitlink. Note that `git clean -fdx` in this directory WILL delete it.
 ISFPGA_Submission/
+
+# Proofing artifacts from experiments/results/fig_check.tex
+*.aux
+experiments/results/fig_check.pdf

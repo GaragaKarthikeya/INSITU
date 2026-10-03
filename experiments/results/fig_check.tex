@@ -1,0 +1,16 @@
+% Standalone harness for proofing the figure and the section without the
+% paper. Not part of the submission.
+%
+%     pdflatex fig_check.tex
+%
+% Approximates a two-column layout so that figure* and the column widths
+% behave as they will in the paper.
+\documentclass[10pt,twocolumn]{article}
+\usepackage[margin=0.72in]{geometry}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta}
+\usepackage{amsmath}
+\pagestyle{empty}
+\begin{document}
+\input{sec_architecture}
+\end{document}

@@ -37,7 +37,11 @@
   cache and the scan over it sit in programmable logic. Vermilion
   follows a token on its way into the cache and blue follows the scan on
   its way back out. The read engine sits outside the replicated lane
-  array because one row fetch serves all $G$ query heads of a KV head.}
+  array because one row fetch serves all $G$ query heads of a KV head.
+  The ZCU104 provides four AXI high-performance ports, each carrying 16
+  bytes a cycle, and a slice never spans a field boundary, so the key
+  codewords, the value codewords and the norms must together fall into
+  at most four slices.}
   \label{fig:hw}
 \end{figure*}
 
