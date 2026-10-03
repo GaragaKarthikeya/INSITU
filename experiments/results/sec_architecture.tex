@@ -173,6 +173,37 @@ a multiplexer and an adder. The normalisation unit \texttt{finalize}
 inverts the softmax denominator once per head and multiplies across
 channels, the denominator not being final until the scan ends.
 
+\subsection{Choice of operating point}
+\label{sec:operating-point}
+
+The configuration evaluated throughout uses 4-bit key codewords and 2-bit
+value codewords. It is not the most accurate point in the design space
+and is not claimed to be. It is the widest cache row the target device
+admits.
+
+Because a slice never spans a field boundary, the port requirement
+follows from the field widths rather than from the row size. At $b_k{=}4$
+the key field is 32 bytes, exactly two 16-byte beats, and at $b_v{=}2$
+the value field is 16 bytes, exactly one. With the norms this fills four
+slices and no port carries a partial beat. The comparison that makes the
+point is $b_k{=}b_v{=}3$, which yields a row of the same 52 bytes but
+requires five slices, since a 24-byte field leaves an 8-byte remainder
+that cannot share a port with another field. Equal storage, different
+port cost.
+
+Among the configurations that do fit, this is also the last at which
+further bits still buy accuracy. Each step along the frontier adds 64
+bytes per token per layer. The step into $4/2$ reduces perplexity by
+3.50, while the step beyond it reduces perplexity by 0.92, a fall of
+nearly four times in marginal return.
+
+The cost of the constraint is itself measurable. At five slices the best
+configuration is $b_k{=}b_v{=}4$, which reaches $1.066\times$ the
+baseline against $1.183\times$ for the configuration built. Nearly two
+thirds of the remaining accuracy gap therefore lies one port beyond what
+the device provides, which is a statement about the platform rather than
+about the method.
+
 \subsection{Egress}
 
 Each group returns its $G$ outputs over the same 512-bit stream, after
