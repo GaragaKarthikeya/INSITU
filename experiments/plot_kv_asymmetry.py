@@ -23,6 +23,11 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
+try:                                    # `python -m kernel.experiments.<name>`
+    from kernel.experiments import palette
+except ImportError:                     # running the file directly
+    import palette
+
 # (key_bits, value_bits, row_bytes, ppl_A, ppl_B)
 # Perplexity is the mean over 12 WikiText-2 windows, not a single run.
 GRID = [
@@ -102,9 +107,13 @@ def plot(out: Path, invert: bool = False) -> None:
         p["y"] = 1.0 / p["ppl"] if invert else p["ppl"]
 
     # Monochrome: distinguish by marker shape + fill/edge instead of hue.
-    color = {"k > v": "black", "k < v": "black", "k = v": "black"}
+    # Blue is what this design does and what wins; orange is the alternative
+    # it is argued against; grey is the even split. Same meaning as the other
+    # two figures, so the reader learns the vocabulary once.
+    color = {"k > v": palette.BLUE, "k < v": palette.ORANGE, "k = v": palette.GREY}
     marker = {"k > v": "o", "k < v": "^", "k = v": "s"}
-    facecolor = {"k > v": "black", "k < v": "none", "k = v": "0.6"}
+    facecolor = {"k > v": palette.BLUE_FILL, "k < v": palette.ORANGE_FILL,
+                 "k = v": palette.GREY_FILL}
 
     fig, ax = plt.subplots(figsize=(9, 9))
 

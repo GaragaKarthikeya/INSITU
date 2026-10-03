@@ -29,7 +29,16 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-NUM_KV_HEADS = 8  # Llama 3.2 1B
+try:                                    # `python -m kernel.experiments.<name>`
+    from kernel.experiments import palette
+except ImportError:                     # running the file directly
+    import palette
+
+NUM_KV_HEADS = 8      # Llama 3.2 1B
+HEAD_DIM = 64
+BEAT_BYTES = 16       # one 128-bit AXI-HP port, per cycle
+AXI_HP_PORTS = 4      # what the ZCU104's PS exposes to the PL
+SHIPPED = "k4v2"      # the configuration the bitstream was built for
 
 # (key_bits, value_bits, row_bytes, ppl_A, ppl_B)
 # Perplexity is the mean over 12 WikiText-2 windows, not a single run.
@@ -92,9 +101,23 @@ def best_per_bytes(points: list[dict]) -> list[dict]:
     return sorted(best.values(), key=lambda p: p["bytes"])
 
 
+def planes(key_bits: int, value_bits: int) -> int:
+    """Ports this configuration needs, which is what the board actually limits.
+
+    A plane never straddles a field boundary -- `hw/ddr_layout.py` cuts the row
+    at its fields first and only then into beats -- so this is not a byte count.
+    3b/3b and 4b/2b are both 52-byte rows; one needs five ports and the other
+    four.
+    """
+    kb = HEAD_DIM * key_bits // 8
+    vb = HEAD_DIM * value_bits // 8
+    return -(-kb // BEAT_BYTES) + -(-vb // BEAT_BYTES) + 1
+
+
 def plot(out: Path) -> None:
     points = [
-        {"label": f"k{kb}v{vb}", "bytes": row * NUM_KV_HEADS, "A": a, "B": b}
+        {"label": f"k{kb}v{vb}", "bytes": row * NUM_KV_HEADS, "A": a, "B": b,
+         "planes": planes(kb, vb)}
         for kb, vb, row, a, b in GRID
     ]
     points = best_per_bytes(points)
@@ -104,19 +127,41 @@ def plot(out: Path) -> None:
 
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    ax.scatter([p["bytes"] for p in points], [p["B"] for p in points],
-               marker="o", facecolors="none", edgecolors="black", linewidths=1.2,
-               s=45, label="path B (table form, hw)", zorder=3)
+    # Split by what the board can build. Everything to the right of 4b/2b needs
+    # more AXI-HP ports than the ZCU104 has, so the quality still on the table
+    # there is quality this board cannot reach -- which is the figure's point as
+    # much as the shape of the curve is.
+    fits = [p for p in points if p["planes"] <= AXI_HP_PORTS]
+    over = [p for p in points if p["planes"] > AXI_HP_PORTS]
+
+    ax.plot([p["bytes"] for p in frontier_b], [p["B"] for p in frontier_b],
+            color=palette.BLUE, linewidth=1.4, linestyle="--", zorder=1,
+            label="Pareto frontier (path B)")
+
+    ax.scatter([p["bytes"] for p in over], [p["B"] for p in over],
+               marker="o", facecolors=palette.GREY_FILL,
+               edgecolors=palette.GREY, linewidths=1.3, s=55, zorder=3,
+               label=f"needs more than {AXI_HP_PORTS} AXI-HP ports")
+    ax.scatter([p["bytes"] for p in fits], [p["B"] for p in fits],
+               marker="o", facecolors=palette.BLUE_FILL,
+               edgecolors=palette.BLUE, linewidths=1.6, s=70, zorder=4,
+               label=f"fits the ZCU104's {AXI_HP_PORTS} AXI-HP ports")
+
+    shipped = next((p for p in points if p["label"] == SHIPPED), None)
+    if shipped is not None:
+        ax.scatter([shipped["bytes"]], [shipped["B"]], marker="o",
+                   facecolors="none", edgecolors=palette.VERMILION,
+                   linewidths=2.2, s=190, zorder=5,
+                   label=f"{SHIPPED}: the configuration built")
 
     for p in points:
         weight = "bold" if p["label"] in frontier_b_labels else "normal"
+        colour = (palette.VERMILION if p["label"] == SHIPPED
+                  else palette.BLUE if p["planes"] <= AXI_HP_PORTS
+                  else palette.GREY)
         ax.annotate(p["label"], (p["bytes"], p["B"]),
-                    textcoords="offset points", xytext=(5, 4), fontsize=8,
-                    fontweight=weight)
-
-    ax.plot([p["bytes"] for p in frontier_b], [p["B"] for p in frontier_b],
-            color="black", linewidth=1, linestyle="--", zorder=1,
-            label="Pareto frontier (path B)")
+                    textcoords="offset points", xytext=(7, 6), fontsize=8,
+                    fontweight=weight, color=colour)
 
     ax.set_xlabel("KV cache bytes / token / layer (8 KV heads)")
     ax.set_ylabel("Perplexity (WikiText-2, mean of 12 windows, 16 layers)")

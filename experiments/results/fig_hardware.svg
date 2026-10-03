@@ -3,13 +3,16 @@
   <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
     <path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/>
   </marker>
+  <marker id="arb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="#0072B2"/>
+  </marker>
 </defs>
 <rect width="1280" height="455" fill="#ffffff"/>
 
 <g stroke="#1a1a1a" stroke-width="1.5" fill="none">
   <rect x="40" y="110" width="165" height="310" fill="#f2f2f2"/>
   <rect x="235" y="110" width="810" height="310" fill="#ffffff"/>
-  <rect x="1075" y="110" width="175" height="310" fill="#d8d8d8"/>
+  <rect x="1075" y="110" width="175" height="310" fill="#CFE2F3" stroke="#0072B2"/>
 
   <!-- write path, left to right, five equal columns -->
   <rect x="250" y="170" width="138" height="63" fill="#ffffff"/>
@@ -26,21 +29,21 @@
   <rect x="730" y="304" width="138" height="63" fill="#ffffff"/>
 
   <rect x="890" y="294" width="138" height="84" fill="#ffffff"/>
-  <rect x="897" y="338" width="30" height="28" fill="#f0f0f0"/>
-  <rect x="933" y="338" width="30" height="28" fill="#f0f0f0"/>
-  <rect x="987" y="338" width="34" height="28" fill="#f0f0f0"/>
+  <rect x="897" y="338" width="30" height="28" fill="#AECDE9"/>
+  <rect x="933" y="338" width="30" height="28" fill="#AECDE9"/>
+  <rect x="987" y="338" width="34" height="28" fill="#AECDE9"/>
 
   <!-- write arrows: 18 px inside the block, 38 px across a boundary -->
   <path d="M208,201 L246,201" marker-end="url(#ar)"/>
   <path d="M390,201 L408,201" marker-end="url(#ar)"/>
   <path d="M550,201 L568,201" marker-end="url(#ar)"/>
   <path d="M710,201 L728,201" marker-end="url(#ar)"/>
-  <path d="M870,201 L888,201" marker-end="url(#ar)"/>
-  <path d="M1032,201 L1071,201" marker-end="url(#ar)"/>
+  <path d="M870,201 L888,201" stroke="#0072B2" stroke-width="2.2" marker-end="url(#arb)"/>
+  <path d="M1032,201 L1071,201" stroke="#0072B2" stroke-width="2.2" marker-end="url(#arb)"/>
 
   <!-- read arrows, right to left, same lengths -->
-  <path d="M1071,336 L1032,336" marker-end="url(#ar)"/>
-  <path d="M888,336 L869,336" marker-end="url(#ar)"/>
+  <path d="M1071,336 L1032,336" stroke="#0072B2" stroke-width="2.2" marker-end="url(#arb)"/>
+  <path d="M888,336 L869,336" stroke="#0072B2" stroke-width="2.2" marker-end="url(#arb)"/>
   <path d="M728,336 L710,336" marker-end="url(#ar)"/>
   <path d="M568,336 L550,336" marker-end="url(#ar)"/>
   <path d="M408,336 L390,336" marker-end="url(#ar)"/>
@@ -54,9 +57,9 @@
     <path d="M56,154 L189,154"/>
     <path d="M56,258 L189,258"/>
     <path d="M56,332 L189,332"/>
-    <path d="M1090,170 L1235,170"/>
-    <path d="M1090,220 L1235,220"/>
-    <path d="M1090,312 L1235,312"/>
+    <path d="M1090,170 L1235,170" stroke="#7BA4C6"/>
+    <path d="M1090,220 L1235,220" stroke="#7BA4C6"/>
+    <path d="M1090,312 L1235,312" stroke="#7BA4C6"/>
   </g>
 </g>
 
@@ -65,18 +68,18 @@
 
   <text x="1162" y="136" font-size="15">DDR</text>
   <text x="1162" y="156" font-size="12">KV cache</text>
-  <text x="1162" y="190" font-size="9.5" fill="#333333">one 52-byte row per</text>
-  <text x="1162" y="204" font-size="9.5" fill="#333333">token, per KV head</text>
-  <text x="1162" y="240" font-size="9.5" fill="#333333">the row is cut into P</text>
-  <text x="1162" y="254" font-size="9.5" fill="#333333">slices, and each one is</text>
-  <text x="1162" y="268" font-size="9.5" fill="#333333">kept as its own array,</text>
-  <text x="1162" y="282" font-size="9.5" fill="#333333">contiguous and running</text>
-  <text x="1162" y="296" font-size="9.5" fill="#333333">across all the tokens</text>
-  <text x="1162" y="332" font-size="9.5" fill="#333333">each AXI port reads</text>
-  <text x="1162" y="346" font-size="9.5" fill="#333333">one slice and nothing</text>
-  <text x="1162" y="360" font-size="9.5" fill="#333333">else, which turns the</text>
-  <text x="1162" y="374" font-size="9.5" fill="#333333">whole scan into long</text>
-  <text x="1162" y="388" font-size="9.5" fill="#333333">sequential bursts</text>
+  <text x="1162" y="190" font-size="9.5" fill="#14506F">one 52-byte row per</text>
+  <text x="1162" y="204" font-size="9.5" fill="#14506F">token, per KV head</text>
+  <text x="1162" y="240" font-size="9.5" fill="#14506F">the row is cut into P</text>
+  <text x="1162" y="254" font-size="9.5" fill="#14506F">slices, and each one is</text>
+  <text x="1162" y="268" font-size="9.5" fill="#14506F">kept as its own array,</text>
+  <text x="1162" y="282" font-size="9.5" fill="#14506F">contiguous and running</text>
+  <text x="1162" y="296" font-size="9.5" fill="#14506F">across all the tokens</text>
+  <text x="1162" y="332" font-size="9.5" fill="#14506F">each AXI port reads</text>
+  <text x="1162" y="346" font-size="9.5" fill="#14506F">one slice and nothing</text>
+  <text x="1162" y="360" font-size="9.5" fill="#14506F">else, which turns the</text>
+  <text x="1162" y="374" font-size="9.5" fill="#14506F">whole scan into long</text>
+  <text x="1162" y="388" font-size="9.5" fill="#14506F">sequential bursts</text>
 
   <!-- write path -->
   <text x="319" y="206" font-size="13.5">attn_ingress</text>
@@ -101,11 +104,11 @@
   <text x="975" y="358" font-size="11" fill="#555555">…</text>
   <text x="1004" y="357" font-size="9">P−1</text>
 
-  <text x="639" y="257" font-size="9.5" fill="#333333">q is held inside each lane and never written to the cache</text>
+  <text x="639" y="257" font-size="9.5" fill="#14506F">q is held inside each lane and never written to the cache</text>
 
-  <text x="959" y="391" font-size="9" fill="#333333">the P ports fetch one</text>
-  <text x="959" y="403" font-size="9" fill="#333333">whole row per cycle, and</text>
-  <text x="959" y="415" font-size="9" fill="#333333">all G lanes score on it</text>
+  <text x="959" y="391" font-size="9" fill="#14506F">the P ports fetch one</text>
+  <text x="959" y="403" font-size="9" fill="#14506F">whole row per cycle, and</text>
+  <text x="959" y="415" font-size="9" fill="#14506F">all G lanes score on it</text>
 </g>
 
 <g fill="#1a1a1a" text-anchor="start">
