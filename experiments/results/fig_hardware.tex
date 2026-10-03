@@ -184,6 +184,6 @@
 
 % ---------------------------------------------------------------- legend
 \node[anchor=base west, font=\figNote, text=figleg] at (40,15)
-  {The ZCU104 provides four AXI-HP ports, each carrying 128 bits --- 16 bytes --- per cycle, so a cache row can be at most 64 bytes wide};
+  {The ZCU104 provides four AXI-HP ports, each carrying 16 bytes a cycle. A plane never straddles a field boundary, so the key codes, the value codes and the norms must together fall into at most four planes};
 
 \end{tikzpicture}

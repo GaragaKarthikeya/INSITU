@@ -128,6 +128,6 @@
   <text x="64" y="388" font-size="9.5" fill="#555555">MLP  →  logits</text>
   <text x="64" y="403" font-size="9.5" fill="#555555">then the next layer</text>
 
-  <text x="40" y="440" font-size="9.5" fill="#666666">The ZCU104 provides four AXI-HP ports, each carrying 128 bits — 16 bytes — per cycle, so a cache row can be at most 64 bytes wide</text>
+  <text x="40" y="440" font-size="9.5" fill="#666666">The ZCU104 provides four AXI-HP ports, each carrying 16 bytes a cycle. A plane never straddles a field boundary, so the key codes, the value codes and the norms must together fall into at most four planes</text>
 </g>
 </svg>
